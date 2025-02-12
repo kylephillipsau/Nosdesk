@@ -1,0 +1,11 @@
+@import './base.css';
+@import "tailwindcss";
+
+#app {
+  min-height: 100vh;
+  font-weight: normal;
+}
+
+a {
+  text-decoration: none;
+}
