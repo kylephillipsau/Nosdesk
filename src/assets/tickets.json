@@ -1,0 +1,124 @@
+{
+    "tickets": [
+        {
+            "id": 1,
+            "title": "Be real cool",
+            "status": "closed",
+            "priority": "high",
+            "created": "2024-02-12",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 2,
+            "title": "Update payment gateway integration",
+            "status": "in-progress",
+            "priority": "medium",
+            "created": "2024-02-12",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 3,
+            "title": "Mobile app crashes on Android 14",
+            "status": "open",
+            "priority": "high",
+            "created": "2024-03-12",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 4,
+            "title": "Add multi-language support for help docs",
+            "status": "open",
+            "priority": "low",
+            "created": "2024-12-17",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 5,
+            "title": "Security vulnerability in login flow",
+            "status": "in-progress",
+            "priority": "high",
+            "created": "2024-12-17",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 6,
+            "title": "Update database backup system",
+            "status": "closed",
+            "priority": "medium",
+            "created": "2024-12-17",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 7,
+            "title": "Fix search functionality in admin dashboard",
+            "status": "open",
+            "priority": "medium",
+            "created": "2024-12-17",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 8,
+            "title": "Don't make passive income, make massive income",
+            "status": "in-progress",
+            "priority": "medium",
+            "created": "2025-01-29",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 9,
+            "title": "Write a new custom helpdesk ticketing system",
+            "status": "in-progress",
+            "priority": "low",
+            "created": "2025-01-29",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 10,
+            "title": "Reduce reliance on JSON files for client data handling",
+            "status": "open",
+            "priority": "high",
+            "created": "2025-01-31",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 11,
+            "title": "Update SSL certificates",
+            "status": "closed",
+            "priority": "high",
+            "created": "2025-01-31",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 12,
+            "title": "Implement a decent backend",
+            "status": "in-progress",
+            "priority": "high",
+            "created": "2025-02-04",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 13,
+            "title": "Improve mobile responsiveness",
+            "status": "open",
+            "priority": "medium",
+            "created": "2025-02-04",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 14,
+            "title": "Update user documentation",
+            "status": "open",
+            "priority": "medium",
+            "created": "2025-02-04",
+            "assignee": "Kyle Phillips"
+        },
+        {
+            "id": 15,
+            "title": "Add more example tickets",
+            "status": "open",
+            "priority": "medium",
+            "created": "2025-02-04",
+            "assignee": "Kyle Phillips"
+        }
+    ]
+}
