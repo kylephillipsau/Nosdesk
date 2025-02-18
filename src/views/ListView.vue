@@ -70,8 +70,8 @@ const createNewTicket = () => {
     <div class="flex-1 overflow-auto">
       <div class="min-w-full inline-block align-middle">
         <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-800 text-sm text-gray-200">
-            <thead class="bg-gray-800/50">
+          <table class="min-w-full divide-y divide-slate-800 text-sm text-gray-200">
+            <thead class="bg-slate-700/50">
               <tr>
                 <th scope="col" class="p-4 w-10">
                   <input type="checkbox"
@@ -87,10 +87,10 @@ const createNewTicket = () => {
                 <th scope="col" class="text-left p-4 font-medium w-32">Assignee</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-800">
+            <tbody class="divide-y divide-slate-800">
               <tr v-for="ticket in tickets" 
                   :key="ticket.id"
-                  class="hover:bg-gray-800/50 transition-colors cursor-pointer"
+                  class="hover:bg-slate-800/50 transition-colors cursor-pointer"
                   @click="openTicket(ticket.id)">
                 <td class="px-4 py-1">
                   <input type="checkbox"

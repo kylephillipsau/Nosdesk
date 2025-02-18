@@ -1,0 +1,64 @@
+{
+    "users": [
+      {
+        "id": "user-1",
+        "name": "Alice Smith",
+        "email": "alice.smith@example.com",
+        "role": "Developer"
+      },
+      {
+        "id": "user-2",
+        "name": "Bob Johnson",
+        "email": "bob.johnson@example.com",
+        "role": "Manager"
+      },
+      {
+        "id": "user-3",
+        "name": "Charlie Brown",
+        "email": "charlie.brown@example.com",
+        "role": "Designer"
+      },
+      {
+        "id": "user-4",
+        "name": "Diana Ross",
+        "email": "diana.ross@example.com",
+        "role": "QA Engineer"
+      },
+      {
+        "id": "user-5",
+        "name": "Ethan Hunt",
+        "email": "ethan.hunt@example.com",
+        "role": "Support"
+      },
+      {
+        "id": "user-6",
+        "name": "Fiona Gallagher",
+        "email": "fiona.gallagher@example.com",
+        "role": "Developer"
+      },
+      {
+        "id": "user-7",
+        "name": "George Costanza",
+        "email": "george.costanza@example.com",
+        "role": "Manager"
+      },
+      {
+        "id": "user-8",
+        "name": "Hannah Baker",
+        "email": "hannah.baker@example.com",
+        "role": "Designer"
+      },
+      {
+        "id": "user-9",
+        "name": "Ian Malcolm",
+        "email": "ian.malcolm@example.com",
+        "role": "QA Engineer"
+      },
+      {
+        "id": "user-10",
+        "name": "Jane Doe",
+        "email": "jane.doe@example.com",
+        "role": "Support"
+      }
+    ]
+  }
