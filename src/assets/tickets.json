@@ -6,8 +6,33 @@
             "status": "closed",
             "priority": "high",
             "created": "2024-02-12",
+            "modified": "2024-02-15",
             "assignee": "Kyle Phillips",
-            "requester": "Quentin Tarantino"
+            "requester": "Quentin Tarantino",
+            "device": {
+                "hostname": "L13G2-SN-00ACVP",
+                "serialNumber": "PW00ACVP",
+                "model": "20VLS0L100",
+                "warrantyStatus": "Active"
+            },
+            "notesAndComments": [
+                {
+                    "id": 1,
+                    "content": "Example ticket data",
+                    "author": "Scott Mann",
+                    "createdAt": "2023-10-01T14:48:00",
+                    "attachments": [
+                        { "url": "https://placehold.co/600x400", "name": "attachment1.jpg" }
+                    ]
+                },
+                {
+                    "id": 2,
+                    "content": "Customer called regarding this issue",
+                    "author": "Sam Martin",
+                    "createdAt": "2023-10-02T09:15:00",
+                    "attachments": []
+                }
+            ]
         },
         {
             "id": 2,
@@ -15,6 +40,7 @@
             "status": "in-progress",
             "priority": "medium",
             "created": "2024-02-12",
+            "modified": "2024-02-16",
             "assignee": "Kyle Phillips",
             "requester": "Michael Jordan"
         },
@@ -24,6 +50,7 @@
             "status": "open",
             "priority": "high",
             "created": "2024-03-12",
+            "modified": "2024-03-14",
             "assignee": "Kyle Phillips",
             "requester": "Alice Johnson"
         },
@@ -33,6 +60,7 @@
             "status": "open",
             "priority": "low",
             "created": "2024-12-17",
+            "modified": "2024-12-18",
             "assignee": "Kyle Phillips",
             "requester": "Ian Somerhalder"
         },
@@ -42,6 +70,7 @@
             "status": "in-progress",
             "priority": "high",
             "created": "2024-12-17",
+            "modified": "2025-02-15",
             "assignee": "Kyle Phillips",
             "requester": "Samuel Jackson"
         },
@@ -51,6 +80,7 @@
             "status": "closed",
             "priority": "medium",
             "created": "2024-12-17",
+            "modified": "2025-01-05",
             "assignee": "Kyle Phillips",
             "requester": "Fiona Apple"
         },
@@ -60,17 +90,43 @@
             "status": "open",
             "priority": "medium",
             "created": "2024-12-17",
+            "modified": "2025-02-10",
             "assignee": "Kyle Phillips",
             "requester": "Charlie Brown"
         },
         {
             "id": 8,
-            "title": "Passive income? bruh i need massive income",
+            "title": "Spilled boysenberry yoghurt all over laptop",
             "status": "in-progress",
             "priority": "medium",
             "created": "2025-01-29",
+            "modified": "2025-02-15",
             "assignee": "Kyle Phillips",
-            "requester": "Quentin Tarantino"
+            "requester": "Tomas Smart",
+            "device": {
+                "hostname": "L13G2-SN-00ACVP",
+                "serialNumber": "PW00ACVP",
+                "model": "20VLS0L100",
+                "warrantyStatus": "Active"
+            },
+            "notesAndComments": [
+                {
+                    "id": 1,
+                    "content": "The entire tub was spilled on the laptop.",
+                    "author": "Kyle Phillips",
+                    "createdAt": "2021-01-30T14:48:00",
+                    "attachments": [
+                        { "url": "/src/assets/boysenberry-yoghurt.avif", "name": "attachment1.jpg" }
+                    ]
+                },
+                {
+                    "id": 2,
+                    "content": "Customer wants a refund for the boysenberry yoghurt, doesn't care about the laptop. They just want more yoghurt.",
+                    "author": "Kyle Phillips",
+                    "createdAt": "2024-10-02T09:15:00",
+                    "attachments": []
+                }
+            ]
         },
         {
             "id": 9,
@@ -78,6 +134,7 @@
             "status": "in-progress",
             "priority": "low",
             "created": "2025-01-29",
+            "modified": "2025-02-16",
             "assignee": "Kyle Phillips",
             "requester": "Oscar Wilde"
         },
@@ -87,6 +144,7 @@
             "status": "open",
             "priority": "high",
             "created": "2025-01-31",
+            "modified": "2025-02-15",
             "assignee": "Kyle Phillips",
             "requester": "George Clooney"
         },
@@ -96,6 +154,7 @@
             "status": "closed",
             "priority": "high",
             "created": "2025-01-31",
+            "modified": "2025-02-10",
             "assignee": "Kyle Phillips",
             "requester": "Gordon Ramsay"
         },
@@ -105,6 +164,7 @@
             "status": "in-progress",
             "priority": "high",
             "created": "2025-02-04",
+            "modified": "2025-02-16",
             "assignee": "Kyle Phillips",
             "requester": "John Smith"
         },
@@ -114,6 +174,7 @@
             "status": "open",
             "priority": "medium",
             "created": "2025-02-04",
+            "modified": "2025-02-15",
             "assignee": "Kyle Phillips",
             "requester": "Penelope Cruz"
         },
@@ -123,6 +184,7 @@
             "status": "open",
             "priority": "medium",
             "created": "2025-02-04",
+            "modified": "2025-02-14",
             "assignee": "Kyle Phillips",
             "requester": "Michael Jordan"
         },
@@ -132,6 +194,7 @@
             "status": "open",
             "priority": "medium",
             "created": "2025-02-04",
+            "modified": "2025-02-15",
             "assignee": "Kyle Phillips",
             "requester": "Rachel Green"
         }
