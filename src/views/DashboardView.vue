@@ -1,5 +1,7 @@
+// views/Dashboard.vue
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 // Get current time for greeting
 const getGreeting = () => {
@@ -10,7 +12,7 @@ const getGreeting = () => {
 }
 
 const greeting = ref(getGreeting())
-const username = ref('Tony') // This would come from your auth system
+const username = ref('Kyle') // This would come from your auth system
 
 // Mock ticket stats - replace with actual data
 const ticketStats = ref({
@@ -23,15 +25,12 @@ const ticketStats = ref({
 
 <template>
   <div class="flex flex-col h-full">
-    <!-- Header Section -->
-    <div class="p-6 border-b border-gray-800">
-      <h1 class="text-2xl font-semibold text-white">Dashboard</h1>
-    </div>
+    <PageHeader title="Dashboard" />
 
     <!-- Content -->
     <div class="flex flex-col gap-4 p-6">
       <!-- Greeting Card -->
-      <div class="bg-slate-800 rounded-lg p-6 mb-6">
+      <div class="mb-6">
         <h2 class="text-3xl font-medium text-white">
           {{ greeting }}, {{ username }}!
         </h2>

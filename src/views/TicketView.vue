@@ -1,131 +1,141 @@
+// TicketView.vue
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useRecentTicketsStore } from '@/stores/recentTickets'
-import UserAvatar from '@/components/UserAvatar.vue'
+import { ref, watch, computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useRecentTicketsStore } from "@/stores/recentTickets";
+import StatusBadge from '@/components/StatusBadge.vue'
+import TicketDetails from '@/components/TicketDetails.vue'
+import NotesAndComments from "@/components/NotesAndComments.vue";
+import PageHeader from '@/components/PageHeader.vue'
+import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions'
+import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions'
 
 interface Ticket {
   id: number;
   title: string;
-  status: 'open' | 'in-progress' | 'closed';
-  priority: 'low' | 'medium' | 'high';
+  status: TicketStatus;
+  priority: TicketPriority;
   created: string;
   assignee: string;
+  requester: string;
 }
 
-const route = useRoute()
-const router = useRouter()
-const ticket = ref<Ticket | null>(null)
-const recentTicketsStore = useRecentTicketsStore()
+const route = useRoute();
+const router = useRouter();
+const ticket = ref<Ticket | null>(null);
+const recentTicketsStore = useRecentTicketsStore();
+
+const selectedStatus = ref<TicketStatus>("open");
+const selectedPriority = ref<TicketPriority>("low");
 
 const fetchTicket = async (ticketId: string | string[]) => {
-  const id = Number(ticketId)
-  const ticketData = (await import('@/assets/tickets.json')).default
-  const foundTicket = ticketData.tickets.find(t => t.id === id)
-  
-  if (!foundTicket) {
-    router.push('/404')
-    return
-  }
-  
-  ticket.value = foundTicket
+  const id = Number(ticketId);
+  const ticketData = (await import("@/assets/tickets.json")).default;
+  const foundTicket = ticketData.tickets.find((t) => t.id === id);
 
-  // Check if we navigated from the recent tickets list
-  const fromRecent = route.query.fromRecent === 'true'
-  recentTicketsStore.addRecentTicket({
+  if (!foundTicket) {
+    router.push("/404");
+    return;
+  }
+
+  const typedTicket: Ticket = {
     id: foundTicket.id,
     title: foundTicket.title,
-    status: foundTicket.status
-  }, fromRecent)
-}
+    status: foundTicket.status as TicketStatus,
+    priority: foundTicket.priority as TicketPriority,
+    created: foundTicket.created,
+    assignee: foundTicket.assignee,
+    requester: foundTicket.requester
+  };
 
-// Watch for route changes
+  ticket.value = typedTicket;
+  selectedStatus.value = typedTicket.status;
+  selectedPriority.value = typedTicket.priority;
+
+  const fromRecent = route.query.fromRecent === "true";
+  recentTicketsStore.addRecentTicket(
+    {
+      id: typedTicket.id,
+      title: typedTicket.title,
+      status: typedTicket.status,
+    },
+    fromRecent,
+  );
+};
+
+const formattedDate = computed(() => {
+  if (!ticket.value?.created) return "";
+  const date = new Date(ticket.value.created);
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+});
+
 watch(
   () => route.params.id,
   (newId) => {
     if (newId) {
-      fetchTicket(newId)
+      fetchTicket(newId);
     }
   },
-  { immediate: true } // This will run on component mount too
-)
+  { immediate: true },
+);
 
-const getStatusColor = (status: string) => {
-  const colors = {
-    'open': 'bg-yellow-500',
-    'in-progress': 'bg-blue-500',
-    'closed': 'bg-green-500'
+const updateStatus = (newStatus: TicketStatus) => {
+  selectedStatus.value = newStatus;
+  if (ticket.value) {
+    ticket.value.status = newStatus;
+    // Add API call here to update status in backend
   }
-  return colors[status] || 'bg-gray-500'
-}
+};
 
-const getPriorityColor = (priority: string) => {
-  const colors = {
-    'low': 'text-green-400',
-    'medium': 'text-yellow-400',
-    'high': 'text-red-400'
+const updatePriority = (newPriority: TicketPriority) => {
+  selectedPriority.value = newPriority;
+  if (ticket.value) {
+    ticket.value.priority = newPriority;
+    // Add API call here to update priority in backend
   }
-  return colors[priority] || 'text-gray-400'
-}
+};
 </script>
 
 <template>
   <div class="flex-1">
-    <div v-if="ticket" class="p-6 max-w-4xl mx-auto">
-      <!-- Back button -->
-      <button 
-        @click="router.back()"
-        class="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition-colors">
-        <span>←</span> Back to tickets
-      </button>
-
-      <!-- Ticket header -->
-      <div class="flex items-start justify-between mb-8">
-        <div>
-          <div class="flex items-center gap-3 mb-2">
-            <h1 class="text-2xl font-semibold text-white">{{ ticket.title }}</h1>
-            <span class="text-gray-400">#{{ ticket.id }}</span>
-          </div>
+    <div v-if="ticket" class="flex flex-col min-h-full">
+      <PageHeader :title="`${ticket.title} #${ticket.id}`">
+        <template #actions>
           <div class="flex items-center gap-3">
-            <span 
-              :class="[getStatusColor(ticket.status), 'px-3 py-1 rounded-full text-sm']">
-              {{ ticket.status }}
-            </span>
-            <span 
-              :class="[getPriorityColor(ticket.priority), 'font-medium']">
-              {{ ticket.priority }} priority
-            </span>
+            <StatusBadge type="status" :value="ticket.status" />
+            <StatusBadge type="priority" :value="ticket.priority" />
           </div>
-        </div>
-        
-        <button class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors text-white">
-          Edit Ticket
-        </button>
-      </div>
+        </template>
+      </PageHeader>
 
-      <!-- Ticket details -->
-      <div class="grid grid-cols-2 gap-6">
-        <div class="bg-gray-800/50 rounded-lg p-6">
-          <h2 class="text-lg font-medium text-white mb-4">Details</h2>
-          <dl class="grid grid-cols-[120px,1fr] gap-y-4 text-sm">
-            <dt class="text-gray-400">Assignee</dt>
-            <dd class="text-white"><UserAvatar :name="ticket.assignee" />
-            </dd>
-            
-            <dt class="text-gray-400">Created</dt>
-            <dd class="text-white">{{ ticket.created }}</dd>
-            
-            <dt class="text-gray-400">Status</dt>
-            <dd class="text-white capitalize">{{ ticket.status }}</dd>
-            
-            <dt class="text-gray-400">Priority</dt>
-            <dd class="text-white capitalize">{{ ticket.priority }}</dd>
-          </dl>
+      <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-7xl">
+        <!-- Go Back Button -->
+        <button @click="router.back()"
+          class="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition-colors print:hidden">
+          <span>←</span> Go back
+        </button>
+
+        <!-- Grid Container -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- Ticket Details Column -->
+          <TicketDetails :ticket="ticket" :formatted-date="formattedDate" :selected-status.sync="selectedStatus"
+            :selected-priority.sync="selectedPriority" :status-options="STATUS_OPTIONS"
+            :priority-options="PRIORITY_OPTIONS" @update:selectedStatus="updateStatus"
+            @update:selectedPriority="updatePriority" />
+
+
+          <!-- Notes and Comments Column -->
+          <NotesAndComments />
         </div>
       </div>
     </div>
 
-    <!-- Loading state -->
     <div v-else class="p-6 text-center text-gray-400">
       Loading ticket...
     </div>

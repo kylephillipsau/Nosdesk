@@ -1,4 +1,4 @@
-# src/components/UserAvatar.vue
+<!-- # src/components/UserAvatar.vue -->
 <script setup lang="ts">
 interface Props {
   name: string

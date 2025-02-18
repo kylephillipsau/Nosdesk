@@ -1,5 +1,45 @@
-@import './base.css';
 @import "tailwindcss";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+:root {
+  --background-color: #f3f4f6;
+  --card-background: #f9fafb;
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --shadow-inset-dark: rgba(0, 0, 0, 0.1);
+  --shadow-inset-light: rgba(255, 255, 255, 0.7);
+  --shadow-outer-dark: rgba(0, 0, 0, 0.1);
+  --shadow-outer-light: rgba(255, 255, 255, 0.7);
+}
+
+/* src/assets/main.css */
+:root,
+[data-theme] {
+  transition: all 0.3s ease-in-out;
+}
+
+[data-theme="dark"] {
+  --background-color: #1f2937;
+  --card-background: #374151;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --shadow-inset-dark: rgba(0, 0, 0, 0.3);
+  --shadow-inset-light: rgba(255, 255, 255, 0.1);
+  --shadow-outer-dark: rgba(0, 0, 0, 0.3);
+  --shadow-outer-light: rgba(255, 255, 255, 0.1);
+}
+
+body {
+  background-color: var(--background-color);
+  color: var(--text-primary);
+}
 
 #app {
   min-height: 100vh;
