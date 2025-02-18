@@ -4,8 +4,9 @@ import { ref, watch, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRecentTicketsStore } from "@/stores/recentTickets";
 import StatusBadge from '@/components/StatusBadge.vue'
-import TicketDetails from '@/components/TicketDetails.vue'
-import NotesAndComments from "@/components/NotesAndComments.vue";
+import TicketDetails from '@/components/ticketComponents/TicketDetails.vue'
+import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
+import NotesAndComments from "@/components/ticketComponents/NotesAndComments.vue";
 import PageHeader from '@/components/PageHeader.vue'
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions'
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions'
@@ -16,8 +17,28 @@ interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   created: string;
+  modified: string;
   assignee: string;
   requester: string;
+  device?: {
+    id?: string;
+    name?: string;
+    hostname?: string;
+    serialNumber?: string;
+    model?: string;
+    warrantyStatus?: string;
+  };
+  linkedTicket?: number;
+  project?: string;
+  notesAndComments?: NoteOrComment[];
+}
+
+interface NoteOrComment {
+  id: number;
+  content: string;
+  author: string;
+  createdAt: string;
+  attachments?: { url: string; name: string }[];
 }
 
 const route = useRoute();
@@ -44,13 +65,32 @@ const fetchTicket = async (ticketId: string | string[]) => {
     status: foundTicket.status as TicketStatus,
     priority: foundTicket.priority as TicketPriority,
     created: foundTicket.created,
+    modified: foundTicket.modified,
     assignee: foundTicket.assignee,
-    requester: foundTicket.requester
+    requester: foundTicket.requester,
+    device: foundTicket.device,
+    linkedTicket: foundTicket.linkedTicket as linkedTicket,
+    project: foundTicket.project,
+    notesAndComments: foundTicket.notesAndComments
   };
 
   ticket.value = typedTicket;
   selectedStatus.value = typedTicket.status;
   selectedPriority.value = typedTicket.priority;
+
+  if (typedTicket.device) {
+    deviceDetails.value = {
+      id: typedTicket.device.id || '',
+      name: typedTicket.device.name || '',
+      hostname: typedTicket.device.hostname || '',
+      serialNumber: typedTicket.device.serialNumber || '',
+      model: typedTicket.device.model || '',
+      warrantyStatus: typedTicket.device.warrantyStatus || ''
+    };
+    showDeviceDetails.value = true;
+  } else {
+    showDeviceDetails.value = false;
+  }
 
   const fromRecent = route.query.fromRecent === "true";
   recentTicketsStore.addRecentTicket(
@@ -63,9 +103,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
   );
 };
 
-const formattedDate = computed(() => {
-  if (!ticket.value?.created) return "";
-  const date = new Date(ticket.value.created);
+const formattedDate = (dateString: string | undefined) => {
+  if (!dateString) return "";
+  const date = new Date(dateString);
   return date.toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -73,7 +113,10 @@ const formattedDate = computed(() => {
     hour: "2-digit",
     minute: "2-digit",
   });
-});
+};
+
+const formattedCreatedDate = computed(() => formattedDate(ticket.value?.created));
+const formattedModifiedDate = computed(() => formattedDate(ticket.value?.modified));
 
 watch(
   () => route.params.id,
@@ -100,11 +143,32 @@ const updatePriority = (newPriority: TicketPriority) => {
     // Add API call here to update priority in backend
   }
 };
+
+const showDeviceDetails = ref(false);
+const deviceDetails = ref({
+  id: '',
+  name: '',
+  hostname: '',
+  serialNumber: '',
+  model: '',
+  warrantyStatus: ''
+});
+const addDevice = () => {
+  // If device already exists, this might be an edit operation
+  if (ticket.value?.device) {
+    // Handle edit or show edit modal
+  } else {
+    // For adding a new device, you can keep your current logic
+    deviceDetails.value = { id: 'new-id', name: 'New Device', hostname: '', serialNumber: '', model: '', warrantyStatus: '' };
+    showDeviceDetails.value = true;
+    // Here you would save this to backend
+  }
+};
 </script>
 
 <template>
   <div class="flex-1">
-    <div v-if="ticket" class="flex flex-col min-h-full">
+    <div v-if="ticket" class="flex flex-col">
       <PageHeader :title="`${ticket.title} #${ticket.id}`">
         <template #actions>
           <div class="flex items-center gap-3">
@@ -123,15 +187,31 @@ const updatePriority = (newPriority: TicketPriority) => {
 
         <!-- Grid Container -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <!-- Ticket Details Column -->
-          <TicketDetails :ticket="ticket" :formatted-date="formattedDate" :selected-status.sync="selectedStatus"
-            :selected-priority.sync="selectedPriority" :status-options="STATUS_OPTIONS"
-            :priority-options="PRIORITY_OPTIONS" @update:selectedStatus="updateStatus"
-            @update:selectedPriority="updatePriority" />
+          <div class="flex flex-col gap-4">
+            <!-- Ticket Details Column -->
+            <TicketDetails :ticket="ticket" :created-date="formattedCreatedDate" :modified-date="formattedModifiedDate"
+              :selected-status.sync="selectedStatus" :selected-priority.sync="selectedPriority"
+              :status-options="STATUS_OPTIONS" :priority-options="PRIORITY_OPTIONS"
+              @update:selectedStatus="updateStatus" @update:selectedPriority="updatePriority" />
+            <div v-if="!ticket.device">
+              <a href="#" @click.prevent="addDevice" class="block mb-2 text-blue-500 hover:underline">+ Add device</a>
+            </div>
 
+            <DeviceDetails v-if="showDeviceDetails" :deviceId="deviceDetails.id" :deviceName="deviceDetails.name"
+              :hostname="deviceDetails.hostname" :serialNumber="deviceDetails.serialNumber" :model="deviceDetails.model"
+              :warrantyStatus="deviceDetails.warrantyStatus" />
+
+            <div v-if="!ticket.linkedTicket">
+              <a href="#" class="block mb-2 text-blue-500 hover:underline">+ Add linked ticket</a>
+            </div>
+
+            <div v-if="!ticket.project">
+              <a href="#" class="block text-blue-500 hover:underline">+ Add to project</a>
+            </div>
+          </div>
 
           <!-- Notes and Comments Column -->
-          <NotesAndComments />
+          <NotesAndComments :notesAndComments="ticket?.notesAndComments || []" />
         </div>
       </div>
     </div>

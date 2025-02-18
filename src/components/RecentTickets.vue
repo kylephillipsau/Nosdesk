@@ -37,7 +37,7 @@ const recentTicketsStore = useRecentTicketsStore()
               <!-- Tooltip for full title -->
               <span 
                 class="absolute invisible group-hover:visible opacity-0 group-hover:opacity-100 
-                       transition-all duration-200 bg-gray-800 text-white text-xs px-2 py-1 rounded
+                       transition-all duration-200 bg-black text-white text-xs px-2 py-1 rounded
                        -top-8 left-0 whitespace-nowrap z-10 shadow-lg"
               >
                 {{ ticket.title }}
