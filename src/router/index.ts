@@ -13,18 +13,18 @@ const router = createRouter({
     {
       path: '/tickets',
       name: 'tickets',
-      // route level code-splitting
-      // this generates a separate chunk (About.[hash].js) for this route
-      // which is lazy-loaded when the route is visited.
       component: () => import('../views/ListView.vue'),
+    },
+    {
+      path: '/tickets/create',
+      name: 'create-ticket',
+      component: () => import('../views/CreateTicketView.vue'),
     },
     {
       path: '/tickets/:id',
       name: 'ticket-view',
       component: TicketView,
-      // Add a custom props function to force re-render
       props: true,
-      // Add key to the route to force component re-render
       beforeEnter: (to) => {
         to.meta.key = to.params.id
       }
