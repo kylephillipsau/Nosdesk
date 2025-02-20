@@ -2,12 +2,15 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import Navbar from './components/Navbar.vue'
+import PageHeader from './components/PageHeader.vue';
 </script>
 
 <template>
   <div class="flex h-screen w-full bg-slate-900">
+    
     <Navbar />
     <main class="flex-1 min-w-0 overflow-auto">
+      <PageHeader title="Page Title" :showCreateButton="true"></PageHeader>
       <Transition 
         name="fade" 
         mode="out-in"

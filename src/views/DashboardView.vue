@@ -1,7 +1,7 @@
 // views/Dashboard.vue
 <script setup lang="ts">
 import { ref } from 'vue'
-import PageHeader from '@/components/PageHeader.vue'
+import TicketHeatmap from '@/components/TicketHeatmap.vue'
 
 // Get current time for greeting
 const getGreeting = () => {
@@ -25,8 +25,6 @@ const ticketStats = ref({
 
 <template>
   <div class="flex flex-col h-full">
-    <PageHeader title="Dashboard" />
-
     <!-- Content -->
     <div class="flex flex-col gap-4 p-6">
       <!-- Greeting Card -->
@@ -65,6 +63,9 @@ const ticketStats = ref({
           <p class="text-2xl font-semibold text-gray-400 mt-2">{{ ticketStats.closed }}</p>
         </div>
       </div>
+      <TicketHeatmap />
+
     </div>
+
   </div>
 </template>
