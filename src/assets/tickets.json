@@ -32,7 +32,8 @@
                     "createdAt": "2023-10-02T09:15:00",
                     "attachments": []
                 }
-            ]
+            ],
+            "articleContent": "# Be Real Cool\n\n## Issue Description\nThe server at `L13G2-SN-00ACVP` experienced a critical failure during a high-traffic event.\n\n## Resolution Steps\n1. Identified overheating in the CPU.\n2. Replaced thermal paste and cleaned cooling fans.\n3. Monitored logs:\n   ```bash\n   tail -f /var/log/syslog\n   ```\n4. Confirmed stability after 24 hours.\n\n**Status:** Resolved\n\nFor details, see [support docs](https://support.example.com)."
         },
         {
             "id": 2,
@@ -42,7 +43,8 @@
             "created": "2024-02-12",
             "modified": "2024-02-16",
             "assignee": "Kyle Phillips",
-            "requester": "Michael Jordan"
+            "requester": "Michael Jordan",
+            "articleContent": "# Update Payment Gateway Integration\n\n## Overview\nThe current Stripe integration needs to support 3D Secure payments per new regulations.\n\n## Tasks\n- [x] Review Stripe API docs: [Stripe 3DS](https://stripe.com/docs/payments/3d-secure)\n- [ ] Update backend endpoint `/api/payments`:\n  ```javascript\n  const paymentIntent = await stripe.paymentIntents.create({\n    amount: 1000,\n    currency: 'usd',\n    payment_method_types: ['card'],\n    authentication: '3ds'\n  });\n  ```\n- [ ] Test with sandbox credentials\n\n**Next Steps:** Schedule a review with the dev team."
         },
         {
             "id": 3,

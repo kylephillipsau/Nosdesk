@@ -1,13 +1,12 @@
-// TicketView.vue
+<!-- TicketView.vue -->
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRecentTicketsStore } from "@/stores/recentTickets";
-import StatusBadge from '@/components/StatusBadge.vue'
+import TicketArticleBody from '@/components/ticketComponents/TicketArticleBody.vue';
 import TicketDetails from '@/components/ticketComponents/TicketDetails.vue'
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
 import NotesAndComments from "@/components/ticketComponents/NotesAndComments.vue";
-import PageHeader from '@/components/PageHeader.vue'
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions'
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions'
 
@@ -31,6 +30,7 @@ interface Ticket {
   linkedTicket?: number;
   project?: string;
   notesAndComments?: NoteOrComment[];
+  articleContent?: string;
 }
 
 interface NoteOrComment {
@@ -69,7 +69,7 @@ const fetchTicket = async (ticketId: string | string[]) => {
     assignee: foundTicket.assignee,
     requester: foundTicket.requester,
     device: foundTicket.device,
-    linkedTicket: foundTicket.linkedTicket as linkedTicket,
+    linkedTicket: foundTicket.linkedTicket,
     project: foundTicket.project,
     notesAndComments: foundTicket.notesAndComments
   };
@@ -169,16 +169,7 @@ const addDevice = () => {
 <template>
   <div class="flex-1">
     <div v-if="ticket" class="flex flex-col">
-      <PageHeader :title="`${ticket.title} #${ticket.id}`">
-        <template #actions>
-          <div class="flex items-center gap-3">
-            <StatusBadge type="status" :value="ticket.status" />
-            <StatusBadge type="priority" :value="ticket.priority" />
-          </div>
-        </template>
-      </PageHeader>
-
-      <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-7xl">
+      <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-8xl">
         <!-- Go Back Button -->
         <button @click="router.back()"
           class="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition-colors print:hidden">
@@ -186,9 +177,9 @@ const addDevice = () => {
         </button>
 
         <!-- Grid Container -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="flex flex-col gap-4">
-            <!-- Ticket Details Column -->
+        <div class="grid-container">
+          <!-- Details (TicketDetails and DeviceDetails) -->
+          <div class="details-area flex flex-col gap-4">
             <TicketDetails :ticket="ticket" :created-date="formattedCreatedDate" :modified-date="formattedModifiedDate"
               :selected-status.sync="selectedStatus" :selected-priority.sync="selectedPriority"
               :status-options="STATUS_OPTIONS" :priority-options="PRIORITY_OPTIONS"
@@ -204,14 +195,20 @@ const addDevice = () => {
             <div v-if="!ticket.linkedTicket">
               <a href="#" class="block mb-2 text-blue-500 hover:underline">+ Add linked ticket</a>
             </div>
-
             <div v-if="!ticket.project">
               <a href="#" class="block text-blue-500 hover:underline">+ Add to project</a>
             </div>
           </div>
 
-          <!-- Notes and Comments Column -->
-          <NotesAndComments :notesAndComments="ticket?.notesAndComments || []" />
+          <!-- TicketArticleBody -->
+          <div class="article-area">
+            <TicketArticleBody v-model:content="ticket.articleContent" :is-editing="false" />
+          </div>
+
+          <!-- NotesAndComments -->
+          <div class="comments-area">
+            <NotesAndComments :notesAndComments="ticket?.notesAndComments || []" />
+          </div>
         </div>
       </div>
     </div>
@@ -221,3 +218,44 @@ const addDevice = () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.grid-container {
+  /* Base grid setup (small screens: 1 column, stacked vertically) */
+  display: grid;
+  grid-template-columns: 1fr;
+  /* Single column */
+  grid-template-rows: auto;
+  /* Auto height for each row */
+  grid-template-areas: "details" "article" "comments";
+  /* Explicit stacking order */
+  gap: 1rem;
+  /* Equivalent to Tailwind's gap-4 */
+
+  /* Medium to large screens (lg: 2 columns, NotesAndComments under Details in left column) */
+  @media (min-width: 1024px) {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-areas:
+      "details article"
+      "comments article";
+  }
+
+  /* Extra large screens (2xl: 3 columns) */
+  @media (min-width: 1536px) {
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-areas: "details article comments";
+  }
+}
+
+.details-area {
+  grid-area: details;
+}
+
+.article-area {
+  grid-area: article;
+}
+
+.comments-area {
+  grid-area: comments;
+}
+</style>

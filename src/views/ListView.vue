@@ -5,7 +5,6 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/UserAvatar.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import PageHeader from '@/components/PageHeader.vue'
 
 interface Ticket {
   id: number;
@@ -55,17 +54,6 @@ const createNewTicket = () => {
 
 <template>
   <div class="flex flex-col h-full">
-    <PageHeader title="Tickets List">
-      <template #actions>
-        <button 
-          class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors text-white"
-          @click="createNewTicket"
-        >
-          New Ticket
-        </button>
-      </template>
-    </PageHeader>
-
     <!-- Table Container with adjusted width handling -->
     <div class="flex-1 overflow-auto">
       <div class="min-w-full inline-block align-middle">

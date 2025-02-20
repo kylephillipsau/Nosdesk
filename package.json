@@ -12,11 +12,22 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.6",
+    "marked": "^15.0.7",
     "pinia": "^2.3.1",
+    "prosemirror-example-setup": "^1.2.3",
+    "prosemirror-inputrules": "^1.4.0",
+    "prosemirror-markdown": "^1.13.1",
+    "prosemirror-menu": "^1.2.4",
+    "prosemirror-model": "^1.24.1",
+    "prosemirror-schema-basic": "^1.2.3",
+    "prosemirror-schema-list": "^1.5.0",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-view": "^1.38.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.16",
     "@tsconfig/node22": "^22.0.0",
     "@types/node": "^22.13.1",
     "@vitejs/plugin-vue": "^5.2.1",

@@ -54,25 +54,25 @@ onUnmounted(() => {
         <!-- Hostname -->
         <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner input-wrapper">
           <dt class="text-sm text-slate-400">Hostname</dt>
-          <input v-model="editableDevice.hostname" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-800 border-none p-1 rounded" />
+          <input v-model="editableDevice.hostname" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-600 border-none p-1 rounded" />
         </div>
 
         <!-- Serial Number -->
         <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner input-wrapper">
           <dt class="text-sm text-slate-400">Serial Number</dt>
-          <input v-model="editableDevice.serialNumber" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-800 border-none p-1 rounded" />
+          <input v-model="editableDevice.serialNumber" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-600 border-none p-1 rounded" />
         </div>
 
         <!-- Model -->
         <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner input-wrapper">
           <dt class="text-sm text-slate-400">Model</dt>
-          <input v-model="editableDevice.model" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-800 border-none p-1 rounded" />
+          <input v-model="editableDevice.model" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-600 border-none p-1 rounded" />
         </div>
 
         <!-- Warranty Status -->
         <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner input-wrapper">
           <dt class="text-sm text-slate-400">Warranty Status</dt>
-          <input v-model="editableDevice.warrantyStatus" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-800 border-none p-1 rounded" />
+          <input v-model="editableDevice.warrantyStatus" :class="{'focus:bg-slate-600': isEditing}" @click="startEditing" class="text-slate-200 bg-slate-600 border-none p-1 rounded" />
         </div>
       </div>
     </div>
