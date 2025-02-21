@@ -39,7 +39,7 @@ const selectedAssignee = ref(props.ticket.assignee);
 
 <template>
   <div class="w-full">
-    <div class="flex flex-col bg-slate-800 rounded-2xl p-6 gap-4 shadow-lg">
+    <div class="flex flex-col bg-slate-800 rounded-2xl p-4 gap-2 shadow-lg">
       <h2 class="text-lg font-medium text-slate-100">Details</h2>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <!-- Requester -->

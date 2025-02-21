@@ -1,38 +1,15 @@
 <!-- CreateTicketView.vue -->
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import UserSelection from '@/components/ticketComponents/UserSelection.vue';
 import CustomDropdown from '@/components/ticketComponents/CustomDropdown.vue';
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
 import TicketArticleBody from '@/components/ticketComponents/TicketArticleBody.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import StatusBadge from '@/components/StatusBadge.vue';
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import users from '@/assets/users.json';
-
-interface SavedTicket {
-  id: number;
-  title: string;
-  status: string;
-  priority: string;
-  created: string;
-  modified: string;
-  assignee: string;
-  requester: string;
-  device?: {
-    id?: string;
-    name?: string;
-    hostname?: string;
-    serialNumber?: string;
-    model?: string;
-    warrantyStatus?: string;
-  };
-  linkedTicket?: number;
-  project?: string;
-  articleContent?: string;
-}
+import TicketTitle from '@/components/ticketComponents/TicketTitle.vue';
 
 interface Ticket {
   id?: number;
@@ -112,27 +89,13 @@ const addDevice = () => {
 
 const saveTicket = async () => {
   try {
-    const ticketsData = (await import('@/assets/tickets.json')).default;
-    newTicket.value.id = Math.max(...ticketsData.tickets.map((t: SavedTicket) => t.id || 0)) + 1 || 1;
-
-    const savedTicket: SavedTicket = {
-      id: newTicket.value.id,
-      title: newTicket.value.title,
-      status: newTicket.value.status as string,
-      priority: newTicket.value.priority as string,
-      created: newTicket.value.created,
-      modified: newTicket.value.modified,
-      assignee: newTicket.value.assignee,
-      requester: newTicket.value.requester,
-      device: newTicket.value.device,
-      linkedTicket: newTicket.value.linkedTicket,
-      project: newTicket.value.project,
-      articleContent: newTicket.value.articleContent,
-    };
-
-    ticketsData.tickets.push(savedTicket);
-    console.log('New ticket saved:', savedTicket);
-    router.push(`/tickets/${savedTicket.id}`);
+    console.log('Saving ticket:', newTicket.value);
+    // Reset unsaved changes flag
+    hasUnsavedChanges.value = false;
+    // @ts-ignore - Property added for router navigation guard
+    window.hasUnsavedChanges = false;
+    // For now, just go back to the tickets list
+    router.push('/tickets');
   } catch (error) {
     console.error('Error saving ticket:', error);
   }
@@ -164,33 +127,74 @@ const resetForm = () => {
     warrantyStatus: '',
   };
 };
+
+const updateTicketTitle = (newTitle: string) => {
+  newTicket.value.title = newTitle;
+};
+
+const hasUnsavedChanges = ref(false);
+const initialTicketState = ref('');
+
+// Track form changes
+const updateFormState = () => {
+  const currentState = JSON.stringify(newTicket.value);
+  hasUnsavedChanges.value = currentState !== initialTicketState.value;
+  // @ts-ignore - Property added for router navigation guard
+  window.hasUnsavedChanges = hasUnsavedChanges.value;
+};
+
+// Watch for unsaved changes when navigating
+const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+  if (hasUnsavedChanges.value) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+};
+
+// Initialize form tracking
+onMounted(() => {
+  initialTicketState.value = JSON.stringify(newTicket.value);
+  window.addEventListener('beforeunload', handleBeforeUnload);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload);
+  // @ts-ignore - Property added for router navigation guard
+  window.hasUnsavedChanges = false;
+});
+
+// Update form state whenever ticket data changes
+watch(
+  () => ({ ...newTicket.value }),
+  () => updateFormState(),
+  { deep: true }
+);
 </script>
 
 <template>
   <div class="flex-1">
     <div class="flex flex-col">
-      <PageHeader title="Create New Ticket">
-        <template #actions>
-          <div class="flex items-center gap-3">
-            <StatusBadge type="status" :value="selectedStatus" />
-            <StatusBadge type="priority" :value="selectedPriority" />
-            <button
-              @click="saveTicket"
-              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-            >
-              Save Ticket
-            </button>
-            <button
-              @click="resetForm"
-              class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
-            >
-              Reset
-            </button>
-          </div>
-        </template>
-      </PageHeader>
-
       <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-7xl">
+
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <TicketTitle :ticket-id="80085" :initial-title="newTicket.title" @update-title="updateTicketTitle" />
+          </div>
+          <button
+            @click="saveTicket"
+            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            :disabled="!newTicket.title || !newTicket.requester"
+          >
+            <span class="material-icons text-xl">Save Ticket</span>
+          </button>
+        </div>
+
+        <!-- Navigation Warning -->
+        <div v-if="hasUnsavedChanges" class="bg-yellow-500/10 border border-yellow-500/50 text-yellow-200 px-4 py-3 rounded-md mb-4 flex items-center gap-3">
+          <span class="material-icons text-yellow-500">warning</span>
+          <p>You have unsaved changes. Please save your work before leaving this page.</p>
+        </div>
+
         <!-- Go Back Button -->
         <button
           @click="router.back()"
@@ -206,16 +210,6 @@ const resetForm = () => {
             <div class="flex flex-col bg-slate-800 rounded-2xl p-6 gap-4 shadow-lg">
               <h2 class="text-lg font-medium text-slate-100">Ticket Details</h2>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div class="flex flex-col gap-1">
-                  <label class="text-sm text-slate-400">Title</label>
-                  <input
-                    v-model="newTicket.title"
-                    type="text"
-                    placeholder="Enter ticket title"
-                    class="px-2 py-1 text-sm rounded bg-slate-700 text-slate-200 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
                 <div class="flex flex-col gap-1">
                   <label class="text-sm text-slate-400">Requester</label>
                   <UserSelection
