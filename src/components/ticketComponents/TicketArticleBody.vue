@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import { EditorState, Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { Schema, DOMParser } from 'prosemirror-model';
@@ -14,11 +14,11 @@ import 'prosemirror-view/style/prosemirror.css';
 
 // Define props
 interface Props {
-  content?: string;
+  initialContent?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  content: '',
+  initialContent: '',
 });
 
 const emit = defineEmits<{
@@ -56,12 +56,9 @@ const mySchema = new Schema({
   marks: basicSchema.spec.marks, // Ensure strong and em are included
 });
 
-// Create Markdown serializer and parser
-const serializer = new MarkdownSerializer(
-  defaultMarkdownSerializer.nodes,
-  defaultMarkdownSerializer.marks
-);
+// Create Markdown parser and serializer
 const parser = new MarkdownParser(mySchema, defaultMarkdownParser.tokenizer, defaultMarkdownParser.tokens);
+const serializer = defaultMarkdownSerializer;
 
 // Define input rules for Markdown-like list behavior
 const markdownInputRules = inputRules({
@@ -78,49 +75,104 @@ const markdownInputRules = inputRules({
 });
 
 // Custom dropdown state
-const showTypeDropdown = ref(false);
-const showInsertDropdown = ref(false);
-const showMoreDropdown = ref(false);
+const typeMenuRef = ref<HTMLElement | null>(null);
+const typeButtonRef = ref<HTMLElement | null>(null);
+const insertMenuRef = ref<HTMLElement | null>(null);
+const insertButtonRef = ref<HTMLElement | null>(null);
+const moreMenuRef = ref<HTMLElement | null>(null);
+const moreButtonRef = ref<HTMLElement | null>(null);
 
-// Initialize editor with custom menubar
-onMounted(() => {
-  if (!editorRef.value) return;
+const showTypeMenu = ref(false);
+const showInsertMenu = ref(false);
+const showMoreMenu = ref(false);
 
-  const plugins = exampleSetup({ schema: mySchema, menuBar: false });
-
-  const state = EditorState.create({
-    doc: DOMParser.fromSchema(mySchema).parse(document.createElement('div')),
-    plugins: [...plugins, markdownInputRules],
-  });
-
-  view = new EditorView(editorRef.value, {
-    state,
-    dispatchTransaction(transaction) {
-      if (!view) return;
-      const newState = view.state.apply(transaction);
-      view.updateState(newState);
-      const markdown = serializer.serialize(newState.doc);
-      emit('update:content', markdown);
-    },
-  });
-
-  // Set initial content
-  if (props.content) {
-    const doc = parser.parse(props.content);
-    if (doc) {
-      view.updateState(EditorState.create({
-        doc,
-        plugins: view.state.plugins,
-      }));
+const handleClickOutside = (event: MouseEvent) => {
+  const target = event.target as Node;
+  
+  // Handle Type menu
+  if (showTypeMenu.value && typeMenuRef.value && typeButtonRef.value) {
+    if (!typeMenuRef.value.contains(target) && !typeButtonRef.value.contains(target)) {
+      showTypeMenu.value = false;
     }
   }
+  
+  // Handle Insert menu
+  if (showInsertMenu.value && insertMenuRef.value && insertButtonRef.value) {
+    if (!insertMenuRef.value.contains(target) && !insertButtonRef.value.contains(target)) {
+      showInsertMenu.value = false;
+    }
+  }
+  
+  // Handle More menu
+  if (showMoreMenu.value && moreMenuRef.value && moreButtonRef.value) {
+    if (!moreMenuRef.value.contains(target) && !moreButtonRef.value.contains(target)) {
+      showMoreMenu.value = false;
+    }
+  }
+};
 
-  // Debug: Verify marks are available
-  console.log('Available marks:', Object.keys(mySchema.marks));
+const handleKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    if (showTypeMenu.value) {
+      showTypeMenu.value = false;
+      typeButtonRef.value?.focus();
+    }
+    if (showInsertMenu.value) {
+      showInsertMenu.value = false;
+      insertButtonRef.value?.focus();
+    }
+    if (showMoreMenu.value) {
+      showMoreMenu.value = false;
+      moreButtonRef.value?.focus();
+    }
+  }
+};
+
+const toggleTypeMenu = () => {
+  showTypeMenu.value = !showTypeMenu.value;
+  if (showTypeMenu.value) {
+    showInsertMenu.value = false;
+    showMoreMenu.value = false;
+    nextTick(() => {
+      const firstFocusable = typeMenuRef.value?.querySelector('button') as HTMLElement;
+      firstFocusable?.focus();
+    });
+  }
+};
+
+const toggleInsertMenu = () => {
+  showInsertMenu.value = !showInsertMenu.value;
+  if (showInsertMenu.value) {
+    showTypeMenu.value = false;
+    showMoreMenu.value = false;
+    nextTick(() => {
+      const firstFocusable = insertMenuRef.value?.querySelector('button') as HTMLElement;
+      firstFocusable?.focus();
+    });
+  }
+};
+
+const toggleMoreMenu = () => {
+  showMoreMenu.value = !showMoreMenu.value;
+  if (showMoreMenu.value) {
+    showTypeMenu.value = false;
+    showInsertMenu.value = false;
+    nextTick(() => {
+      const firstFocusable = moreMenuRef.value?.querySelector('button') as HTMLElement;
+      firstFocusable?.focus();
+    });
+  }
+};
+
+// Event listeners for click outside
+onMounted(() => {
+  document.addEventListener('mousedown', handleClickOutside);
+  document.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
-  if (view) view.destroy();
+  document.removeEventListener('mousedown', handleClickOutside);
+  document.removeEventListener('keydown', handleKeydown);
 });
 
 // Function to focus the editor
@@ -209,45 +261,75 @@ const selectParent = () => {
   if (!view) return;
   pmSelectParentNode(view.state, view.dispatch);
 };
+
+onMounted(() => {
+  if (!editorRef.value) return;
+
+  const state = EditorState.create({
+    schema: mySchema,
+    plugins: [...exampleSetup({ schema: mySchema, menuBar: false }), markdownInputRules],
+    doc: props.initialContent ? parser.parse(props.initialContent) : undefined
+  });
+
+  view = new EditorView(editorRef.value, {
+    state,
+    dispatchTransaction(transaction: Transaction) {
+      if (!view) return;
+      
+      view.updateState(view.state.apply(transaction));
+      
+      // Only emit content changes if the document actually changed
+      if (transaction.docChanged) {
+        const content = serializer.serialize(view.state.doc);
+        emit('update:content', content);
+      }
+    }
+  });
+});
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-2xl p-4 shadow-lg">
-    <h2 class="text-lg font-medium text-slate-100 mb-3">Ticket Description</h2>
+  <div class="bg-slate-800 rounded-2xl p-2 shadow-lg">
+    <div class="text-lg font-medium text-slate-100 p-4 py-2">Ticket Notes</div>
     <div class="editor-wrapper">
-      <div class="bg-slate-700 p-2 rounded-t-xl border-b border-slate-600 flex items-center gap-2">
+      <div class="bg-slate-700 p-2 rounded-lg border-slate-800 flex items-center gap-2">
         <!-- Type Dropdown -->
         <div class="relative">
           <button
-            @click="showTypeDropdown = !showTypeDropdown"
-            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none"
+            ref="typeButtonRef"
+            @click="toggleTypeMenu"
+            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-haspopup="true"
+            :aria-expanded="showTypeMenu"
           >
-            Type...
+            Type
           </button>
-          <div v-if="showTypeDropdown" class="absolute top-full left-0 mt-1 bg-slate-700 rounded-md shadow-lg z-10">
-            <button @click="setBlockType('paragraph'); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Plain
-            </button>
-            <button @click="setBlockType('heading', { level: 1 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 1
-            </button>
-            <button @click="setBlockType('heading', { level: 2 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 2
-            </button>
-            <button @click="setBlockType('heading', { level: 3 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 3
-            </button>
-            <button @click="setBlockType('heading', { level: 4 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 4
-            </button>
-            <button @click="setBlockType('heading', { level: 5 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 5
-            </button>
-            <button @click="setBlockType('heading', { level: 6 }); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Heading Level 6
-            </button>
-            <button @click="setBlockType('code_block'); showTypeDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Code
+
+          <!-- Type Menu Dropdown -->
+          <div
+            v-if="showTypeMenu"
+            ref="typeMenuRef"
+            class="absolute top-full left-0 mt-1 w-48 bg-slate-700 rounded-md shadow-lg py-1 z-10"
+            role="menu"
+            tabindex="-1"
+          >
+            <button
+              v-for="(type, index) in [
+                { label: 'Plain', action: () => setBlockType('paragraph') },
+                { label: 'Heading Level 1', action: () => setBlockType('heading', { level: 1 }) },
+                { label: 'Heading Level 2', action: () => setBlockType('heading', { level: 2 }) },
+                { label: 'Heading Level 3', action: () => setBlockType('heading', { level: 3 }) },
+                { label: 'Heading Level 4', action: () => setBlockType('heading', { level: 4 }) },
+                { label: 'Heading Level 5', action: () => setBlockType('heading', { level: 5 }) },
+                { label: 'Heading Level 6', action: () => setBlockType('heading', { level: 6 }) },
+                { label: 'Code', action: () => setBlockType('code_block') }
+              ]"
+              :key="index"
+              @click="type.action(); showTypeMenu = false"
+              class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600 focus:bg-slate-600 focus:outline-none"
+              role="menuitem"
+            >
+              {{ type.label }}
             </button>
           </div>
         </div>
@@ -255,65 +337,93 @@ const selectParent = () => {
         <!-- Insert Dropdown -->
         <div class="relative">
           <button
-            @click="showInsertDropdown = !showInsertDropdown"
-            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none"
+            ref="insertButtonRef"
+            @click="toggleInsertMenu"
+            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-haspopup="true"
+            :aria-expanded="showInsertMenu"
           >
             Insert
           </button>
-          <div v-if="showInsertDropdown" class="absolute top-full left-0 mt-1 bg-slate-700 rounded-md shadow-lg z-10">
-            <button @click="toggleBulletList(); showInsertDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Bullet List
-            </button>
-            <button @click="toggleOrderedList(); showInsertDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Numbered List
-            </button>
-            <button @click="insertLink(); showInsertDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Link
+
+          <!-- Insert Menu Dropdown -->
+          <div
+            v-if="showInsertMenu"
+            ref="insertMenuRef"
+            class="absolute top-full left-0 mt-1 w-48 bg-slate-700 rounded-md shadow-lg py-1 z-10"
+            role="menu"
+            tabindex="-1"
+          >
+            <button
+              v-for="(item, index) in [
+                { label: 'Bullet List', action: toggleBulletList },
+                { label: 'Numbered List', action: toggleOrderedList },
+                { label: 'Link', action: insertLink }
+              ]"
+              :key="index"
+              @click="item.action(); showInsertMenu = false"
+              class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600 focus:bg-slate-600 focus:outline-none"
+              role="menuitem"
+            >
+              {{ item.label }}
             </button>
           </div>
         </div>
 
         <!-- Formatting Buttons -->
-        <button @click="toggleStrong()" class="bg-slate-600 text-slate-200 px-2 py-1 rounded-md hover:bg-slate-500">
-          B
+        <button
+          @click="toggleStrong"
+          class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          Bold
         </button>
-        <button @click="toggleEm()" class="bg-slate-600 text-slate-200 px-2 py-1 rounded-md hover:bg-slate-500">
-          I
-        </button>
-
-        <!-- Undo/Redo Buttons -->
-        <button @click="undo()" class="bg-slate-600 text-slate-200 px-2 py-1 rounded-md hover:bg-slate-500">
-          Undo
-        </button>
-        <button @click="redo()" class="bg-slate-600 text-slate-200 px-2 py-1 rounded-md hover:bg-slate-500">
-          Redo
+        <button
+          @click="toggleEm"
+          class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          Italic
         </button>
 
         <!-- More Dropdown -->
-        <div class="relative">
+        <div class="relative ml-auto">
           <button
-            @click="showMoreDropdown = !showMoreDropdown"
-            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none"
+            ref="moreButtonRef"
+            @click="toggleMoreMenu"
+            class="bg-slate-600 text-slate-200 px-3 py-1 rounded-md hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-haspopup="true"
+            :aria-expanded="showMoreMenu"
           >
             More
           </button>
-          <div v-if="showMoreDropdown" class="absolute top-full left-0 mt-1 bg-slate-700 rounded-md shadow-lg z-10">
-            <button @click="liftBlock(); showMoreDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Lift Block
-            </button>
-            <button @click="selectParent(); showMoreDropdown = false" class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600">
-              Select Parent
+
+          <!-- More Menu Dropdown -->
+          <div
+            v-if="showMoreMenu"
+            ref="moreMenuRef"
+            class="absolute top-full right-0 mt-1 w-48 bg-slate-700 rounded-md shadow-lg py-1 z-10"
+            role="menu"
+            tabindex="-1"
+          >
+            <button
+              v-for="(item, index) in [
+                { label: 'Lift Block', action: liftBlock },
+                { label: 'Select Parent', action: selectParent }
+              ]"
+              :key="index"
+              @click="item.action(); showMoreMenu = false"
+              class="block w-full text-left px-3 py-1 text-slate-200 hover:bg-slate-600 focus:bg-slate-600 focus:outline-none"
+              role="menuitem"
+            >
+              {{ item.label }}
             </button>
           </div>
         </div>
       </div>
 
       <!-- Editor content with click handler -->
-      <div
-        ref="editorRef"
-        @click="focusEditor"
-        class="w-full min-h-[400px] p-3 text-slate-200 bg-slate-700 rounded-b-lg border border-slate-600 prose prose-invert max-w-none editor-container"
-      ></div>
+      <div ref="editorRef" @click="focusEditor"
+        class="w-full min-h-[400px] p-3 text-slate-200 bg-slate-800 rounded-b-lg prose prose-invert max-w-none editor-container">
+      </div>
     </div>
   </div>
 </template>
@@ -410,9 +520,9 @@ const selectParent = () => {
 }
 
 :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
-}
+    margin-top: 0.2rem;
+    margin-bottom: 0.5rem;
+  }
 
 :deep(h1) { font-size: 1.875rem; font-weight: bold; }
 :deep(h2) { font-size: 1.5rem; font-weight: bold; }
