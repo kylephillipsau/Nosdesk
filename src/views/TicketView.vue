@@ -7,6 +7,7 @@ import TicketArticleBody from '@/components/ticketComponents/TicketArticleBody.v
 import TicketDetails from '@/components/ticketComponents/TicketDetails.vue'
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
 import NotesAndComments from "@/components/ticketComponents/NotesAndComments.vue";
+import TicketTitle from "@/components/ticketComponents/TicketTitle.vue";
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions'
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions'
 
@@ -69,9 +70,10 @@ const fetchTicket = async (ticketId: string | string[]) => {
     assignee: foundTicket.assignee,
     requester: foundTicket.requester,
     device: foundTicket.device,
-    linkedTicket: foundTicket.linkedTicket,
-    project: foundTicket.project,
-    notesAndComments: foundTicket.notesAndComments
+    // linkedTicket: foundTicket.linkedTicket,
+    // project: foundTicket.project,
+    notesAndComments: foundTicket.notesAndComments,
+    articleContent: foundTicket.articleContent
   };
 
   ticket.value = typedTicket;
@@ -144,6 +146,12 @@ const updatePriority = (newPriority: TicketPriority) => {
   }
 };
 
+const updateTicketTitle = (newTitle: string) => {
+  if (ticket.value) {
+    ticket.value.title = newTitle;
+  }
+};
+
 const showDeviceDetails = ref(false);
 const deviceDetails = ref({
   id: '',
@@ -170,11 +178,8 @@ const addDevice = () => {
   <div class="flex-1">
     <div v-if="ticket" class="flex flex-col">
       <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-8xl">
-        <!-- Go Back Button -->
-        <button @click="router.back()"
-          class="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition-colors print:hidden">
-          <span>←</span> Go back
-        </button>
+
+          <TicketTitle :ticket-id="ticket.id" :initial-title="ticket.title" @update-title="updateTicketTitle" />
 
         <!-- Grid Container -->
         <div class="grid-container">
@@ -202,7 +207,7 @@ const addDevice = () => {
 
           <!-- TicketArticleBody -->
           <div class="article-area">
-            <TicketArticleBody v-model:content="ticket.articleContent" :is-editing="false" />
+            <TicketArticleBody :initial-content="ticket.articleContent" />
           </div>
 
           <!-- NotesAndComments -->
