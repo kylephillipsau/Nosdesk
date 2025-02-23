@@ -46,6 +46,12 @@ const searchTerm = ref('')
         >
           Tickets
         </RouterLink>
+        <RouterLink 
+          to="/projects" 
+          class="px-4 py-2 rounded-lg transition-colors duration-200 text-white hover:bg-slate-700"
+        >
+          Projects
+        </RouterLink>
       </div>
     </div>
 

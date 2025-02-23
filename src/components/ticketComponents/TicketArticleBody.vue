@@ -11,6 +11,8 @@ import { MarkdownSerializer, defaultMarkdownSerializer, MarkdownParser, defaultM
 import { toggleMark, lift as pmLift, selectParentNode as pmSelectParentNode } from 'prosemirror-commands';
 import { undo as pmUndo, redo as pmRedo } from 'prosemirror-history';
 import 'prosemirror-view/style/prosemirror.css';
+import FullPageEditor from './FullPageEditor.vue'
+import { useRouter, useRoute } from 'vue-router'
 
 // Define props
 interface Props {
@@ -85,6 +87,13 @@ const moreButtonRef = ref<HTMLElement | null>(null);
 const showTypeMenu = ref(false);
 const showInsertMenu = ref(false);
 const showMoreMenu = ref(false);
+
+const router = useRouter()
+const route = useRoute()
+
+const handleExpand = () => {
+  router.push(`/tickets/${route.params.id}/notes`)
+}
 
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as Node;
@@ -290,7 +299,18 @@ onMounted(() => {
 
 <template>
   <div class="bg-slate-800 rounded-2xl p-2 shadow-lg">
-    <div class="text-lg font-medium text-slate-100 p-4 py-2">Ticket Notes</div>
+    <div class="text-lg font-medium text-slate-100 p-4 py-2 flex justify-between items-center">
+      <span>Ticket Notes</span>
+      <button
+        @click="handleExpand"
+        class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+        title="Open full editor"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 010 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clip-rule="evenodd" />
+        </svg>
+      </button>
+    </div>
     <div class="editor-wrapper">
       <div class="bg-slate-700 p-2 rounded-lg border-slate-800 flex items-center gap-2">
         <!-- Type Dropdown -->
@@ -421,8 +441,11 @@ onMounted(() => {
       </div>
 
       <!-- Editor content with click handler -->
-      <div ref="editorRef" @click="focusEditor"
-        class="w-full min-h-[400px] p-3 text-slate-200 bg-slate-800 rounded-b-lg prose prose-invert max-w-none editor-container">
+      <div 
+        ref="editorRef" 
+        @click="focusEditor"
+        class="w-full p-3 text-slate-200 bg-slate-800 rounded-b-lg prose prose-invert max-w-none editor-container"
+      >
       </div>
     </div>
   </div>
@@ -517,6 +540,7 @@ onMounted(() => {
 
 .editor-container {
   cursor: text;
+  min-height: 400px;
 }
 
 :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
