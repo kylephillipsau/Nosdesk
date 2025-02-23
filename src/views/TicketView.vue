@@ -12,9 +12,11 @@ import CommentsAndAttachments from "@/components/ticketComponents/CommentsAndAtt
 import TicketTitle from "@/components/ticketComponents/TicketTitle.vue";
 import LinkedTicketModal from "@/components/ticketComponents/LinkedTicketModal.vue";
 import LinkedTicketPreview from "@/components/ticketComponents/LinkedTicketPreview.vue";
+import ProjectSelectionModal from "@/components/ticketComponents/ProjectSelectionModal.vue";
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import type { Ticket, Device } from '@/types/ticket';
+import type { Project } from '@/types/project';
 
 interface NoteOrComment {
   id: number;
@@ -27,12 +29,14 @@ interface NoteOrComment {
 const route = useRoute();
 const router = useRouter();
 const ticket = ref<Ticket | null>(null);
+const projectDetails = ref<Project | null>(null);
 const recentTicketsStore = useRecentTicketsStore();
 const { setCustomTitle } = usePageTitle();
 
 const selectedStatus = ref<TicketStatus>("open");
 const selectedPriority = ref<TicketPriority>("low");
 const showDeviceModal = ref(false);
+const showProjectModal = ref(false);
 
 const fetchTicket = async (ticketId: string | string[]) => {
   const id = Number(ticketId);
@@ -84,6 +88,10 @@ const fetchTicket = async (ticketId: string | string[]) => {
     },
     fromRecent,
   );
+
+  if (foundTicket.project) {
+    await fetchProjectDetails(foundTicket.project)
+  }
 };
 
 const formattedDate = (dateString: string | undefined) => {
@@ -190,6 +198,57 @@ const unlinkTicket = (linkedTicketId: number) => {
     // API endpoint needed: DELETE /api/tickets/{id}/links/{linkedTicketId}
   }
 };
+
+const handleAddToProject = async (projectId: number) => {
+  if (ticket.value) {
+    // TODO: Replace with actual API call
+    const mockProject: Project = {
+      id: projectId,
+      name: "Website Redesign",
+      description: "Complete overhaul of the company website",
+      status: 'active',
+      ticketCount: 5
+    }
+    
+    projectDetails.value = mockProject
+    ticket.value.project = String(projectId)
+    showProjectModal.value = false
+    // TODO: Update ticket in backend
+    console.log(`Added ticket ${ticket.value.id} to project ${projectId}`)
+  }
+}
+
+// Add fetchProjectDetails function
+const fetchProjectDetails = async (projectId: string) => {
+  // TODO: Replace with actual API call
+  const mockProject: Project = {
+    id: Number(projectId),
+    name: "Website Redesign",
+    description: "Complete overhaul of the company website",
+    status: 'active',
+    ticketCount: 5
+  }
+  
+  projectDetails.value = mockProject
+}
+
+// Add this function to handle project navigation
+const viewProject = (projectId: string) => {
+  router.push(`/projects/${projectId}`)
+}
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'active':
+      return 'text-green-400'
+    case 'completed':
+      return 'text-blue-400'
+    case 'archived':
+      return 'text-gray-400'
+    default:
+      return 'text-slate-400'
+  }
+}
 </script>
 
 <template>
@@ -271,8 +330,79 @@ const unlinkTicket = (linkedTicketId: number) => {
               </div>
 
               <!-- Project section -->
-              <div v-if="!ticket.project">
-                <a href="#" class="block text-blue-500 hover:underline">+ Add to project</a>
+              <div class="flex flex-col gap-2">
+                <div v-if="ticket.project" class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-slate-300">Project</h3>
+                  <a 
+                    href="#" 
+                    @click.prevent="showProjectModal = true" 
+                    class="text-blue-500 hover:text-blue-400 text-sm hover:underline"
+                  >
+                    Change project
+                  </a>
+                </div>
+
+                <div v-if="ticket.project && projectDetails" class="bg-slate-700 p-3 rounded-lg">
+                  <!-- Project Info -->
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-start justify-between">
+                      <div class="flex-1">
+                        <h4 class="text-sm font-medium text-white">{{ projectDetails.name }}</h4>
+                        <p class="text-sm text-slate-400 mt-0.5 line-clamp-2">{{ projectDetails.description }}</p>
+                      </div>
+                      <div class="flex items-start gap-2 ml-4">
+                        <button
+                          @click="viewProject(ticket.project!)"
+                          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
+                          title="View project"
+                        >
+                          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                            <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+                          </svg>
+                        </button>
+                        <button
+                          @click="ticket.project = undefined; projectDetails = null"
+                          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
+                          title="Remove from project"
+                        >
+                          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs px-2 py-0.5 bg-slate-600/50 text-slate-300 rounded">
+                        #{{ ticket.project }}
+                      </span>
+                      <span :class="[getStatusColor(projectDetails.status), 'text-xs']">
+                        {{ projectDetails.status }}
+                      </span>
+                      <span class="text-xs text-slate-400">
+                        {{ projectDetails.ticketCount }} tickets
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else>
+                  <a 
+                    href="#" 
+                    @click.prevent="showProjectModal = true" 
+                    class="block text-blue-500 hover:underline"
+                  >
+                    + Add to project
+                  </a>
+                </div>
+
+                <!-- Project Selection Modal -->
+                <ProjectSelectionModal
+                  :show="showProjectModal"
+                  :current-project-id="ticket.project ? Number(ticket.project) : undefined"
+                  @close="showProjectModal = false"
+                  @select-project="handleAddToProject"
+                />
               </div>
             </template>
           </div>

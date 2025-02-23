@@ -5,6 +5,9 @@ import LoginView from '../views/LoginView.vue'
 import ErrorView from '../views/ErrorView.vue'
 import ListView from '../views/ListView.vue'
 import SettingsView from '../views/SettingsView.vue'
+import ProjectsView from '../views/ProjectsView.vue'
+import ProjectDetailView from '../views/ProjectDetailView.vue'
+import TicketNotesView from '../views/TicketNotesView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -62,6 +65,41 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         title: 'View Ticket'
+      },
+      beforeEnter: (to) => {
+        to.meta.key = to.params.id
+      }
+    },
+    {
+      path: '/tickets/:id/notes',
+      name: 'ticket-notes',
+      component: TicketNotesView,
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: 'Edit Ticket Notes'
+      },
+      beforeEnter: (to) => {
+        to.meta.key = to.params.id
+      }
+    },
+    {
+      path: '/projects',
+      name: 'projects',
+      component: ProjectsView,
+      meta: {
+        requiresAuth: true,
+        title: 'Projects'
+      }
+    },
+    {
+      path: '/projects/:id',
+      name: 'project-detail',
+      component: ProjectDetailView,
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: 'Project Details'
       },
       beforeEnter: (to) => {
         to.meta.key = to.params.id
