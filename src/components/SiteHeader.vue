@@ -4,6 +4,7 @@ import { computed, ref, onMounted, onUnmounted, nextTick } from 'vue';
 import UserAvatar from './UserAvatar.vue';
 import { usePageTitle } from '@/composables/usePageTitle';
 import AnimatedTitle from './AnimatedTitle.vue';
+import TicketTitle from './ticketComponents/TicketTitle.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -12,17 +13,30 @@ interface Props {
   title?: string;
   showCreateButton?: boolean;
   useRouteTitle?: boolean;
+  ticket: { id: number; title: string } | null;
+  isTransitioning?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  useRouteTitle: false
+  useRouteTitle: false,
+  ticket: null,
+  isTransitioning: false
 });
 
-defineSlots<{
-  actions(): any;
-}>();
+const emit = defineEmits(['updateTicketTitle']);
 
 const { pageTitle, setCustomTitle } = usePageTitle();
+
+const isTicketView = computed(() => {
+  return props.ticket !== null;
+});
+
+const handleUpdateTitle = (newTitle: string) => {
+  if (props.ticket) {
+    setCustomTitle(`#${props.ticket.id} ${newTitle}`);
+    emit('updateTicketTitle', newTitle);
+  }
+};
 
 // Initialize title from route meta if needed
 onMounted(() => {
@@ -83,8 +97,7 @@ const navigateToSettings = () => {
 };
 
 const handleLogout = () => {
-  // Add logout logic here
-  router.push('/login');
+  // API endpoint needed: POST /api/auth/logout
 };
 
 // Event listeners for click outside
@@ -102,9 +115,23 @@ onUnmounted(() => {
 <template>
   <header class="bg-slate-800 border-b border-slate-700">
     <div class="flex items-center justify-between h-16 px-6">
-      <!-- Left side - can be used for breadcrumbs or other navigation -->
-      <div class="flex items-center">
-        <AnimatedTitle :title="pageTitle" />
+      <!-- Left side - Title area -->
+      <div class="flex items-center flex-1 relative overflow-hidden">
+        <div 
+          class="w-full transition-all duration-300 ease-in-out"
+          :class="{ 'opacity-0 -translate-y-4': isTransitioning }"
+        >
+          <template v-if="isTicketView && props.ticket">
+            <TicketTitle 
+              :ticket-id="props.ticket.id"
+              :initial-title="props.ticket.title"
+              @update-title="handleUpdateTitle"
+            />
+          </template>
+          <template v-else>
+            <AnimatedTitle :title="pageTitle" />
+          </template>
+        </div>
       </div>
 
       <!-- Right side -->
@@ -179,3 +206,17 @@ onUnmounted(() => {
     </div>
   </header>
 </template>
+
+<style scoped>
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transition-all {
+    transition-duration: 0.1s;
+    transform: none !important;
+  }
+}
+</style>
