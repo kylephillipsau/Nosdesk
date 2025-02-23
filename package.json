@@ -30,7 +30,7 @@
     "@tailwindcss/typography": "^0.5.16",
     "@tsconfig/node22": "^22.0.0",
     "@types/node": "^22.13.1",
-    "@vitejs/plugin-vue": "^5.2.1",
+    "@vitejs/plugin-vue": "^1.7.1",
     "@vue/tsconfig": "^0.7.0",
     "npm-run-all2": "^7.0.2",
     "tailwindcss": "^4.0.6",

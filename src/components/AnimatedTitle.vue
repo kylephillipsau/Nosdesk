@@ -17,7 +17,7 @@ watch(() => props.title, async (newTitle) => {
   if (isAnimating.value) return;
   
   isAnimating.value = true;
-  await new Promise(resolve => setTimeout(resolve, 300));
+  await new Promise(resolve => setTimeout(resolve, 150));
   currentTitle.value = newTitle;
   isAnimating.value = false;
 }, { immediate: true });
@@ -26,10 +26,19 @@ watch(() => props.title, async (newTitle) => {
 <template>
   <div class="relative overflow-hidden">
     <h1 
-      class="text-xl font-semibold text-white transition-all duration-300 ease-in-out"
-      :class="{ '-translate-x-full opacity-0': isAnimating }"
+      class="text-xl font-semibold text-white transition-all duration-150 ease-in-out"
+      :class="{ 'opacity-0 -translate-y-4': isAnimating }"
     >
       {{ currentTitle }}
     </h1>
   </div>
 </template>
+
+<style scoped>
+@media (prefers-reduced-motion: reduce) {
+  .transition-all {
+    transition-duration: 0.1s;
+    transform: none !important;
+  }
+}
+</style>

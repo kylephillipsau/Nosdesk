@@ -1,12 +1,18 @@
 <!-- # src/components/UserAvatar.vue -->
 <script setup lang="ts">
+import { computed } from 'vue'
+
 interface Props {
-  name: string
-  showName?: boolean
+  name: string;
+  showName?: boolean;
+  size?: 'sm' | 'md' | 'lg';
+  avatar?: string | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  showName: true
+  showName: true,
+  size: 'md',
+  avatar: null
 })
 
 const getInitials = (name: string) => {
@@ -34,16 +40,65 @@ const getBackgroundColor = (name: string) => {
   // Return HSL color with fixed saturation and lightness
   return `hsl(${hue}, 70%, 35%)`
 }
+
+const sizeClasses = computed(() => {
+  // Base sizes in rem units
+  const sizes = {
+    sm: {
+      base: 'h-[1.5rem] w-[1.5rem]', // 24px at default font size
+      text: 'text-xs',
+      responsive: 'sm:h-[1.75rem] sm:w-[1.75rem]' // Slightly larger on small screens
+    },
+    md: {
+      base: 'h-[2rem] w-[2rem]', // 32px at default font size
+      text: 'text-sm',
+      responsive: 'sm:h-[2.25rem] sm:w-[2.25rem]' // Slightly larger on small screens
+    },
+    lg: {
+      base: 'h-[2.25rem] w-[2.25rem]', // 36px at default font size
+      text: 'text-sm',
+      responsive: 'sm:h-[2.5rem] sm:w-[2.5rem]' // 40px on small screens
+    }
+  }
+
+  return sizes[props.size] || sizes.md
+})
+
+// Computed class for the name text that scales with viewport
+const nameTextClasses = computed(() => {
+  const baseClasses = 'text-white transition-all duration-200'
+  
+  switch (props.size) {
+    case 'sm':
+      return `${baseClasses} text-xs sm:text-sm`
+    case 'lg':
+      return `${baseClasses} text-sm` // Keeping text size consistent for header
+    default: // md
+      return `${baseClasses} text-xs sm:text-sm`
+  }
+})
 </script>
 
 <template>
-  <div class="flex items-center gap-1">
+  <div class="flex items-center gap-2">
     <div 
-      class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-medium text-white"
+      :class="[sizeClasses.base, sizeClasses.responsive]"
+      class="rounded-full flex items-center justify-center flex-shrink-0 font-medium text-white transition-all duration-200"
       :style="{ backgroundColor: getBackgroundColor(name) }"
     >
-      {{ getInitials(name) }}
+      <img 
+        v-if="avatar" 
+        :src="avatar" 
+        :alt="name"
+        class="w-full h-full rounded-full object-cover"
+      />
+      <span v-else :class="sizeClasses.text">{{ getInitials(name) }}</span>
     </div>
-    <span v-if="showName">{{ name }}</span>
+    <span 
+      v-if="showName" 
+      :class="nameTextClasses"
+    >
+      {{ name }}
+    </span>
   </div>
 </template>

@@ -43,23 +43,15 @@ const router = useRouter()
 const openTicket = (ticketId: number) => {
   router.push(`/tickets/${ticketId}`)
 }
-
-const createNewTicket = () => {
-  // Implement your new ticket creation logic here
-  // For example, navigate to a new ticket form:
-  router.push('/tickets/new')
-  // Or open a modal, etc.
-}
 </script>
 
 <template>
   <div class="flex flex-col h-full">
-    <!-- Table Container with adjusted width handling -->
     <div class="flex-1 overflow-auto">
       <div class="min-w-full inline-block align-middle">
         <div class="overflow-x-auto">
           <table class="min-w-full divide-y divide-slate-800 text-sm text-gray-200">
-            <thead class="bg-slate-700/50">
+            <thead class="bg-slate-800">
               <tr>
                 <th scope="col" class="p-4 w-10">
                   <input type="checkbox"
@@ -84,7 +76,8 @@ const createNewTicket = () => {
                   <input type="checkbox"
                     class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
                     :checked="selectedTickets.includes(ticket.id)" 
-                    @change="(e) => toggleSelection(e, ticket.id)">
+                    @change="(changeEvent: Event) => toggleSelection(changeEvent, ticket.id)"
+                    @click.stop>
                 </td>
                 <td class="px-4 py-1 whitespace-nowrap">#{{ ticket.id }}</td>
                 <td class="px-4 py-1">{{ ticket.title }}</td>
@@ -96,7 +89,7 @@ const createNewTicket = () => {
                 </td>
                 <td class="px-4 py-1 whitespace-nowrap">{{ ticket.created }}</td>
                 <td class="px-4 py-1 whitespace-nowrap">
-                  <UserAvatar :name="ticket.assignee" />
+                  <UserAvatar :name="ticket.assignee" size="sm" />
                 </td>
               </tr>
             </tbody>
@@ -104,7 +97,6 @@ const createNewTicket = () => {
         </div>
       </div>
 
-      <!-- Empty state -->
       <div v-if="tickets.length === 0" class="p-8 text-center text-gray-400">
         No tickets found. Create a new ticket to get started.
       </div>

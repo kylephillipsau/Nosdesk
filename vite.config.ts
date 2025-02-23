@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [
     vue(),
     vueDevTools({
-      launchEditor: 'windsurf',
+      launchEditor: 'cursor',
     }),
     tailwindcss(),
   ],

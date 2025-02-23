@@ -55,15 +55,15 @@ const tabs: SettingsTab[] = [
               <h2 class="text-lg font-medium text-white">Appearance Settings</h2>
               <div class="space-y-4">
                 <div>
-                  <label class="flex items-center">
-                    <input type="checkbox" class="form-checkbox bg-slate-700 border-slate-600 rounded text-blue-500" />
-                    <span class="ml-2 text-slate-300">Enable dark mode</span>
+                  <label class="flex items-center gap-3">
+                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500" />
+                    <span class="text-slate-300">Enable dark mode</span>
                   </label>
                 </div>
                 <div>
-                  <label class="flex items-center">
-                    <input type="checkbox" class="form-checkbox bg-slate-700 border-slate-600 rounded text-blue-500" />
-                    <span class="ml-2 text-slate-300">Show compact view</span>
+                  <label class="flex items-center gap-3">
+                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500" />
+                    <span class="text-slate-300">Show compact view</span>
                   </label>
                 </div>
               </div>
@@ -74,15 +74,15 @@ const tabs: SettingsTab[] = [
               <h2 class="text-lg font-medium text-white">Notification Preferences</h2>
               <div class="space-y-4">
                 <div>
-                  <label class="flex items-center">
-                    <input type="checkbox" class="form-checkbox bg-slate-700 border-slate-600 rounded text-blue-500" />
-                    <span class="ml-2 text-slate-300">Email notifications</span>
+                  <label class="flex items-center gap-3">
+                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500" />
+                    <span class="text-slate-300">Email notifications</span>
                   </label>
                 </div>
                 <div>
-                  <label class="flex items-center">
-                    <input type="checkbox" class="form-checkbox bg-slate-700 border-slate-600 rounded text-blue-500" />
-                    <span class="ml-2 text-slate-300">Desktop notifications</span>
+                  <label class="flex items-center gap-3">
+                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500" />
+                    <span class="text-slate-300">Desktop notifications</span>
                   </label>
                 </div>
               </div>
@@ -111,9 +111,9 @@ const tabs: SettingsTab[] = [
                   Change Password
                 </button>
                 <div>
-                  <label class="flex items-center">
-                    <input type="checkbox" class="form-checkbox bg-slate-700 border-slate-600 rounded text-blue-500" />
-                    <span class="ml-2 text-slate-300">Enable two-factor authentication</span>
+                  <label class="flex items-center gap-3">
+                    <input type="checkbox" class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500" />
+                    <span class="text-slate-300">Enable two-factor authentication</span>
                   </label>
                 </div>
               </div>
