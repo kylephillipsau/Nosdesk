@@ -9,10 +9,7 @@ const email = ref('');
 const password = ref('');
 
 const handleLogin = () => {
-  // Add your login logic here
-  console.log('Login attempt:', { email: email.value, password: password.value });
-  // On successful login:
-  // router.push('/');
+  // API endpoint needed: POST /api/auth/login
 };
 </script>
 

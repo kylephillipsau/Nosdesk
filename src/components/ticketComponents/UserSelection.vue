@@ -115,7 +115,7 @@ onUnmounted(() => {
         @click="selectUser(user.id)"
         class="p-2 rounded-md cursor-pointer hover:bg-slate-700 transition-colors text-slate-200 flex items-center gap-2"
       >
-        <UserAvatar :name="user.name" :showName="false" class="w-8 h-8" />
+        <UserAvatar :name="user.name" :showName="false"  size="sm"/>
         <div class="flex-1">
           <div class="flex flex-col justify-between items-start">
             <span class="font-medium">{{ user.name }}</span>
