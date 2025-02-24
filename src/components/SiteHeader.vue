@@ -114,7 +114,7 @@ onUnmounted(() => {
 
 <template>
   <header class="bg-slate-800 border-b border-slate-700">
-    <div class="flex items-center justify-between h-16 px-6">
+    <div class="flex items-center justify-between h-16 px-6 gap-2">
       <!-- Left side - Title area -->
       <div class="flex items-center flex-1 relative overflow-hidden">
         <div 
