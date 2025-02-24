@@ -49,7 +49,7 @@ const handleKeydown = (event: KeyboardEvent) => {
         @blur="handleBlur"
         @click="handleClick"
         @keydown="handleKeydown"
-        class="w-full bg-transparent text-white text-xl font-semibold px-2 py-1 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all duration-150"
+        class="w-full bg-transparent text-white text-xl font-semibold px-2 py-1 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none transition-all duration-150"
         :class="{ 'bg-slate-700/50': isEditing }"
         placeholder="Enter ticket title..."
       />

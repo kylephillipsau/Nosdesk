@@ -109,16 +109,16 @@ const getPriorityColor = (priority: string) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
-    <div class="flex-1 overflow-x-auto overflow-y-auto">
+  <div class="h-full flex flex-col relative">
+    <div class="flex-1 overflow-x-auto">
       <div class="flex gap-4 p-4 min-w-max h-full">
         <div
           v-for="column in columns"
           :key="column.id"
-          class="w-80 flex flex-col bg-slate-800 rounded-lg"
+          class="w-80 flex flex-col bg-slate-800 rounded-lg h-full"
         >
           <!-- Column Header -->
-          <div class="p-3 border-b border-slate-700 sticky top-0 bg-slate-800 z-10">
+          <div class="p-3 border-b border-slate-700 sticky top-0 bg-slate-800" style="z-index: 1;">
             <div class="flex items-center justify-between">
               <h3 class="font-medium text-slate-200">{{ column.title }}</h3>
               <span class="text-sm text-slate-400">{{ column.tickets.length }}</span>
@@ -127,8 +127,7 @@ const getPriorityColor = (priority: string) => {
 
           <!-- Column Content -->
           <div
-            class="flex-1 p-2 overflow-y-auto"
-            style="max-height: calc(100vh - 13rem);"
+            class="flex-1 p-2 overflow-y-auto hide-vertical-scrollbar"
             @dragover="allowDrop"
             @drop="onDrop(column.id)"
           >
@@ -169,14 +168,41 @@ const getPriorityColor = (priority: string) => {
 </template>
 
 <style scoped>
-/* Hide scrollbar for Chrome, Safari and Opera */
-.overflow-y-auto::-webkit-scrollbar {
+/* Only hide vertical scrollbars for ticket columns */
+.hide-vertical-scrollbar::-webkit-scrollbar {
   display: none;
 }
 
-/* Hide scrollbar for IE, Edge and Firefox */
-.overflow-y-auto {
+.hide-vertical-scrollbar {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
+}
+
+/* Style horizontal scrollbar */
+.overflow-x-auto::-webkit-scrollbar {
+  height: 12px;
+  display: block;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: rgb(30 41 59); /* slate-800 */
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: rgb(51 65 85); /* slate-700 */
+  border-radius: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background: rgb(71 85 105); /* slate-600 */
+}
+
+.overflow-x-auto {
+  scrollbar-color: rgb(51 65 85) rgb(30 41 59); /* thumb and track colors */
+}
+
+/* Ensure kanban content stays below main header */
+.relative {
+  z-index: 0;
 }
 </style> 

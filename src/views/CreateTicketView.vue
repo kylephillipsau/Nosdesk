@@ -5,9 +5,15 @@ import { useRouter } from 'vue-router';
 import UserSelection from '@/components/ticketComponents/UserSelection.vue';
 import CustomDropdown from '@/components/ticketComponents/CustomDropdown.vue';
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
+import DeviceModal from '@/components/ticketComponents/DeviceModal.vue';
+import LinkedTicketModal from '@/components/ticketComponents/LinkedTicketModal.vue';
+import LinkedTicketPreview from '@/components/ticketComponents/LinkedTicketPreview.vue';
+import ProjectSelectionModal from '@/components/ticketComponents/ProjectSelectionModal.vue';
 import TicketArticleBody from '@/components/ticketComponents/TicketArticleBody.vue';
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
+import type { Device } from '@/types/ticket';
+import type { Project } from '@/types/project';
 import users from '@/assets/users.json';
 import TicketTitle from '@/components/ticketComponents/TicketTitle.vue';
 
@@ -20,15 +26,8 @@ interface Ticket {
   modified: string;
   assignee: string;
   requester: string;
-  device?: {
-    id?: string;
-    name?: string;
-    hostname?: string;
-    serialNumber?: string;
-    model?: string;
-    warrantyStatus?: string;
-  };
-  linkedTicket?: number;
+  devices?: Device[];
+  linkedTickets?: number[];
   project?: string;
   articleContent?: string;
 }
@@ -43,23 +42,18 @@ const newTicket = ref<Ticket>({
   modified: new Date().toISOString(),
   assignee: '',
   requester: '',
-  device: undefined,
-  linkedTicket: undefined,
-  project: '',
+  devices: [],
+  linkedTickets: [],
+  project: undefined,
   articleContent: '',
 });
 
 const selectedStatus = ref<TicketStatus>('open');
 const selectedPriority = ref<TicketPriority>('low');
-const showDeviceDetails = ref(false);
-const deviceDetails = ref({
-  id: '',
-  name: '',
-  hostname: '',
-  serialNumber: '',
-  model: '',
-  warrantyStatus: '',
-});
+const showDeviceModal = ref(false);
+const showLinkedTicketModal = ref(false);
+const showProjectModal = ref(false);
+const projectDetails = ref<Project | null>(null);
 
 const usersFromJson = computed(() => users.users);
 
@@ -81,10 +75,53 @@ const updateAssignee = (userId: string) => {
   newTicket.value.assignee = userId;
 };
 
-const addDevice = () => {
-  deviceDetails.value = { id: 'new-id', name: 'New Device', hostname: '', serialNumber: '', model: '', warrantyStatus: '' };
-  showDeviceDetails.value = true;
-  newTicket.value.device = deviceDetails.value;
+const handleAddDevice = (device: Device) => {
+  if (!newTicket.value.devices) {
+    newTicket.value.devices = [];
+  }
+  newTicket.value.devices.push(device);
+  showDeviceModal.value = false;
+};
+
+const removeDevice = (deviceId: string) => {
+  if (newTicket.value.devices) {
+    newTicket.value.devices = newTicket.value.devices.filter(device => device.id !== deviceId);
+  }
+};
+
+const handleLinkTicket = (linkedTicketId: number) => {
+  if (!newTicket.value.linkedTickets) {
+    newTicket.value.linkedTickets = [];
+  }
+  if (!newTicket.value.linkedTickets.includes(linkedTicketId)) {
+    newTicket.value.linkedTickets.push(linkedTicketId);
+  }
+};
+
+const unlinkTicket = (linkedTicketId: number) => {
+  if (newTicket.value.linkedTickets) {
+    newTicket.value.linkedTickets = newTicket.value.linkedTickets.filter(id => id !== linkedTicketId);
+  }
+};
+
+const handleAddToProject = async (projectId: number) => {
+  // TODO: Replace with actual API call
+  const mockProject: Project = {
+    id: projectId,
+    name: "Website Redesign",
+    description: "Complete overhaul of the company website",
+    status: 'active',
+    ticketCount: 5
+  }
+  
+  projectDetails.value = mockProject;
+  newTicket.value.project = String(projectId);
+  showProjectModal.value = false;
+};
+
+const removeFromProject = () => {
+  newTicket.value.project = undefined;
+  projectDetails.value = null;
 };
 
 const saveTicket = async () => {
@@ -110,22 +147,17 @@ const resetForm = () => {
     modified: new Date().toISOString(),
     assignee: '',
     requester: '',
-    device: undefined,
-    linkedTicket: undefined,
-    project: '',
+    devices: [],
+    linkedTickets: [],
+    project: undefined,
     articleContent: '',
   };
   selectedStatus.value = 'open';
   selectedPriority.value = 'low';
-  showDeviceDetails.value = false;
-  deviceDetails.value = {
-    id: '',
-    name: '',
-    hostname: '',
-    serialNumber: '',
-    model: '',
-    warrantyStatus: '',
-  };
+  showDeviceModal.value = false;
+  showLinkedTicketModal.value = false;
+  showProjectModal.value = false;
+  projectDetails.value = null;
 };
 
 const updateTicketTitle = (newTitle: string) => {
@@ -169,13 +201,25 @@ watch(
   () => updateFormState(),
   { deep: true }
 );
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'active':
+      return 'text-green-400'
+    case 'completed':
+      return 'text-blue-400'
+    case 'archived':
+      return 'text-gray-400'
+    default:
+      return 'text-slate-400'
+  }
+}
 </script>
 
 <template>
   <div class="flex-1">
     <div class="flex flex-col">
       <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-7xl">
-
         <div class="flex items-center justify-between gap-4">
           <div class="flex-1">
             <TicketTitle :ticket-id="80085" :initial-title="newTicket.title" @update-title="updateTicketTitle" />
@@ -185,7 +229,7 @@ watch(
             class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             :disabled="!newTicket.title || !newTicket.requester"
           >
-            <span class="material-icons text-xl">Save Ticket</span>
+            Save Ticket
           </button>
         </div>
 
@@ -254,50 +298,139 @@ watch(
                   />
                 </div>
               </div>
-            </div>
 
-            <!-- Device Section -->
-            <div v-if="!newTicket.device">
-              <a href="#" @click.prevent="addDevice" class="block mb-2 text-blue-500 hover:underline">+ Add device</a>
-            </div>
-            <DeviceDetails
-              v-if="showDeviceDetails"
-              v-model:deviceId="deviceDetails.id"
-              v-model:deviceName="deviceDetails.name"
-              v-model:hostname="deviceDetails.hostname"
-              v-model:serialNumber="deviceDetails.serialNumber"
-              v-model:model="deviceDetails.model"
-              v-model:warrantyStatus="deviceDetails.warrantyStatus"
-            />
-
-            <!-- Linked Ticket and Project -->
-            <div class="flex flex-col gap-4">
-              <div class="flex flex-col gap-1">
-                <label class="text-sm text-slate-400">Linked Ticket (optional)</label>
-                <input
-                  v-model="newTicket.linkedTicket"
-                  type="number"
-                  placeholder="Enter linked ticket ID"
-                  class="px-2 py-1 text-sm rounded bg-slate-700 text-slate-200 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+              <!-- Devices Section -->
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-slate-300">Devices</h3>
+                  <a 
+                    href="#" 
+                    @click.prevent="showDeviceModal = true" 
+                    class="text-blue-500 hover:text-blue-400 text-sm hover:underline"
+                  >
+                    + Add device
+                  </a>
+                </div>
+                <div v-if="newTicket.devices?.length" class="flex flex-col gap-2">
+                  <DeviceDetails
+                    v-for="device in newTicket.devices"
+                    :key="device.id"
+                    v-bind="device"
+                    @remove="() => removeDevice(device.id)"
+                  />
+                </div>
               </div>
 
-              <div class="flex flex-col gap-1">
-                <label class="text-sm text-slate-400">Project (optional)</label>
-                <input
-                  v-model="newTicket.project"
-                  type="text"
-                  placeholder="Enter project name"
-                  class="px-2 py-1 text-sm rounded bg-slate-700 text-slate-200 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+              <!-- Linked Tickets Section -->
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-slate-300">Linked Tickets</h3>
+                  <a 
+                    href="#" 
+                    @click.prevent="showLinkedTicketModal = true" 
+                    class="text-blue-500 hover:text-blue-400 text-sm hover:underline"
+                  >
+                    + Add linked ticket
+                  </a>
+                </div>
+                <div v-if="newTicket.linkedTickets?.length" class="flex flex-col gap-2">
+                  <LinkedTicketPreview
+                    v-for="linkedId in newTicket.linkedTickets"
+                    :key="linkedId"
+                    :linked-ticket-id="linkedId"
+                    @unlink="() => unlinkTicket(linkedId)"
+                  />
+                </div>
+              </div>
+
+              <!-- Project Section -->
+              <div class="flex flex-col gap-2">
+                <div v-if="newTicket.project" class="flex items-center justify-between">
+                  <h3 class="text-sm font-medium text-slate-300">Project</h3>
+                  <a 
+                    href="#" 
+                    @click.prevent="showProjectModal = true" 
+                    class="text-blue-500 hover:text-blue-400 text-sm hover:underline"
+                  >
+                    Change project
+                  </a>
+                </div>
+
+                <div v-if="newTicket.project && projectDetails" class="bg-slate-700 p-3 rounded-lg">
+                  <!-- Project Info -->
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-start justify-between">
+                      <div class="flex-1">
+                        <h4 class="text-sm font-medium text-white">{{ projectDetails.name }}</h4>
+                        <p class="text-sm text-slate-400 mt-0.5 line-clamp-2">{{ projectDetails.description }}</p>
+                      </div>
+                      <div class="flex items-start gap-2 ml-4">
+                        <button
+                          @click="removeFromProject"
+                          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
+                          title="Remove from project"
+                        >
+                          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs px-2 py-0.5 bg-slate-600/50 text-slate-300 rounded">
+                        #{{ newTicket.project }}
+                      </span>
+                      <span :class="[getStatusColor(projectDetails.status), 'text-xs']">
+                        {{ projectDetails.status }}
+                      </span>
+                      <span class="text-xs text-slate-400">
+                        {{ projectDetails.ticketCount }} tickets
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else>
+                  <a 
+                    href="#" 
+                    @click.prevent="showProjectModal = true" 
+                    class="block text-blue-500 hover:underline"
+                  >
+                    + Add to project
+                  </a>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Article Body -->
-          <TicketArticleBody v-model:content="newTicket.articleContent" :is-editing="true" />
+          <div class="flex flex-col gap-4">
+            <!-- Ticket Notes -->
+            <TicketArticleBody v-model:content="newTicket.articleContent" />
+          </div>
         </div>
       </div>
     </div>
+
+    <!-- Modals -->
+    <DeviceModal
+      :show="showDeviceModal"
+      @close="showDeviceModal = false"
+      @add-device="handleAddDevice"
+    />
+
+    <LinkedTicketModal 
+      :show="showLinkedTicketModal"
+      :current-ticket-id="80085"
+      :existing-linked-tickets="newTicket.linkedTickets"
+      @close="showLinkedTicketModal = false"
+      @select-ticket="handleLinkTicket"
+    />
+
+    <ProjectSelectionModal
+      :show="showProjectModal"
+      :current-project-id="newTicket.project ? Number(newTicket.project) : undefined"
+      @close="showProjectModal = false"
+      @select-project="handleAddToProject"
+    />
   </div>
 </template>
