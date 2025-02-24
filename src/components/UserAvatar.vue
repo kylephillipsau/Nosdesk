@@ -5,7 +5,7 @@ import { computed } from 'vue'
 interface Props {
   name: string;
   showName?: boolean;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   avatar?: string | null;
 }
 
@@ -44,6 +44,11 @@ const getBackgroundColor = (name: string) => {
 const sizeClasses = computed(() => {
   // Base sizes in rem units
   const sizes = {
+    xs: {
+      base: 'h-[1.25rem] w-[1.25rem]', // 20px at default font size
+      text: 'text-[10px]',
+      responsive: 'sm:h-[1.375rem] sm:w-[1.375rem]' // 22px on small screens
+    },
     sm: {
       base: 'h-[1.5rem] w-[1.5rem]', // 24px at default font size
       text: 'text-xs',
@@ -69,6 +74,8 @@ const nameTextClasses = computed(() => {
   const baseClasses = 'text-white transition-all duration-200'
   
   switch (props.size) {
+    case 'xs':
+      return `${baseClasses} text-[10px] sm:text-xs`
     case 'sm':
       return `${baseClasses} text-xs sm:text-sm`
     case 'lg':

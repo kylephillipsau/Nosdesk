@@ -5,6 +5,9 @@ interface Ticket {
   id: number;
   title: string;
   status: 'open' | 'in-progress' | 'closed';
+  requester?: string;
+  assignee?: string;
+  created?: string;
 }
 
 export const useRecentTicketsStore = defineStore('recentTickets', () => {
