@@ -429,12 +429,12 @@ const handleAddComment = async (data: { content: string; attachments: { url: str
                   </a>
                 </div>
 
-                <div v-if="ticket.project && projectDetails" class="bg-slate-700 p-3 rounded-lg">
+                <div v-if="ticket.project && projectDetails" class="bg-slate-700/50 p-3 rounded-lg">
                   <!-- Project Info -->
                   <div class="flex flex-col gap-2">
                     <div class="flex items-start justify-between">
                       <div class="flex-1">
-                        <h4 class="text-sm font-medium text-white">{{ projectDetails.name }}</h4>
+                        <h4 class="text-lg font-medium text-white">{{ projectDetails.name }}</h4>
                         <p class="text-sm text-slate-400 mt-0.5 line-clamp-2">{{ projectDetails.description }}</p>
                       </div>
                       <div class="flex items-start gap-2 ml-4">

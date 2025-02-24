@@ -382,7 +382,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg py-3">
+  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg p-3">
     <!-- Audio player -->
     <audio 
       ref="audioRef" 
