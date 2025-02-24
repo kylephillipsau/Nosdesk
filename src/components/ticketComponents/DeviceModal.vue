@@ -13,8 +13,13 @@ const emit = defineEmits<{
   (e: 'add-device', device: Device): void;
 }>();
 
+// Generate a simple unique ID
+const generateId = () => {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2);
+};
+
 const createEmptyDevice = (): Device => ({
-  id: crypto.randomUUID(),
+  id: generateId(),
   name: '',
   hostname: '',
   serialNumber: '',
