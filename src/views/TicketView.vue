@@ -113,6 +113,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
       id: ticket.value.id,
       title: ticket.value.title,
       status: ticket.value.status,
+      requester: ticket.value.requester,
+      assignee: ticket.value.assignee,
+      created: ticket.value.created
     },
     fromRecent,
   );
