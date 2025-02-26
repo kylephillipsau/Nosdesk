@@ -33,8 +33,8 @@ const setupOscilloscope = (stream: MediaStream) => {
   const source = audioContext.value.createMediaStreamSource(stream);
   source.connect(analyser.value);
   
-  analyser.value.fftSize = 1024;
-  analyser.value.smoothingTimeConstant = 0.8;
+  analyser.value.fftSize = 2048;
+  analyser.value.smoothingTimeConstant = 0.6;
   
   drawOscilloscope();
 };
@@ -63,22 +63,33 @@ const drawOscilloscope = () => {
     ctx.fillRect(0, 0, width, height);
 
     const step = Math.floor(bufferLength / numBars);
+    const amplitudeMultiplier = 2.5;
     
     for (let i = 0; i < numBars; i++) {
-      const index = i * step;
-      const amplitude = Math.abs(dataArray[index] - 128);
-      let targetHeight = (amplitude / 64) * height;
-      targetHeight = Math.min(targetHeight, height);
+      let rms = 0;
+      const startIndex = i * step;
+      for (let j = 0; j < step; j++) {
+        const value = (dataArray[startIndex + j] - 128) / 128;
+        rms += value * value;
+      }
+      rms = Math.sqrt(rms / step);
       
-      prevBarHeights[i] = prevBarHeights[i] + (targetHeight - prevBarHeights[i]) * 0.15;
+      const amplitude = Math.pow(rms, 0.7) * amplitudeMultiplier;
+      
+      let targetHeight = amplitude * height;
+      targetHeight = Math.min(targetHeight, height * 0.95);
+      
+      const easingFactor = amplitude > prevBarHeights[i] ? 0.3 : 0.15;
+      prevBarHeights[i] = prevBarHeights[i] + (targetHeight - prevBarHeights[i]) * easingFactor;
       
       const barHeight = prevBarHeights[i];
       const x = i * barWidth;
       const y = height - barHeight;
 
       const gradient = ctx.createLinearGradient(x, y, x, height);
-      gradient.addColorStop(0, '#3B82F6');
-      gradient.addColorStop(1, '#2563EB');
+      gradient.addColorStop(0, '#60A5FA');
+      gradient.addColorStop(0.6, '#3B82F6');
+      gradient.addColorStop(1, '#1D4ED8');
       
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -88,6 +99,13 @@ const drawOscilloscope = () => {
       ctx.quadraticCurveTo(x + barWidth - 2, y, x + barWidth - 2, y + 4);
       ctx.lineTo(x + barWidth - 2, height);
       ctx.fill();
+
+      ctx.shadowColor = '#60A5FA';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
     }
   };
 

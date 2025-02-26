@@ -1,0 +1,10 @@
+{
+  "id": "welcome",
+  "title": "Welcome to nosDesk",
+  "description": "Introduction to the helpdesk system",
+  "content": "# Welcome to nosDesk\n\nThis is the introduction to our helpdesk system. NosDesk is designed to streamline your support operations and provide a seamless experience for both support agents and customers.\n\n## Key Features\n\n- **Ticket Management**: Create, assign, and track support tickets\n- **Knowledge Base**: Create and maintain documentation\n- **Asset Management**: Track devices and software\n- **Team Collaboration**: Work together seamlessly\n\n## Getting Started\n\n1. Create your account\n2. Set up your team\n3. Configure workflows\n4. Start managing tickets\n\n> Pro tip: Take time to set up your automation rules early. They'll save you hours of work later.",
+  "category": "getting-started",
+  "author": "System Admin",
+  "lastUpdated": "2024-03-15",
+  "status": "published"
+} 

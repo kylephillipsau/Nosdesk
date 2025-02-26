@@ -1,0 +1,10 @@
+{
+  "id": "quick-start",
+  "title": "Quick Start Guide",
+  "description": "Get up and running in minutes",
+  "content": "# Quick Start Guide\n\nThis guide will help you get up and running with nosDesk in just a few minutes.\n\n## Installation\n\n1. Sign up for an account at [nosdesk.com](https://nosdesk.com)\n2. Verify your email address\n3. Log in to your new account\n\n## Configuration\n\n1. Set up your organization profile\n2. Invite team members\n3. Configure departments and roles\n4. Set up SLA policies\n\n## Creating Your First Ticket\n\n1. Click on \"New Ticket\" in the top navigation\n2. Fill in the required fields\n3. Assign to a team member or leave unassigned\n4. Save the ticket\n\nCongratulations! You're now ready to start using nosDesk.",
+  "category": "getting-started",
+  "author": "System Admin",
+  "lastUpdated": "2024-03-15",
+  "status": "published"
+} 

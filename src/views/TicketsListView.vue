@@ -1,6 +1,6 @@
-// views/ListView.vue
+// views/TicketsListView.vue
 <script setup lang="ts">
-import ticketData from '@/assets/tickets.json'
+import ticketData from '@/data/tickets.json'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import UserAvatar from '@/components/UserAvatar.vue'
@@ -17,14 +17,40 @@ interface Ticket {
 
 const tickets = ticketData.tickets as Ticket[]
 const selectedTickets = ref<number[]>([])
+const lastSelectedTicketId = ref<number | null>(null)
 
 const toggleSelection = (event: Event, ticketId: number) => {
   event.stopPropagation()
-  const index = selectedTickets.value.indexOf(ticketId)
-  if (index === -1) {
-    selectedTickets.value.push(ticketId)
+  
+  // Handle shift key for multiple selection
+  if (event instanceof MouseEvent && event.shiftKey && lastSelectedTicketId.value !== null) {
+    const currentIndex = tickets.findIndex(ticket => ticket.id === ticketId)
+    const lastIndex = tickets.findIndex(ticket => ticket.id === lastSelectedTicketId.value)
+    
+    if (currentIndex !== -1 && lastIndex !== -1) {
+      const startIndex = Math.min(currentIndex, lastIndex)
+      const endIndex = Math.max(currentIndex, lastIndex)
+      
+      const ticketsToSelect = tickets.slice(startIndex, endIndex + 1).map(ticket => ticket.id)
+      
+      // Add all tickets in range to selection if they're not already selected
+      ticketsToSelect.forEach(id => {
+        if (!selectedTickets.value.includes(id)) {
+          selectedTickets.value.push(id)
+        }
+      })
+    }
   } else {
-    selectedTickets.value.splice(index, 1)
+    // Regular single selection toggle
+    const index = selectedTickets.value.indexOf(ticketId)
+    if (index === -1) {
+      selectedTickets.value.push(ticketId)
+    } else {
+      selectedTickets.value.splice(index, 1)
+    }
+    
+    // Update last selected ticket
+    lastSelectedTicketId.value = ticketId
   }
 }
 
@@ -36,6 +62,7 @@ const toggleAllTickets = (event: Event) => {
   } else {
     selectedTickets.value = []
   }
+  lastSelectedTicketId.value = null
 }
 
 const router = useRouter()

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import UserAvatar from "@/components/UserAvatar.vue";
 import AudioPlayer from "@/components/ticketComponents/AudioPlayer.vue";
 import VideoPlayer from "@/components/ticketComponents/VideoPlayer.vue";
 import FilePreview from "@/components/ticketComponents/FilePreview.vue";
+import Modal from "@/components/Modal.vue";
 
 interface Props {
   attachment: { url: string; name: string };
@@ -23,6 +24,9 @@ const emit = defineEmits<{
   (e: 'submit'): void;
   (e: 'preview', src: string): void;
 }>();
+
+const showPreviewModal = ref(false);
+const previewImageSrc = ref('');
 
 const log = (event: string, details?: any) => {
   console.log(`[AttachmentPreview] ${event}`, details || '');
@@ -49,6 +53,16 @@ const attachmentType = computed(() => {
   if (isImageFile(props.attachment.name)) return 'image';
   return 'file';
 });
+
+const openImagePreview = (src: string) => {
+  previewImageSrc.value = src;
+  showPreviewModal.value = true;
+  emit('preview', src);
+};
+
+const closeImagePreview = () => {
+  showPreviewModal.value = false;
+};
 </script>
 
 <template>
@@ -119,8 +133,8 @@ const attachmentType = computed(() => {
           class="w-full h-full object-contain bg-slate-900/50"
         >
         <div 
-          class="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center cursor-pointer"
-          @click.stop="emit('preview', attachment.url)"
+          class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center cursor-pointer"
+          @click.stop="openImagePreview(attachment.url)"
         >
           <svg class="w-8 h-8 text-white" viewBox="0 0 20 20" fill="currentColor">
             <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
@@ -161,5 +175,23 @@ const attachmentType = computed(() => {
         Submit Video
       </button>
     </div>
+    
+    <!-- Image Preview Modal -->
+    <Modal 
+      :show="showPreviewModal" 
+      title="Image Preview" 
+      @close="closeImagePreview"
+    >
+      <div class="flex flex-col items-center">
+        <img 
+          :src="previewImageSrc" 
+          :alt="attachment.name" 
+          class="max-w-full max-h-[70vh] object-contain"
+        />
+        <div class="mt-4 text-center text-sm text-slate-300">
+          {{ attachment.name }}
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
