@@ -18,9 +18,18 @@ const emit = defineEmits<{
   (e: 'confirm'): void;
   (e: 'reRecord'): void;
   (e: 'cancel'): void;
+  (e: 'submit', data: { blob: Blob; name: string }): void;
 }>();
 
 const urlCreator = window.URL || window.webkitURL;
+
+const handleConfirm = () => {
+  emit('submit', {
+    blob: props.blob,
+    name: `Voice Note ${new Date().toLocaleTimeString()}.webm`
+  });
+  emit('confirm');
+};
 </script>
 
 <template>
@@ -58,7 +67,7 @@ const urlCreator = window.URL || window.webkitURL;
         </button>
         <button
           type="button"
-          @click="emit('confirm')"
+          @click="handleConfirm"
           class="px-3 py-1.5 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
         >
           Confirm
@@ -67,7 +76,7 @@ const urlCreator = window.URL || window.webkitURL;
       <template v-else>
         <button
           type="button"
-          @click="emit('confirm')"
+          @click="handleConfirm"
           class="px-3 py-1.5 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
         >
           Confirm

@@ -16,6 +16,7 @@ import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import type { Ticket as ImportedTicket, Device } from '@/types/ticket';
 import type { Project } from '@/types/project';
+import BackButton from '@/components/common/BackButton.vue';
 
 interface NoteWithAttachments {
   id: number;
@@ -64,27 +65,9 @@ const selectedPriority = ref<TicketPriority>("low");
 const showDeviceModal = ref(false);
 const showProjectModal = ref(false);
 
-// Add back navigation functionality
-const previousRoute = ref<string>('');
-
-// Watch route changes to store previous route
-watch(() => route.fullPath, (newPath, oldPath) => {
-  if (oldPath) {
-    previousRoute.value = oldPath;
-  }
-}, { immediate: true });
-
-const handleBack = () => {
-  if (previousRoute.value) {
-    router.push(previousRoute.value);
-  } else {
-    router.push('/tickets'); // Default fallback to tickets list
-  }
-};
-
 const fetchTicket = async (ticketId: string | string[]) => {
   const id = Number(ticketId);
-  const ticketData = (await import("@/assets/tickets.json")).default;
+  const ticketData = (await import("@/data/tickets.json")).default;
   const foundTicket = ticketData.tickets.find((t) => t.id === id) as RawTicket;
 
   if (!foundTicket) {
@@ -326,13 +309,7 @@ const handleAddComment = async (data: { content: string; attachments: { url: str
     <div v-if="ticket" class="flex flex-col">
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
-        <button
-          @click="handleBack"
-          class="text-slate-400 hover:text-white text-sm flex items-center gap-1 group"
-        >
-          <span class="text-xs group-hover:-translate-x-0.5 transition-transform">←</span>
-          Go back
-        </button>
+        <BackButton fallbackRoute="/tickets" />
         
         <button
           @click="handleSave"

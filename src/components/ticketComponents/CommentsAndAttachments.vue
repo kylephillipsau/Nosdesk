@@ -103,6 +103,16 @@ const handleRecordingCancel = () => {
   currentRecording.value = null;
 };
 
+const handleAudioSubmit = (data: { blob: Blob; name: string }) => {
+  const url = urlCreator.createObjectURL(data.blob);
+  newAttachments.value.push({
+    url,
+    name: data.name
+  });
+  showPreviewInterface.value = false;
+  currentRecording.value = null;
+};
+
 const confirmRecording = () => {
   if (currentRecording.value) {
     const url = urlCreator.createObjectURL(currentRecording.value.blob);
@@ -195,13 +205,13 @@ const handleDrop = (event: DragEvent) => {
 
     <!-- List of Notes -->
     <div class="flex flex-col gap-2 space-y-3">
-      <div v-for="note in props.notes" :key="note.id" class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
+      <div v-for="note in props.notes" :key="note.id" class="flex flex-col gap-2 bg-slate-700 px-3 py-2 rounded-xl shadow-inner">
         <div class="flex flex-row gap-2 justify-between">
-          <div class="flex gap-2">
-            <UserAvatar :name="note.author" :showName="false" />
-            <div class="flex-grow">
+          <div class="flex gap-2 justify-center items-center">
+            <UserAvatar :name="note.author" :showName="false" size="sm"/>
+            <div class="flex flex-col flex-grow">
               <p class="text-slate-200">{{ note.content }}</p>
-              <small class="text-slate-500">{{ note.author }} - {{ formattedDate(note.createdAt) }}</small>
+              <small class="text-slate-400">{{ note.author }} - {{ formattedDate(note.createdAt) }}</small>
             </div>
           </div>
           <button
@@ -252,11 +262,11 @@ const handleDrop = (event: DragEvent) => {
         </div>
       </div>
 
-      <form @submit.prevent="addNote" class="flex flex-col gap-4">
+      <form @submit.prevent="addNote" class="flex flex-col gap-2">
         <div class="relative">
           <textarea
             v-model="newNoteContent"
-            class="w-full bg-slate-800 text-slate-100 border border-slate-600 rounded-md p-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            class="w-full bg-slate-900/50 text-slate-100 border border-slate-600 rounded-md p-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             placeholder="Add a new comment..."
             rows="3"
           ></textarea>
@@ -290,7 +300,8 @@ const handleDrop = (event: DragEvent) => {
           :author="props.currentUser"
           :timestamp="formattedDate(new Date().toISOString())"
           :show-recording-controls="showRecordingInterface"
-          @confirm="showRecordingInterface ? confirmRecording() : confirmAudioFile()"
+          @confirm="confirmRecording"
+          @submit="handleAudioSubmit"
           @re-record="reRecord"
           @cancel="cancelPreview"
         />

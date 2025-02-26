@@ -39,7 +39,7 @@ onUnmounted(() => {
       <!-- Modal -->
       <div class="flex min-h-full items-center justify-center p-4">
         <div
-          class="relative bg-slate-800 rounded-xl shadow-xl w-full max-w-lg"
+          class="relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl"
           @click.stop
         >
           <!-- Header -->

@@ -3,11 +3,13 @@ import DashboardView from '../views/DashboardView.vue'
 import TicketView from '../views/TicketView.vue'
 import LoginView from '../views/LoginView.vue'
 import ErrorView from '../views/ErrorView.vue'
-import ListView from '../views/ListView.vue'
+import TicketsListView from '../views/TicketsListView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import ProjectsView from '../views/ProjectsView.vue'
 import ProjectDetailView from '../views/ProjectDetailView.vue'
-import TicketNotesView from '../views/TicketNotesView.vue'
+import UserProfileView from '../views/UserProfileView.vue'
+import DocumentationView from '@/views/DocumentationView.vue'
+import DocumentationPageView from '@/views/DocumentationPageView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -42,7 +44,7 @@ const router = createRouter({
     {
       path: '/tickets',
       name: 'tickets',
-      component: ListView,
+      component: TicketsListView,
       meta: {
         requiresAuth: true,
         title: 'Tickets'
@@ -71,16 +73,16 @@ const router = createRouter({
       }
     },
     {
-      path: '/tickets/:id/notes',
-      name: 'ticket-notes',
-      component: TicketNotesView,
+      path: '/users/:username',
+      name: 'user-profile',
+      component: UserProfileView,
       props: true,
       meta: {
         requiresAuth: true,
-        title: 'Edit Ticket Notes'
+        title: 'User Profile'
       },
       beforeEnter: (to) => {
-        to.meta.key = to.params.id
+        to.meta.title = `${to.params.username}'s Profile`
       }
     },
     {
@@ -123,6 +125,68 @@ const router = createRouter({
         layout: 'blank',
         requiresAuth: false,
         title: 'Error'
+      }
+    },
+    {
+      path: '/users',
+      name: 'users',
+      component: () => import('../views/UsersListView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Users'
+      }
+    },
+    {
+      path: '/devices',
+      name: 'devices',
+      component: () => import('../views/DevicesListView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Devices'
+      }
+    },
+    {
+      path: '/devices/:id',
+      name: 'device-view',
+      component: () => import('../views/DeviceView.vue'),
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: 'Device Details'
+      },
+      beforeEnter: (to) => {
+        to.meta.title = `Device #${to.params.id}`
+      }
+    },
+    {
+      path: '/documentation',
+      name: 'documentation',
+      component: DocumentationView,
+      meta: {
+        requiresAuth: true,
+        title: 'Documentation'
+      }
+    },
+    {
+      path: '/documentation/:id',
+      name: 'documentation-article',
+      component: DocumentationPageView,
+      meta: {
+        requiresAuth: true,
+        title: 'Documentation'
+      },
+      beforeEnter: async (to) => {
+        // Set a generic title initially
+        to.meta.title = 'Documentation Article';
+        console.log('Setting initial documentation article title');
+        
+        // Check if this is a ticket note
+        if (to.params.id && typeof to.params.id === 'string' && to.params.id.startsWith('ticket-')) {
+          const ticketId = to.params.id.replace('ticket-', '');
+          to.meta.title = `Ticket #${ticketId} Notes`;
+          to.meta.isTicketNote = true;
+          to.meta.ticketId = ticketId;
+        }
       }
     },
     {

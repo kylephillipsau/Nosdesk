@@ -37,7 +37,7 @@ const handleClickOutside = (event: MouseEvent) => {
 
 // Function to determine the color and shadow based on the status or priority value
 const getColorAndShadow = (value: string | undefined) => {
-  if (!value) return 'bg-gray-500 text-gray-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
+  if (!value) return 'bg-slate-500 text-slate-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
 
   if (props.type === 'status') {
     switch (value) {
@@ -48,7 +48,7 @@ const getColorAndShadow = (value: string | undefined) => {
       case 'closed':
         return 'bg-green-500 text-green-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
       default:
-        return 'bg-gray-500 text-gray-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
+        return 'bg-slate-500 text-slate-100 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]'
     }
   } else if (props.type === 'priority') {
     switch (value) {
@@ -59,7 +59,7 @@ const getColorAndShadow = (value: string | undefined) => {
       case 'high':
         return 'text-red-400'
       default:
-        return 'text-gray-400'
+        return 'text-slate-400'
     }
   }
 }
@@ -77,7 +77,7 @@ onUnmounted(() => {
   <div class="relative" ref="dropdownRef">
     <!-- Dropdown trigger -->
     <button type="button" @click="toggleDropdown"
-      :class="`w-full px-2 py-1 rounded-xl flex items-center justify-between transition-all hover:bg-gray-600 ${getColorAndShadow(value)}`">
+      :class="`w-full px-2 py-1 rounded-xl flex items-center justify-between transition-all hover:bg-slate-600 ${getColorAndShadow(value)}`">
       <span class="">{{ selectedOption?.label || 'Select an option' }}</span>
       <svg class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': isOpen }" fill="none"
         stroke="currentColor" viewBox="0 0 24 24">
@@ -86,15 +86,15 @@ onUnmounted(() => {
     </button>
 
     <!-- Dropdown menu -->
-    <div v-if="isOpen" class="absolute z-10 w-full mt-1 bg-gray-700 rounded-xl shadow-lg overflow-hidden">
+    <div v-if="isOpen" class="absolute z-10 w-full mt-1 bg-slate-700 rounded-xl shadow-lg overflow-hidden">
       <ul class="py-1">
         <li v-for="option in options" :key="option.value" @click="selectOption(option)"
-          :class="`px-3 py-2 text-gray-200 hover:bg-gray-600 cursor-pointer transition-all flex items-center gap-2 ${option.value && value && option.value === value ? getColorAndShadow(value) : ''}`">
+          :class="`px-3 py-2 text-slate-200 hover:bg-slate-600 cursor-pointer transition-all flex items-center gap-2 ${option.value && value && option.value === value ? getColorAndShadow(value) : ''}`">
           <span v-if="props.type === 'status'"
             class="inline-block w-5 h-5 rounded-full mr-3 shadow-[inset_0_1px_3px_rgba(0,0,0,0.5)]"
-            :class="getColorAndShadow(option.value)?.split(' ')?.[0] || 'bg-gray-500'"></span>
+            :class="getColorAndShadow(option.value)?.split(' ')?.[0] || 'bg-slate-500'"></span>
           <span
-            :class="{ 'text-gray-200': props.type === 'status', 'text-gray-400': props.type === 'priority' && option.value !== value }">{{
+            :class="{ 'text-slate-200': props.type === 'status', 'text-slate-400': props.type === 'priority' && option.value !== value }">{{
               option.label }}</span>
         </li>
       </ul>

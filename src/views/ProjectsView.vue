@@ -134,13 +134,13 @@ const removeProject = async (event: Event, projectId: number) => {
         <p class="text-slate-400">No projects found. Create your first project to get started.</p>
       </div>
 
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div
           v-for="project in projects"
           :key="project.id"
           class="bg-slate-800 rounded-lg p-6 group relative hover:bg-slate-700 transition-colors"
         >
-          <div @click="openProject(project.id)" class="cursor-pointer">
+          <div @click="openProject(project.id)" class="flex flex-col gap-2 cursor-pointer">
             <div class="flex items-start justify-between">
               <h3 class="text-lg font-medium text-white">{{ project.name }}</h3>
               <span
@@ -162,7 +162,6 @@ const removeProject = async (event: Event, projectId: number) => {
                 </svg>
                 {{ project.ticketCount }} tickets
               </span>
-              <span class="text-blue-400 hover:text-blue-300 transition-colors">View Details →</span>
             </div>
           </div>
         </div>

@@ -10,6 +10,8 @@
             "assignee": "Kyle Phillips",
             "requester": "Quentin Tarantino",
             "device": {
+                "id": "1",
+                "name": "L13G2-SN-00ACVP",
                 "hostname": "L13G2-SN-00ACVP",
                 "serialNumber": "PW00ACVP",
                 "model": "20VLS0L100",
@@ -106,6 +108,8 @@
             "assignee": "Kyle Phillips",
             "requester": "Tomas Smart",
             "device": {
+                "id": "2",
+                "name": "L13G2-SN-00ACVP",
                 "hostname": "L13G2-SN-00ACVP",
                 "serialNumber": "PW00ACVP",
                 "model": "20VLS0L100",

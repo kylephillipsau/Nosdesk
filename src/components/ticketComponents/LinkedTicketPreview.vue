@@ -19,7 +19,7 @@ const isNavigating = ref(false);
 
 const fetchLinkedTicket = async () => {
   try {
-    const ticketData = (await import("@/assets/tickets.json")).default;
+    const ticketData = (await import("@/data/tickets.json")).default;
     const foundTicket = ticketData.tickets.find((t: any) => t.id === props.linkedTicketId) as {
       id: number;
       title: string;

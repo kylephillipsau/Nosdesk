@@ -1,0 +1,12 @@
+[
+  {
+    "id": "getting-started",
+    "name": "Getting Started",
+    "articles": ["welcome", "quick-start"]
+  },
+  {
+    "id": "tickets",
+    "name": "Ticket Management",
+    "articles": ["create-ticket"]
+  }
+] 

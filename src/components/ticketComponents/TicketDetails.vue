@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue';
 import UserAutocomplete from "@/components/ticketComponents/UserSelection.vue";
 import CustomDropdown from '@/components/ticketComponents/CustomDropdown.vue';
-import users from '@/assets/users.json'; // Assuming this is your correct path
+import users from '@/data/users.json'; // Assuming this is your correct path
 
 const usersFromJson = computed(() => users.users);
 
