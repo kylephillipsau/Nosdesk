@@ -1,10 +1,11 @@
-<!-- TicketTitle.vue -->
+<!-- HeaderTitle.vue -->
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
 interface Props {
-  ticketId: number;
   initialTitle: string;
+  prefix?: string;
+  placeholderText?: string;
 }
 
 const props = defineProps<Props>();
@@ -36,10 +37,11 @@ const handleKeydown = (event: KeyboardEvent) => {
 <template>
   <div class="flex items-center gap-3 group flex-1">
     <span 
+      v-if="prefix"
       class="text-slate-400 text-base font-medium flex items-center select-none"
       :class="{ 'opacity-50': isEditing }"
     >
-      #{{ props.ticketId }}
+      {{ prefix }}
     </span>
     
     <div class="flex-1 relative">
@@ -51,7 +53,7 @@ const handleKeydown = (event: KeyboardEvent) => {
         @keydown="handleKeydown"
         class="w-full bg-transparent text-white text-xl font-semibold px-2 py-1 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none transition-all duration-150"
         :class="{ 'bg-slate-700/50': isEditing }"
-        placeholder="Enter ticket title..."
+        :placeholder="placeholderText || 'Enter title...'"
       />
       
       <!-- Edit indicator -->

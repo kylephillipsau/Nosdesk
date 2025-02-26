@@ -1,6 +1,6 @@
 <!-- CreateTicketView.vue -->
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import UserSelection from '@/components/ticketComponents/UserSelection.vue';
 import CustomDropdown from '@/components/ticketComponents/CustomDropdown.vue';
@@ -14,8 +14,9 @@ import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import type { Device } from '@/types/ticket';
 import type { Project } from '@/types/project';
-import users from '@/assets/users.json';
-import TicketTitle from '@/components/ticketComponents/TicketTitle.vue';
+import users from '@/data/users.json';
+import HeaderTitle from '@/components/HeaderTitle.vue';
+import { useRecentTicketsStore } from '@/stores/recentTickets';
 
 interface Ticket {
   id?: number;
@@ -33,6 +34,23 @@ interface Ticket {
 }
 
 const router = useRouter();
+const recentTicketsStore = useRecentTicketsStore();
+
+// Generate a ticket number based on the most recent ticket
+const generateTicketNumber = () => {
+  // Get the highest ticket ID from recent tickets, or start at 10000 if none exist
+  const recentTickets = recentTicketsStore.recentTickets;
+  if (recentTickets.length === 0) {
+    return 10000;
+  }
+  
+  // Find the highest ticket ID
+  const highestId = Math.max(...recentTickets.map(ticket => ticket.id));
+  return highestId + 1;
+};
+
+// Generate a temporary ID for the draft ticket
+const tempTicketId = ref(generateTicketNumber());
 
 const newTicket = ref<Ticket>({
   title: '',
@@ -60,19 +78,23 @@ const usersFromJson = computed(() => users.users);
 const updateStatus = (newStatus: string) => {
   selectedStatus.value = newStatus as TicketStatus;
   newTicket.value.status = newStatus as TicketStatus;
+  updateDraftTicket();
 };
 
 const updatePriority = (newPriority: string) => {
   selectedPriority.value = newPriority as TicketPriority;
   newTicket.value.priority = newPriority as TicketPriority;
+  updateDraftTicket();
 };
 
 const updateRequester = (userId: string) => {
   newTicket.value.requester = userId;
+  updateDraftTicket();
 };
 
 const updateAssignee = (userId: string) => {
   newTicket.value.assignee = userId;
+  updateDraftTicket();
 };
 
 const handleAddDevice = (device: Device) => {
@@ -81,11 +103,13 @@ const handleAddDevice = (device: Device) => {
   }
   newTicket.value.devices.push(device);
   showDeviceModal.value = false;
+  updateDraftTicket();
 };
 
 const removeDevice = (deviceId: string) => {
   if (newTicket.value.devices) {
     newTicket.value.devices = newTicket.value.devices.filter(device => device.id !== deviceId);
+    updateDraftTicket();
   }
 };
 
@@ -95,12 +119,14 @@ const handleLinkTicket = (linkedTicketId: number) => {
   }
   if (!newTicket.value.linkedTickets.includes(linkedTicketId)) {
     newTicket.value.linkedTickets.push(linkedTicketId);
+    updateDraftTicket();
   }
 };
 
 const unlinkTicket = (linkedTicketId: number) => {
   if (newTicket.value.linkedTickets) {
     newTicket.value.linkedTickets = newTicket.value.linkedTickets.filter(id => id !== linkedTicketId);
+    updateDraftTicket();
   }
 };
 
@@ -117,20 +143,38 @@ const handleAddToProject = async (projectId: number) => {
   projectDetails.value = mockProject;
   newTicket.value.project = String(projectId);
   showProjectModal.value = false;
+  updateDraftTicket();
 };
 
 const removeFromProject = () => {
   newTicket.value.project = undefined;
   projectDetails.value = null;
+  updateDraftTicket();
+};
+
+// Function to update the draft ticket in the recent tickets list
+const updateDraftTicket = () => {
+  if (newTicket.value.title) {
+    recentTicketsStore.addRecentTicket({
+      id: tempTicketId.value,
+      title: newTicket.value.title,
+      status: newTicket.value.status,
+      requester: newTicket.value.requester,
+      assignee: newTicket.value.assignee,
+      created: newTicket.value.created
+    }, false, true); // Mark as draft
+  }
 };
 
 const saveTicket = async () => {
   try {
     console.log('Saving ticket:', newTicket.value);
-    // Reset unsaved changes flag
-    hasUnsavedChanges.value = false;
-    // @ts-ignore - Property added for router navigation guard
-    window.hasUnsavedChanges = false;
+    
+    // Update the ticket in recent tickets list as a non-draft
+    if (newTicket.value.title) {
+      recentTicketsStore.updateDraftStatus(tempTicketId.value, false);
+    }
+    
     // For now, just go back to the tickets list
     router.push('/tickets');
   } catch (error) {
@@ -158,47 +202,40 @@ const resetForm = () => {
   showLinkedTicketModal.value = false;
   showProjectModal.value = false;
   projectDetails.value = null;
+  
+  // Remove from recent tickets if it exists
+  recentTicketsStore.removeRecentTicket(tempTicketId.value);
 };
 
 const updateTicketTitle = (newTitle: string) => {
   newTicket.value.title = newTitle;
-};
-
-const hasUnsavedChanges = ref(false);
-const initialTicketState = ref('');
-
-// Track form changes
-const updateFormState = () => {
-  const currentState = JSON.stringify(newTicket.value);
-  hasUnsavedChanges.value = currentState !== initialTicketState.value;
-  // @ts-ignore - Property added for router navigation guard
-  window.hasUnsavedChanges = hasUnsavedChanges.value;
-};
-
-// Watch for unsaved changes when navigating
-const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-  if (hasUnsavedChanges.value) {
-    e.preventDefault();
-    e.returnValue = '';
-  }
+  updateDraftTicket();
 };
 
 // Initialize form tracking
 onMounted(() => {
-  initialTicketState.value = JSON.stringify(newTicket.value);
-  window.addEventListener('beforeunload', handleBeforeUnload);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('beforeunload', handleBeforeUnload);
-  // @ts-ignore - Property added for router navigation guard
-  window.hasUnsavedChanges = false;
+  // Set up auto-save for the draft ticket
+  const autoSaveInterval = setInterval(() => {
+    if (newTicket.value.title) {
+      updateDraftTicket();
+    }
+  }, 30000); // Auto-save every 30 seconds
+  
+  // Clean up interval on component unmount
+  onBeforeUnmount(() => {
+    clearInterval(autoSaveInterval);
+  });
 });
 
 // Update form state whenever ticket data changes
 watch(
   () => ({ ...newTicket.value }),
-  () => updateFormState(),
+  () => {
+    // Auto-save draft when ticket data changes
+    if (newTicket.value.title) {
+      updateDraftTicket();
+    }
+  },
   { deep: true }
 );
 
@@ -222,7 +259,12 @@ const getStatusColor = (status: string) => {
       <div class="flex flex-col gap-4 p-6 mx-auto w-full max-w-7xl">
         <div class="flex items-center justify-between gap-4">
           <div class="flex-1">
-            <TicketTitle :ticket-id="80085" :initial-title="newTicket.title" @update-title="updateTicketTitle" />
+            <HeaderTitle 
+              :identifier="tempTicketId" 
+              :initial-title="newTicket.title" 
+              :placeholder-text="'Enter ticket title...'"
+              @update-title="updateTicketTitle" 
+            />
           </div>
           <button
             @click="saveTicket"
@@ -231,12 +273,6 @@ const getStatusColor = (status: string) => {
           >
             Save Ticket
           </button>
-        </div>
-
-        <!-- Navigation Warning -->
-        <div v-if="hasUnsavedChanges" class="bg-yellow-500/10 border border-yellow-500/50 text-yellow-200 px-4 py-3 rounded-md mb-4 flex items-center gap-3">
-          <span class="material-icons text-yellow-500">warning</span>
-          <p>You have unsaved changes. Please save your work before leaving this page.</p>
         </div>
 
         <!-- Go Back Button -->
@@ -420,7 +456,7 @@ const getStatusColor = (status: string) => {
 
     <LinkedTicketModal 
       :show="showLinkedTicketModal"
-      :current-ticket-id="80085"
+      :current-ticket-id="tempTicketId"
       :existing-linked-tickets="newTicket.linkedTickets"
       @close="showLinkedTicketModal = false"
       @select-ticket="handleLinkTicket"

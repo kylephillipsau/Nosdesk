@@ -25,7 +25,7 @@ const filteredTickets = ref<Ticket[]>([]);
 
 // Load tickets from the JSON file
 const loadTickets = async () => {
-  const ticketData = (await import("@/assets/tickets.json")).default;
+  const ticketData = (await import("@/data/tickets.json")).default;
   // Filter out the current ticket and any already linked tickets
   tickets.value = ticketData.tickets.map((t: any) => ({
     ...t,

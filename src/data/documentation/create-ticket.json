@@ -1,0 +1,10 @@
+{
+  "id": "create-ticket",
+  "title": "Creating Tickets",
+  "description": "Learn how to create and manage tickets",
+  "content": "# Creating Tickets\n\nThis guide explains how to create and manage tickets in nosDesk.\n\n## Creating a New Ticket\n\n1. Click on \"New Ticket\" in the top navigation\n2. Fill in the required fields:\n   - Title\n   - Description\n   - Priority\n   - Category\n3. Assign to a team member or leave unassigned\n4. Save the ticket\n\n## Managing Tickets\n\n### Updating Status\n\nYou can update the status of a ticket by:\n1. Opening the ticket\n2. Selecting a new status from the dropdown\n3. Saving the changes\n\n### Adding Comments\n\nTo add a comment to a ticket:\n1. Scroll to the comment section\n2. Type your comment\n3. Click \"Add Comment\"\n\n### Assigning Tickets\n\nTo assign a ticket to a team member:\n1. Open the ticket\n2. Click on the \"Assign\" dropdown\n3. Select a team member\n4. Save the changes",
+  "category": "tickets",
+  "author": "Support Team",
+  "lastUpdated": "2024-03-14",
+  "status": "published"
+} 

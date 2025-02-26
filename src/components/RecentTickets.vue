@@ -72,7 +72,9 @@ const handleDrop = () => {
           @drop="handleDrop"
           class="group block px-2 py-1.5 rounded-lg hover:bg-slate-700 relative cursor-move transition-all duration-200"
           :class="{
-            'opacity-50': draggedTicketId === ticket.id
+            'opacity-50': draggedTicketId === ticket.id,
+            'bg-blue-900/20 border border-blue-500/30': ticket.isDraft,
+            'hover:bg-blue-900/30': ticket.isDraft
           }"
         >
           <div class="flex items-center gap-2 w-full">
@@ -94,9 +96,11 @@ const handleDrop = () => {
                 }"
                 class="min-w-0 flex-1"
                 :disabled="draggedTicketId !== null"
+                groupId="recent-tickets" 
               >
                 <span class="text-sm text-white truncate block">
                   {{ ticket.title }}
+                  <span v-if="ticket.isDraft" class="ml-1 text-xs text-blue-400">(Draft)</span>
                 </span>
               </QuickTooltip>
 
