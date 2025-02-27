@@ -12,6 +12,7 @@ import CommentsAndAttachments from "@/components/ticketComponents/CommentsAndAtt
 import LinkedTicketModal from "@/components/ticketComponents/LinkedTicketModal.vue";
 import LinkedTicketPreview from "@/components/ticketComponents/LinkedTicketPreview.vue";
 import ProjectSelectionModal from "@/components/ticketComponents/ProjectSelectionModal.vue";
+import ProjectInfo from "@/components/ticketComponents/ProjectInfo.vue";
 import { STATUS_OPTIONS, PRIORITY_OPTIONS } from '@/constants/ticketOptions';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import type { Ticket as ImportedTicket, Device } from '@/types/ticket';
@@ -357,6 +358,7 @@ const handleAddComment = async (data: { content: string; attachments: { url: str
                     :key="device.id"
                     v-bind="device"
                     @remove="() => removeDevice(device.id)"
+                    @view="() => {}"
                   />
                 </div>
               </div>
@@ -389,6 +391,7 @@ const handleAddComment = async (data: { content: string; attachments: { url: str
                     :key="linkedId"
                     :linked-ticket-id="linkedId"
                     @unlink="() => unlinkTicket(linkedId)"
+                    @view="() => {}"
                   />
                 </div>
               </div>
@@ -409,48 +412,14 @@ const handleAddComment = async (data: { content: string; attachments: { url: str
                   </a>
                 </div>
 
-                <div v-if="ticket.project && projectDetails" class="bg-slate-700/50 p-3 rounded-lg">
+                <div v-if="ticket.project && projectDetails">
                   <!-- Project Info -->
-                  <div class="flex flex-col gap-2">
-                    <div class="flex items-start justify-between">
-                      <div class="flex-1">
-                        <h4 class="text-lg font-medium text-white">{{ projectDetails.name }}</h4>
-                        <p class="text-sm text-slate-400 mt-0.5 line-clamp-2">{{ projectDetails.description }}</p>
-                      </div>
-                      <div class="flex items-start gap-2 ml-4">
-                        <button
-                          @click="viewProject(ticket.project!)"
-                          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
-                          title="View project"
-                        >
-                          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                            <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
-                          </svg>
-                        </button>
-                        <button
-                          @click="ticket.project = undefined; projectDetails = null"
-                          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
-                          title="Remove from project"
-                        >
-                          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <span class="text-xs px-2 py-0.5 bg-slate-600/50 text-slate-300 rounded">
-                        #{{ ticket.project }}
-                      </span>
-                      <span :class="[getStatusColor(projectDetails.status), 'text-xs']">
-                        {{ projectDetails.status }}
-                      </span>
-                      <span class="text-xs text-slate-400">
-                        {{ projectDetails.ticketCount }} tickets
-                      </span>
-                    </div>
-                  </div>
+                  <ProjectInfo
+                    :project="projectDetails"
+                    :project-id="ticket.project"
+                    @view="viewProject(ticket.project!)"
+                    @remove="ticket.project = undefined; projectDetails = null"
+                  />
                 </div>
 
                 <div v-else>

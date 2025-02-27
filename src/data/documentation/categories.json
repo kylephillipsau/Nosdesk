@@ -2,11 +2,28 @@
   {
     "id": "getting-started",
     "name": "Getting Started",
-    "articles": ["welcome", "quick-start"]
+    "articles": ["welcome", "quick-start"],
+    "icon": "🚀",
+    "content": "# Getting Started with nosDesk\n\nThis section contains all the essential information to help you get up and running with nosDesk quickly.\n\n## What You'll Find Here\n\n- Introduction to the platform\n- Quick start guides\n- Basic configuration steps\n- First-time user tutorials\n\n## Recommended First Steps\n\n1. Read the Welcome guide\n2. Follow the Quick Start guide\n3. Set up your user profile\n4. Configure your workspace preferences\n\nIf you have any questions about getting started, please contact our support team.",
+    "author": "System Admin",
+    "lastUpdated": "2024-03-15"
   },
   {
     "id": "tickets",
     "name": "Ticket Management",
-    "articles": ["create-ticket"]
+    "articles": ["create-ticket"],
+    "icon": "🎫",
+    "content": "# Ticket Management\n\nThis section covers everything you need to know about creating, managing, and resolving support tickets in nosDesk.\n\n## Key Ticket Features\n\n- Create and assign tickets\n- Set priorities and due dates\n- Track ticket status\n- Add comments and attachments\n- Link tickets to knowledge base articles\n\n## Best Practices\n\n- Use clear, descriptive titles\n- Include all relevant information in the description\n- Assign appropriate priority levels\n- Update ticket status as you work\n- Document resolution steps\n\nEffective ticket management is essential for providing excellent customer support and maintaining a record of issues and their resolutions.",
+    "author": "Support Team",
+    "lastUpdated": "2024-03-15"
+  },
+  {
+    "id": "documentation",
+    "name": "Documentation Guide",
+    "articles": ["icon-guide"],
+    "icon": "📚",
+    "content": "# Documentation Guide\n\nThis section explains how to create, organize, and maintain documentation in nosDesk.\n\n## Documentation Features\n\n- Markdown formatting\n- File attachments\n- Version history\n- Categorization\n- Search functionality\n\n## Writing Effective Documentation\n\n- Use clear, concise language\n- Include step-by-step instructions\n- Add screenshots or diagrams when helpful\n- Organize content with headings\n- Link related articles\n\nWell-maintained documentation reduces support requests and helps users solve problems independently.",
+    "author": "Documentation Team",
+    "lastUpdated": "2024-03-15"
   }
 ] 

@@ -4,19 +4,22 @@ import { useRoute, useRouter } from "vue-router";
 import MarkdownEditor from "@/components/MarkdownEditor.vue";
 import { usePageTitle } from "@/composables/usePageTitle";
 import documentationService from "@/services/documentationService";
-import type { Article } from "@/services/documentationService";
+import type { Article, Category } from "@/services/documentationService";
 import BackButton from '@/components/common/BackButton.vue';
 
 const route = useRoute();
 const router = useRouter();
 const article = ref<Article | null>(null);
+const category = ref<Category | null>(null);
 const isLoading = ref(true);
 const showSuccessMessage = ref(false);
 const isSaving = ref(false);
 const saveMessage = ref("Document saved successfully");
 const { setCustomTitle } = usePageTitle();
 const isTicketNote = ref(false);
+const isCategory = ref(false);
 const ticketId = ref<string | null>(null);
+const categoryId = ref<string | null>(null);
 
 // Content editing
 const editContent = ref("");
@@ -27,7 +30,15 @@ const documentIcon = ref('📄');
 
 // Create a document object for the header
 const document = computed(() => {
-  if (!article.value) return null;
+  if (isCategory.value && category.value) {
+    return {
+      id: category.value.id,
+      title: category.value.name,
+      icon: category.value.icon || '📁'
+    };
+  } else if (!article.value) {
+    return null;
+  }
   
   return {
     id: article.value.id,
@@ -45,6 +56,40 @@ const emit = defineEmits<{
 // Fetch article data
 const fetchArticle = async (id: string) => {
   isLoading.value = true;
+  
+  // Check if this is a category note
+  if (route.name === 'documentation-category') {
+    isCategory.value = true;
+    categoryId.value = route.params.categoryId as string;
+    
+    try {
+      // Fetch category data
+      const fetchedCategory = await documentationService.getCategoryById(categoryId.value);
+      
+      if (fetchedCategory) {
+        category.value = fetchedCategory;
+        editContent.value = fetchedCategory.content || "";
+        editTitle.value = fetchedCategory.name || "";
+        documentIcon.value = fetchedCategory.icon || '📁';
+        
+        // Emit the title and document
+        console.log('Emitting title from fetchArticle (category):', fetchedCategory.name);
+        emit('update:title', fetchedCategory.name || "");
+        emit('update:document', document.value);
+        setCustomTitle(fetchedCategory.name || "");
+      } else {
+        console.error("Category not found");
+        category.value = null;
+      }
+    } catch (error) {
+      console.error("Error fetching category:", error);
+      category.value = null;
+    } finally {
+      isLoading.value = false;
+    }
+    
+    return;
+  }
   
   // Check if this is a ticket note
   if (id.startsWith('ticket-')) {
@@ -272,7 +317,10 @@ watch(() => article.value?.title, (newTitle) => {
 });
 
 onMounted(() => {
-  if (route.params.id) {
+  // Check if we're on a category page
+  if (route.name === 'documentation-category' && route.params.categoryId) {
+    fetchArticle('');  // The ID doesn't matter for categories, it's handled in the function
+  } else if (route.params.id) {
     fetchArticle(route.params.id as string);
   }
   
@@ -294,6 +342,70 @@ onMounted(() => {
     }
   }
 });
+
+// Save the document
+const saveDocument = async () => {
+  if (!editContent.value) {
+    return;
+  }
+  
+  isSaving.value = true;
+  showSuccessMessage.value = false;
+  
+  try {
+    if (isCategory.value && category.value) {
+      // Save category content
+      const updatedCategory = await documentationService.saveCategoryContent(
+        category.value.id,
+        editContent.value,
+        category.value.author || 'System Admin'
+      );
+      
+      if (updatedCategory) {
+        category.value = updatedCategory;
+        saveMessage.value = "Category documentation saved successfully";
+        showSuccessMessage.value = true;
+      }
+    } else if (isTicketNote.value && ticketId.value) {
+      // Save ticket note
+      // TODO: Replace with actual API call to save ticket note
+      console.log(`Saving ticket note for ticket #${ticketId.value}`);
+      
+      // For now, just update the local article
+      if (article.value) {
+        article.value.content = editContent.value;
+        article.value.lastUpdated = new Date().toISOString();
+        saveMessage.value = "Ticket notes saved successfully";
+        showSuccessMessage.value = true;
+      }
+    } else if (article.value) {
+      // Save regular documentation article
+      const updatedArticle: Article = {
+        ...article.value,
+        title: editTitle.value,
+        content: editContent.value,
+        lastUpdated: new Date().toISOString(),
+        icon: documentIcon.value
+      };
+      
+      const savedArticle = await documentationService.saveArticle(updatedArticle);
+      article.value = savedArticle;
+      saveMessage.value = "Document saved successfully";
+      showSuccessMessage.value = true;
+    }
+  } catch (error) {
+    console.error("Error saving document:", error);
+    saveMessage.value = "Error saving document";
+    showSuccessMessage.value = true;
+  } finally {
+    isSaving.value = false;
+    
+    // Show success message briefly
+    setTimeout(() => {
+      showSuccessMessage.value = false;
+    }, 3000);
+  }
+};
 </script>
 
 <template>
@@ -316,12 +428,12 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="article" class="h-full p-4">
+      <div v-if="article" class="flex justify-center h-full p-4">
         <MarkdownEditor
           v-model="editContent"
           @update:modelValue="updateContent"
           @save="saveArticle"
-          class="h-full"
+          class="h-full max-w-7xl mx-auto"
         />
       </div>
 
