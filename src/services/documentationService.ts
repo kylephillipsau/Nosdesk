@@ -19,6 +19,10 @@ export interface Category {
   id: string;
   name: string;
   articles: string[];
+  content?: string;  // Optional content for the category itself
+  lastUpdated?: string;
+  author?: string;
+  icon?: string;     // Optional icon for the category
 }
 
 // Map of article IDs to article data
@@ -115,11 +119,35 @@ export const createArticle = async (article: Omit<Article, 'id'>): Promise<Artic
   return newArticle;
 };
 
+/**
+ * Get category by ID
+ */
+export const getCategoryById = async (id: string): Promise<Category | null> => {
+  const category = categories.find(c => c.id === id);
+  return category || null;
+};
+
+/**
+ * Save category content
+ */
+export const saveCategoryContent = async (categoryId: string, content: string, author: string = 'System Admin'): Promise<Category | null> => {
+  const category = categories.find(c => c.id === categoryId);
+  if (!category) return null;
+  
+  category.content = content;
+  category.lastUpdated = new Date().toISOString();
+  category.author = author;
+  
+  return category;
+};
+
 export default {
   getCategories,
   getAllArticles,
   getArticleById,
   searchArticles,
   saveArticle,
-  createArticle
+  createArticle,
+  getCategoryById,
+  saveCategoryContent
 }; 

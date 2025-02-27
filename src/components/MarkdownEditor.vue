@@ -494,7 +494,7 @@ onMounted(() => {
 
 .toolbar-divider {
   width: 1px;
-  background-color: #374151;
+  background-color: #91A1B8;
   margin: 0 0.5rem;
 }
 
