@@ -225,7 +225,7 @@ const handleDrop = (event: DragEvent) => {
             </svg>
           </button>
         </div>
-        <div v-if="note.attachments && note.attachments.length > 0" class="mt-2">
+        <div v-if="note.attachments && note.attachments.length > 0" class="flex flex-col gap-2">
           <AttachmentPreview
             v-for="(attachment, index) in note.attachments"
             :key="attachment.url"

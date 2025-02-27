@@ -168,6 +168,20 @@ const router = createRouter({
       }
     },
     {
+      path: '/documentation/category/:categoryId',
+      name: 'documentation-category',
+      component: DocumentationPageView,
+      meta: {
+        requiresAuth: true,
+        title: 'Category Documentation'
+      },
+      beforeEnter: async (to) => {
+        // Set a generic title initially
+        to.meta.title = 'Category Documentation';
+        to.meta.isCategory = true;
+      }
+    },
+    {
       path: '/documentation/:id',
       name: 'documentation-article',
       component: DocumentationPageView,

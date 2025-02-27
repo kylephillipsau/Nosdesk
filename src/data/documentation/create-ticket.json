@@ -1,10 +1,11 @@
 {
   "id": "create-ticket",
-  "title": "Creating Tickets",
-  "description": "Learn how to create and manage tickets",
-  "content": "# Creating Tickets\n\nThis guide explains how to create and manage tickets in nosDesk.\n\n## Creating a New Ticket\n\n1. Click on \"New Ticket\" in the top navigation\n2. Fill in the required fields:\n   - Title\n   - Description\n   - Priority\n   - Category\n3. Assign to a team member or leave unassigned\n4. Save the ticket\n\n## Managing Tickets\n\n### Updating Status\n\nYou can update the status of a ticket by:\n1. Opening the ticket\n2. Selecting a new status from the dropdown\n3. Saving the changes\n\n### Adding Comments\n\nTo add a comment to a ticket:\n1. Scroll to the comment section\n2. Type your comment\n3. Click \"Add Comment\"\n\n### Assigning Tickets\n\nTo assign a ticket to a team member:\n1. Open the ticket\n2. Click on the \"Assign\" dropdown\n3. Select a team member\n4. Save the changes",
+  "title": "Creating Support Tickets",
+  "description": "Learn how to create and manage support tickets",
+  "content": "# Creating Support Tickets\n\nThis guide explains how to create and manage support tickets in nosDesk.\n\n## Creating a New Ticket\n\n1. Click the **New Ticket** button in the top navigation bar\n2. Fill in the required fields:\n   - **Title**: A brief summary of the issue\n   - **Description**: Detailed information about the problem\n   - **Category**: Select the appropriate category\n   - **Priority**: Set the urgency level\n3. Add any attachments if needed\n4. Click **Create Ticket**\n\n## Assigning Tickets\n\nYou can assign tickets to team members in two ways:\n\n1. During creation by selecting a team member from the **Assign To** dropdown\n2. After creation by clicking the **Assign** button on the ticket detail page\n\n## Setting Ticket Priority\n\nnosDesk uses four priority levels:\n\n- **Low**: Minor issues that don't affect workflow\n- **Medium**: Issues that cause inconvenience but have workarounds\n- **High**: Problems that significantly impact work\n- **Critical**: Severe issues that prevent work entirely\n\n## Adding Comments\n\nTo add a comment to a ticket:\n\n1. Open the ticket\n2. Scroll to the comment section\n3. Type your comment\n4. Click **Add Comment**\n\n## Closing Tickets\n\nWhen an issue is resolved:\n\n1. Open the ticket\n2. Click the **Close Ticket** button\n3. Select a resolution category\n4. Add any final comments\n5. Click **Confirm**\n\nThe ticket will be marked as closed but remains in the system for reference.",
   "category": "tickets",
-  "author": "Support Team",
-  "lastUpdated": "2024-03-14",
-  "status": "published"
+  "author": "System Admin",
+  "lastUpdated": "2024-03-15",
+  "status": "published",
+  "icon": "🎫"
 } 
