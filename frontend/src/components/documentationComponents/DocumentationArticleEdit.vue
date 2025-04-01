@@ -1,8 +1,8 @@
 <!-- DocumentationArticleEdit.vue -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import MarkdownEditor from '@/components/MarkdownEditor.vue';
+import CollaborativeEditor from '@/components/CollaborativeEditor.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
 
 interface Article {
@@ -23,6 +23,7 @@ const isLoading = ref(true);
 const error = ref<string | null>(null);
 const isSaving = ref(false);
 const showSuccessMessage = ref(false);
+const isBinaryUpdate = ref(false);
 
 // Form fields
 const title = ref('');
@@ -30,11 +31,44 @@ const content = ref('');
 const category = ref('');
 const status = ref<'published' | 'draft'>('draft');
 
+// Create a computed doc ID for collaborative editing
+const docId = computed(() => {
+  if (article.value) {
+    return `documentation-${article.value.id}`;
+  }
+  return 'documentation-new';
+});
+
 // Load article data
 onMounted(async () => {
   try {
     // Check if we're editing an existing article
     if (route.params.id && route.params.id !== 'new') {
+      // First try to get a binary update from the collaborative system
+      try {
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/collaboration/state/${docId.value}`, {
+          method: 'GET',
+          headers: { Accept: 'application/octet-stream' }
+        });
+        
+        if (response.ok) {
+          const data = await response.arrayBuffer();
+          if (data.byteLength > 0) {
+            console.log('Loaded binary update for document:', docId.value);
+            
+            // Convert binary to base64 for the editor
+            const bytes = new Uint8Array(data);
+            const binary = bytes.reduce((acc, byte) => acc + String.fromCharCode(byte), '');
+            const base64 = window.btoa(binary);
+            
+            content.value = base64;
+            isBinaryUpdate.value = true;
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching binary update:', err);
+      }
+      
       // Mock API call - replace with actual API call
       article.value = {
         id: route.params.id as string,
@@ -94,9 +128,13 @@ For more detailed instructions, check out our [Quick Start Guide](/documentation
         category: 'getting-started'
       };
 
-      // Populate form fields
+      // Only populate form fields from article if we don't have a binary update
+      if (!isBinaryUpdate.value) {
+        content.value = article.value.content;
+      }
+      
+      // Always set these fields
       title.value = article.value.title;
-      content.value = article.value.content;
       category.value = article.value.category;
       status.value = article.value.status;
     } else {
@@ -160,15 +198,9 @@ const saveArticle = async () => {
   }
 };
 
-// Handle content update from the markdown editor
+// Handle content update from the editor
 const updateContent = (newContent: string) => {
   content.value = newContent;
-};
-
-// Handle save from the markdown editor
-const handleEditorSave = (newContent: string) => {
-  content.value = newContent;
-  saveArticle();
 };
 
 // Toggle article status
@@ -250,12 +282,13 @@ const categories = [
         Article saved successfully!
       </div>
 
-      <!-- Markdown Editor -->
-      <MarkdownEditor
+      <!-- Collaborative Editor -->
+      <CollaborativeEditor
         v-model="content"
-        height="calc(100vh - 250px)"
+        :doc-id="docId"
+        :is-binary-update="isBinaryUpdate"
+        placeholder="Start writing your documentation here..."
         @update:modelValue="updateContent"
-        @save="handleEditorSave"
       />
       
       <!-- Action buttons -->

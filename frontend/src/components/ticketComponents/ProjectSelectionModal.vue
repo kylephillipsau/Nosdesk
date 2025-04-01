@@ -1,8 +1,9 @@
 <!-- ProjectSelectionModal.vue -->
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import Modal from '@/components/Modal.vue'
 import type { Project } from '@/types/project'
+import { projectService } from '@/services/projectService'
 
 const props = defineProps<{
   show: boolean;
@@ -14,32 +15,38 @@ const emit = defineEmits<{
   (e: 'select-project', projectId: number): void;
 }>()
 
-// TODO: Replace with actual API call or store
-const projects = ref<Project[]>([
-  {
-    id: 1,
-    name: "Website Redesign",
-    description: "Complete overhaul of the company website",
-    status: 'active',
-    ticketCount: 5
-  },
-  {
-    id: 2,
-    name: "Mobile App Development",
-    description: "New mobile app for customer support",
-    status: 'active',
-    ticketCount: 8
-  },
-  {
-    id: 3,
-    name: "Infrastructure Upgrade",
-    description: "Upgrade server infrastructure and monitoring",
-    status: 'completed',
-    ticketCount: 3
-  }
-])
-
+const projects = ref<Project[]>([])
+const isLoading = ref(false)
+const error = ref<string | null>(null)
 const searchQuery = ref('')
+
+// Fetch projects when the modal is shown
+watch(() => props.show, async (isVisible) => {
+  if (isVisible) {
+    await fetchProjects()
+  }
+})
+
+// Fetch projects on component mount
+onMounted(async () => {
+  if (props.show) {
+    await fetchProjects()
+  }
+})
+
+const fetchProjects = async () => {
+  isLoading.value = true
+  error.value = null
+  
+  try {
+    projects.value = await projectService.getProjects()
+  } catch (err) {
+    console.error('Failed to fetch projects:', err)
+    error.value = 'Failed to load projects. Please try again later.'
+  } finally {
+    isLoading.value = false
+  }
+}
 
 const filteredProjects = computed(() => {
   const query = searchQuery.value.toLowerCase()
@@ -49,16 +56,16 @@ const filteredProjects = computed(() => {
   )
 })
 
-const getStatusColor = (status: string) => {
+const getStatusClass = (status: string) => {
   switch (status) {
     case 'active':
-      return 'text-green-400'
+      return 'bg-green-500/20 text-green-400 border-green-500/30'
     case 'completed':
-      return 'text-blue-400'
+      return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
     case 'archived':
-      return 'text-gray-400'
+      return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
     default:
-      return 'text-slate-400'
+      return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
   }
 }
 
@@ -89,8 +96,18 @@ const selectProject = (projectId: number) => {
         </div>
       </div>
 
+      <!-- Error message -->
+      <div v-if="error" class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg">
+        {{ error }}
+      </div>
+
+      <!-- Loading state -->
+      <div v-if="isLoading" class="flex justify-center items-center py-8">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+
       <!-- Project List -->
-      <div class="flex flex-col gap-2 max-h-[400px] overflow-y-auto p-2">
+      <div v-else class="flex flex-col gap-2 max-h-[400px] overflow-y-auto p-2">
         <div
           v-for="project in filteredProjects"
           :key="project.id"
@@ -100,19 +117,25 @@ const selectProject = (projectId: number) => {
         >
           <div class="flex items-center justify-between">
             <h4 class="font-medium text-white">{{ project.name }}</h4>
-            <span :class="[getStatusColor(project.status), 'text-sm px-2 py-0.5 rounded-full bg-slate-600/50']">
+            <span 
+              :class="getStatusClass(project.status)"
+              class="text-sm px-2 py-0.5 rounded-full border"
+            >
               {{ project.status }}
             </span>
           </div>
           <p v-if="project.description" class="text-sm text-slate-400">
             {{ project.description }}
           </p>
+          <div class="text-xs text-slate-400 mt-1">
+            {{ project.ticketCount }} tickets
+          </div>
         </div>
       </div>
 
       <!-- Empty State -->
       <div
-        v-if="filteredProjects.length === 0"
+        v-if="!isLoading && filteredProjects.length === 0"
         class="text-center py-8 text-slate-400"
       >
         No projects found

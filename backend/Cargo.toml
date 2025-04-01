@@ -1,0 +1,63 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+default-run = "backend"
+
+[lib]
+name = "backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "backend"
+path = "src/main.rs"
+
+[[bin]]
+name = "import_tickets"
+path = "src/bin/import_tickets.rs"
+
+[dependencies]
+actix-web = "4.9.0"
+diesel = { version = "2.1.0", features = ["postgres", "r2d2", "chrono", "serde_json"] }
+dotenv = "0.15.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+r2d2 = "0.8.10"
+uuid = { version = "1.4.1", features = ["v4", "serde"] }
+actix-cors = "0.6.4"
+actix-multipart = "0.6.1"
+actix-files = "0.6.5"
+futures = "0.3"
+jsonwebtoken = "8.3.0"
+bcrypt = "0.15.0"
+actix-web-httpauth = "0.8.0"
+# WebSocket dependencies for collaborative editing
+actix-web-actors = "4.2.0"  # WebSocket actors for Actix
+actix = "0.13.1"            # Actor framework
+tokio = { version = "1", features = ["full"] }
+lazy_static = "1.4.0"        # For static mutable state
+dashmap = "5.5.0"            # Thread-safe concurrent hashmap
+env_logger = "0.10.0"
+log = "0.4"
+mockall = { version = "0.11.4", optional = true }
+actix-service = "2.0.2"
+derive_more = "0.99.17"
+aws-sdk-s3 = "0.28.0"
+aws-config = "0.55.3"
+aws-credential-types = "0.55.3"
+
+# Add yrs for Yjs/CRDT support in Rust
+yrs = "0.23.0"
+lib0 = "0.16.10"
+
+# For testing only
+[dev-dependencies]
+actix-rt = "2.8.0"
+mockall = "0.11.4"
+
+# Add fastrand dependency somewhere in the dependencies section
+fastrand = "1.9.0"
+
+# Add bytes dependency
+bytes = "1.0"

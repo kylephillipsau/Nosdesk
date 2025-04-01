@@ -57,65 +57,67 @@ const handleDrop = () => {
     <h3 class="px-4 text-sm font-medium text-gray-400 uppercase mb-2 flex-shrink-0">Recent Tickets</h3>
 
     <div class="flex-1 min-h-0 overflow-y-auto">
-      <div class="space-y-1 pt-2 px-2">
-        <RouterLink 
-          v-for="ticket in recentTicketsStore.recentTickets" 
-          :key="ticket.id" 
-          :to="{
-            path: `/tickets/${ticket.id}`,
-            query: { fromRecent: 'true' }
-          }"
-          draggable="true"
-          @dragstart="(dragEvent: DragEvent) => handleDragStart(ticket.id, dragEvent)"
-          @dragend="handleDragEnd"
-          @dragover="(dragEvent: DragEvent) => handleDragOver(ticket.id, dragEvent)"
-          @drop="handleDrop"
-          class="group block px-2 py-1.5 rounded-lg hover:bg-slate-700 relative cursor-move transition-all duration-200"
-          :class="{
-            'opacity-50': draggedTicketId === ticket.id,
-            'bg-blue-900/20 border border-blue-500/30': ticket.isDraft,
-            'hover:bg-blue-900/30': ticket.isDraft
-          }"
-        >
-          <div class="flex items-center gap-2 w-full">
-            <StatusBadge 
-              type="status" 
-              :value="ticket.status"
-              custom-classes="w-2.5 h-2.5 rounded-full flex-shrink-0"
-            />
-            
-            <div class="flex items-center min-w-0 flex-1">
-              <QuickTooltip 
-                :text="ticket.title" 
-                :details="{
-                  title: ticket.title,
-                  status: ticket.status,
-                  requester: ticket.requester,
-                  assignee: ticket.assignee,
-                  created: formatDate(ticket.created)
-                }"
-                class="min-w-0 flex-1"
-                :disabled="draggedTicketId !== null"
-                groupId="recent-tickets" 
-              >
-                <span class="text-sm text-white truncate block">
-                  {{ ticket.title }}
-                  <span v-if="ticket.isDraft" class="ml-1 text-xs text-blue-400">(Draft)</span>
-                </span>
-              </QuickTooltip>
+      <div class="space-y-1 pt-2 pb-4 px-2">
+        <!-- Wrap each ticket item with QuickTooltip -->
+        <div v-for="ticket in recentTicketsStore.recentTickets" :key="ticket.id" class="block">
+          <QuickTooltip 
+            :text="ticket.title" 
+            :details="{
+              title: ticket.title,
+              status: ticket.status,
+              requester: ticket.requester,
+              assignee: ticket.assignee,
+              created: formatDate(ticket.created)
+            }"
+            :disabled="draggedTicketId !== null"
+            :fullWidth="true"
+          >
+            <RouterLink 
+              :to="{
+                path: `/tickets/${ticket.id}`,
+                query: { fromRecent: 'true' }
+              }"
+              draggable="true"
+              @dragstart="(dragEvent: DragEvent) => handleDragStart(ticket.id, dragEvent)"
+              @dragend="handleDragEnd"
+              @dragover="(dragEvent: DragEvent) => handleDragOver(ticket.id, dragEvent)"
+              @drop="handleDrop"
+              class="group block px-2 py-1.5 rounded-lg hover:bg-slate-700 relative cursor-move transition-all duration-200"
+              :class="{
+                'opacity-50': draggedTicketId === ticket.id,
+                'bg-blue-900/20 border border-blue-500/30': ticket.isDraft,
+                'hover:bg-blue-900/30': ticket.isDraft
+              }"
+            >
+              <div class="flex items-center gap-2 w-full">
+                <StatusBadge 
+                  type="status" 
+                  :value="ticket.status"
+                  custom-classes="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                />
+                
+                <div class="flex items-center min-w-0 flex-1 gap-1">
+                  <div class="min-w-0 flex-1">
+                    <span class="text-sm text-white truncate block">
+                      {{ ticket.title }}
+                      <span v-if="ticket.isDraft" class="ml-1 text-xs text-blue-400">(Draft)</span>
+                    </span>
+                  </div>
 
-              <div class="flex items-center gap-2 flex-shrink-0 ml-2">
-                <span class="text-xs text-gray-400 whitespace-nowrap">#{{ ticket.id }}</span>
-                <button 
-                  @click.prevent="recentTicketsStore.removeRecentTicket(ticket.id)"
-                  class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-600 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
-                >
-                  ×
-                </button>
+                  <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+                    <span class="text-xs text-gray-400 whitespace-nowrap">#{{ ticket.id }}</span>
+                    <button 
+                      @click.prevent="recentTicketsStore.removeRecentTicket(ticket.id)"
+                      class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-600 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </RouterLink>
+            </RouterLink>
+          </QuickTooltip>
+        </div>
 
         <!-- Empty state -->
         <div 
