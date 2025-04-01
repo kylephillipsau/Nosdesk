@@ -5,28 +5,28 @@ import type { Device } from '@/types/ticket';
 
 const props = defineProps<Device>();
 
-type DeviceFieldKey = 'hostname' | 'serialNumber' | 'model' | 'warrantyStatus';
+type DeviceFieldKey = 'hostname' | 'serial_number' | 'model' | 'warranty_status';
 
 const editableDevice = reactive({
   hostname: props.hostname,
-  serialNumber: props.serialNumber,
+  serial_number: props.serial_number,
   model: props.model,
-  warrantyStatus: props.warrantyStatus
+  warranty_status: props.warranty_status
 });
 
 const isEditing = ref(false); // Start in view mode
 
 const emit = defineEmits<{
   (e: 'remove'): void;
-  (e: 'view'): void;
+  (e: 'view', deviceId: number): void;
 }>();
 
 // Define device fields with their display labels
 const deviceFields = [
   { key: 'hostname' as DeviceFieldKey, label: 'Hostname' },
-  { key: 'serialNumber' as DeviceFieldKey, label: 'Serial Number' },
+  { key: 'serial_number' as DeviceFieldKey, label: 'Serial Number' },
   { key: 'model' as DeviceFieldKey, label: 'Model' },
-  { key: 'warrantyStatus' as DeviceFieldKey, label: 'Warranty Status' }
+  { key: 'warranty_status' as DeviceFieldKey, label: 'Warranty Status' }
 ];
 
 // Function to start editing
@@ -46,6 +46,11 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
+// Function to handle view button click
+const handleViewClick = () => {
+  emit('view', props.id);
+};
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
 });
@@ -61,7 +66,7 @@ onUnmounted(() => {
       <h2 class="text-lg font-medium text-slate-100">Device</h2>
       <div class="flex items-center gap-2">
         <button
-          @click="emit('view')"
+          @click="handleViewClick"
           class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
           title="View device details"
         >

@@ -8,8 +8,9 @@ import SettingsView from '../views/SettingsView.vue'
 import ProjectsView from '../views/ProjectsView.vue'
 import ProjectDetailView from '../views/ProjectDetailView.vue'
 import UserProfileView from '../views/UserProfileView.vue'
-import DocumentationView from '@/views/DocumentationView.vue'
 import DocumentationPageView from '@/views/DocumentationPageView.vue'
+import ProfileSettingsView from '@/views/ProfileSettingsView.vue'
+import TestEditor from '../components/TestEditor.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -51,15 +52,6 @@ const router = createRouter({
       }
     },
     {
-      path: '/tickets/create',
-      name: 'create-ticket',
-      component: () => import('../views/CreateTicketView.vue'),
-      meta: {
-        requiresAuth: true,
-        title: 'Create Ticket'
-      }
-    },
-    {
       path: '/tickets/:id',
       name: 'ticket-view',
       component: TicketView,
@@ -73,7 +65,7 @@ const router = createRouter({
       }
     },
     {
-      path: '/users/:username',
+      path: '/users/:uuid',
       name: 'user-profile',
       component: UserProfileView,
       props: true,
@@ -82,7 +74,8 @@ const router = createRouter({
         title: 'User Profile'
       },
       beforeEnter: (to) => {
-        to.meta.title = `${to.params.username}'s Profile`
+        // Set a generic title initially, the component will update it after fetching the user
+        to.meta.title = 'User Profile'
       }
     },
     {
@@ -161,46 +154,76 @@ const router = createRouter({
     {
       path: '/documentation',
       name: 'documentation',
-      component: DocumentationView,
+      component: DocumentationPageView,
       meta: {
         requiresAuth: true,
         title: 'Documentation'
       }
     },
     {
-      path: '/documentation/category/:categoryId',
-      name: 'documentation-category',
-      component: DocumentationPageView,
-      meta: {
-        requiresAuth: true,
-        title: 'Category Documentation'
-      },
-      beforeEnter: async (to) => {
-        // Set a generic title initially
-        to.meta.title = 'Category Documentation';
-        to.meta.isCategory = true;
-      }
-    },
-    {
-      path: '/documentation/:id',
-      name: 'documentation-article',
+      path: '/documentation/:path',
+      name: 'documentation-page',
       component: DocumentationPageView,
       meta: {
         requiresAuth: true,
         title: 'Documentation'
       },
+      props: true,
       beforeEnter: async (to) => {
         // Set a generic title initially
-        to.meta.title = 'Documentation Article';
-        console.log('Setting initial documentation article title');
+        to.meta.title = 'Documentation';
         
-        // Check if this is a ticket note
-        if (to.params.id && typeof to.params.id === 'string' && to.params.id.startsWith('ticket-')) {
-          const ticketId = to.params.id.replace('ticket-', '');
-          to.meta.title = `Ticket #${ticketId} Notes`;
-          to.meta.isTicketNote = true;
-          to.meta.ticketId = ticketId;
+        // Handle ticket notes
+        if (to.query.ticketId) {
+          to.meta.title = `Ticket #${to.query.ticketId} Notes`;
+          return;
         }
+
+        // Set title based on the path
+        if (to.params.path) {
+          const path = to.params.path.toString();
+          
+          // If it's a category, format the title
+          if (path.startsWith('category-')) {
+            const categoryName = path.replace('category-', '').replace(/\d+$/, '');
+            if (categoryName) {
+              to.meta.title = categoryName
+                .split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            }
+          } else {
+            // For regular pages, format the slug as a title
+            // Check if it's a numeric ID (legacy support) or a slug
+            if (!isNaN(Number(path))) {
+              // It's a numeric ID, we'll let the component handle the title
+              to.meta.title = 'Documentation';
+            } else {
+              // It's a slug, format it as a title
+              to.meta.title = path
+                .split('-')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+            }
+          }
+        }
+      }
+    },
+    {
+      path: '/profile/settings',
+      name: 'profile-settings',
+      component: ProfileSettingsView,
+      meta: {
+        requiresAuth: true
+      }
+    },
+    {
+      path: '/test-editor',
+      name: 'test-editor',
+      component: TestEditor,
+      meta: {
+        requiresAuth: false,
+        title: 'Test Editor'
       }
     },
     {
@@ -227,7 +250,6 @@ router.beforeResolve((to, from, next) => {
       .join(' ');
   }
   
-  // Update both document title and meta title
   document.title = `${title} | nosDesk`;
   if (to.meta) {
     to.meta.title = title;
@@ -236,17 +258,33 @@ router.beforeResolve((to, from, next) => {
   next();
 });
 
-// Handle unsaved changes
+// Authentication guard
 router.beforeEach((to, from, next) => {
-  // @ts-ignore - We'll add this property to the window object
+  // Check for unsaved changes
+  // @ts-ignore
   if (window.hasUnsavedChanges && !window.confirm('You have unsaved changes. Are you sure you want to leave?')) {
     next(false);
+    return;
+  }
+
+  // Check if the route requires authentication
+  const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
+  
+  // Get auth status from localStorage
+  const isAuthenticated = !!localStorage.getItem('token');
+  
+  if (requiresAuth && !isAuthenticated) {
+    // Redirect to login page if not authenticated
+    next({ name: 'login', query: { redirect: to.fullPath } });
+  } else if (to.path === '/login' && isAuthenticated) {
+    // Redirect to home if already authenticated and trying to access login page
+    next({ name: 'home' });
   } else {
+    // Continue to the route
     next();
   }
 });
 
-// Handle route errors
 router.onError((error) => {
   router.push({
     name: 'error',

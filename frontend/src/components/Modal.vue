@@ -30,16 +30,16 @@ onUnmounted(() => {
   <Teleport to="body">
     <div
       v-if="show"
-      class="fixed inset-0 z-50 overflow-y-auto"
+      class="fixed inset-0 z-[9999] overflow-y-auto"
       @click="emit('close')"
     >
       <!-- Backdrop -->
-      <div class="fixed inset-0 bg-black/50 backdrop-blur-sm"></div>
+      <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999]"></div>
 
       <!-- Modal -->
       <div class="flex min-h-full items-center justify-center p-4">
         <div
-          class="relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl"
+          class="relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl z-[10000]"
           @click.stop
         >
           <!-- Header -->

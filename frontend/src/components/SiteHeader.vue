@@ -2,15 +2,16 @@
 import { useRouter, useRoute } from "vue-router";
 import { computed, ref, onMounted, onUnmounted, nextTick } from "vue";
 import UserAvatar from "./UserAvatar.vue";
-import { usePageTitle } from "@/composables/usePageTitle";
-import AnimatedTitle from "./AnimatedTitle.vue";
 import HeaderTitle from "./HeaderTitle.vue";
 import DocumentIconSelector from "./DocumentIconSelector.vue";
 import TicketIdentifier from "./TicketIdentifier.vue";
 import PageUrlDisplay from "./PageUrlDisplay.vue";
+import ticketService from '@/services/ticketService';
+import { useAuthStore } from '@/stores/auth';
+import { RouterLink } from "vue-router";
 
 const router = useRouter();
-const route = useRoute();
+const authStore = useAuthStore();
 
 interface Props {
   title?: string;
@@ -30,9 +31,7 @@ const props = withDefaults(defineProps<Props>(), {
   pageUrl: undefined,
 });
 
-const emit = defineEmits(["updateTicketTitle", "updateDocumentTitle", "updateDocumentIcon"]);
-
-const { pageTitle, setCustomTitle } = usePageTitle();
+const emit = defineEmits(["updateTicketTitle", "updateDocumentTitle", "updateDocumentIcon", "previewTicketTitle", "previewDocumentTitle"]);
 
 const isTicketView = computed(() => {
   return props.ticket !== null;
@@ -48,32 +47,40 @@ console.log("SiteHeader rendering with:", {
   isDocumentView: isDocumentView.value,
   ticket: props.ticket,
   document: props.document,
-  pageTitle: pageTitle.value,
-  useRouteTitle: props.useRouteTitle,
   title: props.title,
 });
 
 // Use the provided title if available
 const displayTitle = computed(() => {
   if (props.title) {
-    console.log("Using provided title:", props.title);
     return props.title;
   }
-  console.log("Using pageTitle:", pageTitle.value);
-  return pageTitle.value;
+  return '';
 });
 
 const handleUpdateTitle = (newTitle: string) => {
   if (props.ticket) {
-    setCustomTitle(`#${props.ticket.id} ${newTitle}`);
     emit("updateTicketTitle", newTitle);
+  }
+};
+
+const handlePreviewTitle = (newTitle: string) => {
+  if (props.ticket) {
+    emit("previewTicketTitle", newTitle);
   }
 };
 
 const handleUpdateDocumentTitle = (newTitle: string) => {
   if (props.document) {
-    setCustomTitle(newTitle);
+    console.log(`SiteHeader: Updating document title to "${newTitle}" for document:`, props.document);
     emit("updateDocumentTitle", newTitle);
+  }
+};
+
+const handlePreviewDocumentTitle = (newTitle: string) => {
+  if (props.document) {
+    console.log(`SiteHeader: Previewing document title as "${newTitle}" for document:`, props.document);
+    emit("previewDocumentTitle", newTitle);
   }
 };
 
@@ -83,27 +90,25 @@ const handleUpdateDocumentIcon = (newIcon: string) => {
   }
 };
 
-// Initialize title from route meta if needed
-onMounted(() => {
-  if (props.useRouteTitle && !props.title) {
-    // Title will be handled by router navigation guard
-    return;
-  }
-  if (props.title) {
-    setCustomTitle(props.title);
-  }
-});
-
 const showUserMenu = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
 const buttonRef = ref<HTMLElement | null>(null);
 
-// Mock user data - replace with actual user data later
-const user = {
-  name: "Kyle Phillips",
-  email: "kyle@example.com",
-  avatar: null,
-};
+// Replace mock user data with actual user data from auth store
+const user = computed(() => {
+  if (authStore.user) {
+    return {
+      name: authStore.user.name,
+      email: authStore.user.email,
+      avatar: null // Auth user doesn't have avatar property, so we set it to null
+    };
+  }
+  return {
+    name: "Guest",
+    email: "guest@example.com",
+    avatar: null
+  };
+});
 
 const handleClickOutside = (event: MouseEvent) => {
   if (!menuRef.value || !buttonRef.value) return;
@@ -134,8 +139,38 @@ const toggleUserMenu = () => {
   }
 };
 
-const navigateToCreateTicket = () => {
-  router.push("/tickets/create");
+// Add isCreatingTicket ref
+const isCreatingTicket = ref(false);
+
+const navigateToCreateTicket = async () => {
+  console.log('navigateToCreateTicket called');
+  if (isCreatingTicket.value) {
+    console.log('Already creating ticket, returning');
+    return; // Prevent multiple clicks
+  }
+  
+  try {
+    console.log('Setting isCreatingTicket to true');
+    isCreatingTicket.value = true;
+    
+    console.log('Creating empty ticket');
+    // Create an empty ticket
+    const newTicket = await ticketService.createEmptyTicket();
+    
+    console.log('Empty ticket created:', newTicket);
+    // Navigate to the new ticket
+    router.push(`/tickets/${newTicket.id}`);
+  } catch (error) {
+    console.error('Failed to create empty ticket:', error);
+    // You could show an error notification here
+    
+    console.log('Falling back to create ticket page');
+    // Fallback to the tickets page if creation fails
+    router.push("/tickets");
+  } finally {
+    console.log('Setting isCreatingTicket to false');
+    isCreatingTicket.value = false;
+  }
 };
 
 const navigateToSettings = () => {
@@ -144,7 +179,17 @@ const navigateToSettings = () => {
 };
 
 const handleLogout = () => {
-  // API endpoint needed: POST /api/auth/logout
+  try {
+    // Close the user menu
+    showUserMenu.value = false;
+    
+    // Log the user out using the auth store
+    // The auth store will handle the redirect to the login page
+    authStore.logout();
+  } catch (error) {
+    console.error('Logout failed:', error);
+    // You could show an error notification here
+  }
 };
 
 // Event listeners for click outside
@@ -157,15 +202,10 @@ onUnmounted(() => {
   document.removeEventListener("mousedown", handleClickOutside);
   document.removeEventListener("keydown", handleKeydown);
 });
-
-// Add a computed property to determine if we should show the page URL
-const showPageUrl = computed(() => {
-  return !!props.pageUrl && !isTicketView.value && !isDocumentView.value;
-});
 </script>
 
 <template>
-  <header class="bg-slate-800 border-b border-slate-700">
+  <header class="bg-slate-800 border-b border-slate-700 relative z-[999]">
     <div class="flex items-center justify-between h-16 px-6 gap-2">
       <!-- Left side - Title area -->
       <div class="flex items-center flex-1 relative overflow-hidden">
@@ -177,9 +217,10 @@ const showPageUrl = computed(() => {
             <div class="flex items-center gap-2">
               <TicketIdentifier :ticketId="props.ticket.id" size="lg" />
               <HeaderTitle
-                :initial-title="props.ticket.title"
+                :initialTitle="props.ticket.title"
                 :placeholder-text="'Enter ticket title...'"
                 @update-title="handleUpdateTitle"
+                @update-title-preview="handlePreviewTitle"
               />
             </div>
           </template>
@@ -190,16 +231,16 @@ const showPageUrl = computed(() => {
                 @update:icon="handleUpdateDocumentIcon"
               />
               <HeaderTitle
-                :initial-title="props.document.title"
+                :initialTitle="props.document.title"
                 :placeholder-text="'Enter document title...'"
                 @update-title="handleUpdateDocumentTitle"
+                @update-title-preview="handlePreviewDocumentTitle"
               />
             </div>
           </template>
           <template v-else>
             <div class="flex items-center gap-2">
-              <AnimatedTitle :title="displayTitle" />
-              <PageUrlDisplay v-if="showPageUrl" :url="props.pageUrl" size="sm" class="ml-2" />
+              <h1 class="text-xl font-semibold text-white">{{ displayTitle }}</h1>
             </div>
           </template>
         </div>
@@ -212,8 +253,6 @@ const showPageUrl = computed(() => {
       >
         isTicketView: {{ isTicketView }}<br />
         isDocumentView: {{ isDocumentView }}<br />
-        pageTitle: {{ pageTitle }}<br />
-        useRouteTitle: {{ props.useRouteTitle }}<br />
         title: {{ props.title }}<br />
         displayTitle: {{ displayTitle }}<br />
         ticket:
@@ -236,9 +275,16 @@ const showPageUrl = computed(() => {
         <button
           v-if="props.showCreateButton"
           @click="navigateToCreateTicket"
-          class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          :disabled="isCreatingTicket"
+          class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          Create Ticket
+          <span v-if="isCreatingTicket" class="animate-spin h-4 w-4">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </span>
+          {{ isCreatingTicket ? 'Creating...' : 'Create Ticket' }}
         </button>
 
         <!-- User Profile Menu -->
@@ -263,14 +309,14 @@ const showPageUrl = computed(() => {
           <div
             v-if="showUserMenu"
             ref="menuRef"
-            class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg py-1 z-50"
+            class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg py-1 z-[9999] dropdown-menu"
             role="menu"
             tabindex="-1"
           >
             <!-- User Info -->
             <div
               class="px-4 py-2 border-b border-slate-700 hover:bg-slate-700 cursor-pointer"
-              @click="router.push(`/users/${encodeURIComponent(user.name)}`)"
+              @click="authStore.user ? router.push(`/users/${authStore.user.uuid}`) : {}"
             >
               <div class="text-sm font-medium text-white">{{ user.name }}</div>
               <div class="text-xs text-slate-400">{{ user.email }}</div>
@@ -278,13 +324,14 @@ const showPageUrl = computed(() => {
 
             <!-- Menu Items -->
             <div class="py-1">
-              <a
-                href="#"
+              <RouterLink
+                to="/profile/settings"
                 class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
                 role="menuitem"
+                @click="showUserMenu = false"
               >
                 Profile Settings
-              </a>
+              </RouterLink>
               <button
                 @click="navigateToSettings"
                 class="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
@@ -308,6 +355,15 @@ const showPageUrl = computed(() => {
 </template>
 
 <style scoped>
+.dropdown-menu {
+  position: fixed;
+  /* Ensure it's positioned relative to the viewport */
+  transform: translateZ(0);
+  /* Force a new stacking context */
+  will-change: transform;
+  /* Hint to the browser to create a new layer */
+}
+
 .transition-all {
   transition-property: all;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);

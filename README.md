@@ -1,8 +1,8 @@
-# nosDesk
+# NosDesk
 
 **The Helpdesk Reimagined for Speed and Efficiency in Education**
 
-`NosDesk` is a helpdesk solution designed specifically for educational institutions. It streamlines ticket management, enhances communication between staff and students, and optimizes workflows to ensure rapid resolution of issues in a school or university setting. Built with Vue.js, Tailwind CSS and other modern web technologies, `NosDesk` prioritizes speed, scalability, and user experience.
+`NosDesk` is a helpdesk solution designed specifically for educational institutions. It streamlines ticket management, enhances communication between staff and students, and optimizes workflows to ensure rapid resolution of issues in a school or university setting. Built with Vue.js, Rust and PostgreSQL, `NosDesk` prioritizes speed, scalability, and user experience.
 
 ## Table of Contents
 - [Features](#features)
@@ -17,9 +17,9 @@
 - **Education-Focused**: Tailored for schools, colleges, and universities to manage IT, facilities, and administrative issues.
 - **Fast Ticket Resolution**: Intuitive interface and efficient workflows for quick issue tracking and resolution.
 - **User Roles**: Supports roles like students, teachers, IT staff, facilities management, and administrators with role-based access control.
-- **Real-Time Updates**: Live status updates for tickets and device management.
+- **Real-Time Updates**: Live status updates and collaborative tickets, documentation and device management.
 - **Customizable**: Easily configurable to fit the needs of different educational institutions.
-- **Responsive Design**: Works seamlessly on desktops, tablets, and mobile devices.
+- **Responsive Design**: Works seamlessly on all web connected devices, desktops, tablets, and mobile devices.
 
 ## Getting Started
 

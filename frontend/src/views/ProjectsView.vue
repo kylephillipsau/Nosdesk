@@ -1,66 +1,60 @@
 <!-- ProjectsView.vue -->
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Project } from '@/types/project'
 import Modal from '@/components/Modal.vue'
 import ProjectForm from '@/components/projectComponents/ProjectForm.vue'
+import { projectService } from '@/services/projectService'
 
-const projects = ref<Project[]>([
-  {
-    id: 1,
-    name: "Website Redesign",
-    description: "Complete overhaul of the company website",
-    ticketCount: 5,
-    status: 'active'
-  },
-  {
-    id: 2,
-    name: "Mobile App Development",
-    description: "New mobile app for customer support",
-    ticketCount: 8,
-    status: 'active'
-  },
-  {
-    id: 3,
-    name: "Infrastructure Upgrade",
-    description: "Upgrade server infrastructure and monitoring",
-    ticketCount: 3,
-    status: 'completed'
-  }
-])
-
+const projects = ref<Project[]>([])
 const router = useRouter()
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
-const isLoading = ref(false)
+const isLoading = ref(true)
+const error = ref<string | null>(null)
 const selectedProject = ref<Project | null>(null)
+
+// Fetch projects on component mount
+onMounted(async () => {
+  try {
+    isLoading.value = true
+    projects.value = await projectService.getProjects()
+  } catch (err) {
+    console.error('Failed to fetch projects:', err)
+    error.value = 'Failed to load projects. Please try again later.'
+  } finally {
+    isLoading.value = false
+  }
+})
 
 const openProject = (projectId: number) => {
   router.push(`/projects/${projectId}`)
 }
 
 const handleEditProject = async (projectData: Omit<Project, 'id' | 'ticketCount'> & { id?: number }) => {
+  if (!selectedProject.value?.id) return
+  
   try {
     isLoading.value = true
-    // TODO: Replace with actual API call
-    await new Promise(resolve => setTimeout(resolve, 500))
+    error.value = null
     
-    if (selectedProject.value?.id) {
-      const index = projects.value.findIndex(p => p.id === selectedProject.value?.id)
-      if (index !== -1) {
-        projects.value[index] = {
-          ...projects.value[index],
-          ...projectData,
-          id: selectedProject.value.id,
-        }
-      }
+    const updatedProject = await projectService.updateProject(
+      selectedProject.value.id,
+      projectData
+    )
+    
+    // Update the project in the local array
+    const index = projects.value.findIndex(p => p.id === selectedProject.value?.id)
+    if (index !== -1) {
+      projects.value[index] = updatedProject
     }
+    
     showEditModal.value = false
     selectedProject.value = null
-  } catch (error) {
-    console.error('Failed to edit project:', error)
-    // TODO: Add error handling
+  } catch (err) {
+    console.error('Failed to edit project:', err)
+    error.value = 'Failed to update project. Please try again.'
   } finally {
     isLoading.value = false
   }
@@ -75,20 +69,15 @@ const openEditModal = (event: Event, project: Project) => {
 const handleCreateProject = async (projectData: Omit<Project, 'id' | 'ticketCount'>) => {
   try {
     isLoading.value = true
-    // TODO: Replace with actual API call
-    const newProject: Project = {
-      id: Math.max(...projects.value.map(p => p.id)) + 1,
-      ticketCount: 0,
-      ...projectData
-    }
-
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500))
+    error.value = null
+    
+    const newProject = await projectService.createProject(projectData)
     projects.value.push(newProject)
+    
     showCreateModal.value = false
-  } catch (error) {
-    console.error('Failed to create project:', error)
-    // TODO: Add error handling
+  } catch (err) {
+    console.error('Failed to create project:', err)
+    error.value = 'Failed to create project. Please try again.'
   } finally {
     isLoading.value = false
   }
@@ -100,12 +89,13 @@ const removeProject = async (event: Event, projectId: number) => {
 
   try {
     isLoading.value = true
-    // TODO: Replace with actual API call
-    await new Promise(resolve => setTimeout(resolve, 500))
+    error.value = null
+    
+    await projectService.deleteProject(projectId)
     projects.value = projects.value.filter(p => p.id !== projectId)
-  } catch (error) {
-    console.error('Failed to remove project:', error)
-    // TODO: Add error handling
+  } catch (err) {
+    console.error('Failed to remove project:', err)
+    error.value = 'Failed to delete project. Please try again.'
   } finally {
     isLoading.value = false
   }
@@ -126,6 +116,11 @@ const removeProject = async (event: Event, projectId: number) => {
         </button>
       </div>
 
+      <!-- Error message -->
+      <div v-if="error" class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg mb-4">
+        {{ error }}
+      </div>
+
       <div v-if="isLoading" class="flex justify-center items-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
       </div>
@@ -137,10 +132,11 @@ const removeProject = async (event: Event, projectId: number) => {
       <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div
           v-for="project in projects"
+          @click="openProject(project.id)" 
           :key="project.id"
-          class="bg-slate-800 rounded-lg p-6 group relative hover:bg-slate-700 transition-colors"
+          class="bg-slate-800 rounded-lg p-6 group relative hover:bg-slate-700 transition-colors cursor-pointerno"
         >
-          <div @click="openProject(project.id)" class="flex flex-col gap-2 cursor-pointer">
+          <div class="flex flex-col gap-2">
             <div class="flex items-start justify-between">
               <h3 class="text-lg font-medium text-white">{{ project.name }}</h3>
               <span
@@ -163,6 +159,28 @@ const removeProject = async (event: Event, projectId: number) => {
                 {{ project.ticketCount }} tickets
               </span>
             </div>
+          </div>
+          
+          <!-- Action buttons -->
+          <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button 
+              @click="(e) => openEditModal(e, project)" 
+              class="p-1 text-slate-400 hover:text-white"
+              title="Edit project"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+              </svg>
+            </button>
+            <button 
+              @click="(e) => removeProject(e, project.id)" 
+              class="p-1 text-slate-400 hover:text-red-400"
+              title="Delete project"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>

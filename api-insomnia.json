@@ -1,0 +1,169 @@
+{
+    "_type": "export",
+    "__export_format": 4,
+    "__export_date": "2025-03-12T00:00:00.000Z",
+    "__export_source": "insomnia.desktop.app:v2023.5.8",
+    "resources": [
+      {
+        "_id": "wrk_1",
+        "name": "Helpdesk API",
+        "parentId": null,
+        "_type": "workspace"
+      },
+      {
+        "_id": "env_1",
+        "name": "Base Environment",
+        "parentId": "wrk_1",
+        "data": {
+          "base_url": "http://localhost:8080"
+        },
+        "_type": "environment"
+      },
+      {
+        "_id": "req_folder_auth",
+        "name": "Authentication",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_folder_tickets",
+        "name": "Tickets",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_folder_projects",
+        "name": "Projects",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_folder_users",
+        "name": "Users",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_folder_devices",
+        "name": "Devices",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_folder_docs",
+        "name": "Documentation",
+        "parentId": "wrk_1",
+        "_type": "request_group"
+      },
+      {
+        "_id": "req_health",
+        "name": "Health Check",
+        "parentId": "wrk_1",
+        "url": "{{ base_url }}/health",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_login",
+        "name": "Login",
+        "parentId": "req_folder_auth",
+        "url": "{{ base_url }}/api/auth/login",
+        "method": "POST",
+        "body": {
+          "mimeType": "application/json",
+          "text": "{\"username\": \"\", \"password\": \"\"}"
+        },
+        "_type": "request"
+      },
+      {
+        "_id": "req_register",
+        "name": "Register",
+        "parentId": "req_folder_auth",
+        "url": "{{ base_url }}/api/auth/register",
+        "method": "POST",
+        "body": {
+          "mimeType": "application/json",
+          "text": "{\"username\": \"\", \"password\": \"\", \"email\": \"\"}"
+        },
+        "_type": "request"
+      },
+      {
+        "_id": "req_upload",
+        "name": "Upload Files",
+        "parentId": "wrk_1",
+        "url": "{{ base_url }}/api/upload",
+        "method": "POST",
+        "body": {
+          "mimeType": "multipart/form-data",
+          "params": [
+            {
+              "name": "files",
+              "type": "file",
+              "value": ""
+            }
+          ]
+        },
+        "_type": "request"
+      },
+      {
+        "_id": "req_tickets_get",
+        "name": "Get All Tickets",
+        "parentId": "req_folder_tickets",
+        "url": "{{ base_url }}/api/tickets",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_tickets_create",
+        "name": "Create Ticket",
+        "parentId": "req_folder_tickets",
+        "url": "{{ base_url }}/api/tickets",
+        "method": "POST",
+        "body": {
+          "mimeType": "application/json",
+          "text": "{\"title\": \"\", \"description\": \"\"}"
+        },
+        "_type": "request"
+      },
+      {
+        "_id": "req_ticket_get",
+        "name": "Get Ticket by ID",
+        "parentId": "req_folder_tickets",
+        "url": "{{ base_url }}/api/tickets/1",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_projects_get",
+        "name": "Get All Projects",
+        "parentId": "req_folder_projects",
+        "url": "{{ base_url }}/api/projects",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_users_get",
+        "name": "Get All Users",
+        "parentId": "req_folder_users",
+        "url": "{{ base_url }}/api/users",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_devices_get",
+        "name": "Get All Devices",
+        "parentId": "req_folder_devices",
+        "url": "{{ base_url }}/api/devices",
+        "method": "GET",
+        "_type": "request"
+      },
+      {
+        "_id": "req_docs_get",
+        "name": "Get Documentation Pages",
+        "parentId": "req_folder_docs",
+        "url": "{{ base_url }}/api/documentation/pages",
+        "method": "GET",
+        "_type": "request"
+      }
+    ]
+  }

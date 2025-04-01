@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, onMounted, onBeforeUnmount, computed } from "vue";
 import { useRouter } from "vue-router";
-import type { Ticket, Device } from "@/types/ticket";
 import type { TicketStatus, TicketPriority } from "@/constants/ticketOptions";
 import StatusBadge from "@/components/StatusBadge.vue";
+import UserAvatar from "@/components/UserAvatar.vue";
+import ticketService from "@/services/ticketService";
+import type { Ticket, Device } from "@/services/ticketService";
 
 const props = defineProps<{
   linkedTicketId: number;
+  currentTicketId?: number;
 }>();
 
 const emit = defineEmits<{
@@ -18,44 +21,26 @@ const router = useRouter();
 const linkedTicket = ref<Ticket | null>(null);
 const isNavigating = ref(false);
 
-const fetchLinkedTicket = async () => {
-  try {
-    const ticketData = (await import("@/data/tickets.json")).default;
-    const foundTicket = ticketData.tickets.find(
-      (t: any) => t.id === props.linkedTicketId
-    ) as {
-      id: number;
-      title: string;
-      status: string;
-      priority: string;
-      created: string;
-      modified: string;
-      assignee: string;
-      requester: string;
-      devices?: Device[];
-      linkedTickets?: number[];
-      project?: string;
-      notesAndComments?: {
-        id: number;
-        content: string;
-        author: string;
-        createdAt: string;
-        attachments?: { url: string; name: string }[];
-      }[];
-      articleContent?: string;
-    };
+const isSameAsCurrentTicket = computed(() => {
+  return props.currentTicketId && props.linkedTicketId === props.currentTicketId;
+});
 
-    if (foundTicket) {
-      linkedTicket.value = {
-        ...foundTicket,
-        status: foundTicket.status as TicketStatus,
-        priority: foundTicket.priority as TicketPriority,
-        linkedTickets: foundTicket.linkedTickets || [],
-        devices: foundTicket.devices || [],
-      };
+const fetchLinkedTicket = async () => {
+  if (isSameAsCurrentTicket.value) {
+    console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    return;
+  }
+  
+  try {
+    console.log(`Fetching linked ticket #${props.linkedTicketId}`);
+    const fetchedTicket = await ticketService.getTicketById(props.linkedTicketId);
+    
+    if (fetchedTicket) {
+      linkedTicket.value = fetchedTicket;
+      console.log(`Successfully fetched linked ticket #${props.linkedTicketId}:`, fetchedTicket);
     }
   } catch (error) {
-    console.error("Error fetching linked ticket:", error);
+    console.error(`Error fetching linked ticket #${props.linkedTicketId}:`, error);
   }
 };
 
@@ -74,6 +59,10 @@ const viewTicket = async () => {
 };
 
 onMounted(() => {
+  if (isSameAsCurrentTicket.value) {
+    console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    return;
+  }
   fetchLinkedTicket();
 });
 
@@ -93,7 +82,7 @@ const formattedDate = (dateString: string) => {
 </script>
 
 <template>
-  <div v-if="linkedTicket" class="bg-slate-800 rounded-lg overflow-hidden">
+  <div v-if="linkedTicket && !isSameAsCurrentTicket" class="bg-slate-800 rounded-lg overflow-hidden">
     <!-- Header with status and actions -->
     <div class="px-4 py-3 bg-slate-700/50 flex items-center justify-between">
       <div class="flex items-center gap-2">
@@ -102,7 +91,7 @@ const formattedDate = (dateString: string) => {
           :value="linkedTicket.status"
           custom-classes="w-1 h-2.5 flex-shrink-0"
         />
-        <div class="flex items-center gap-2 mb-3">
+        <div class="flex items-center gap-2">
           <span class="text-gray-400 text-sm">#{{ linkedTicket.id }}</span>
           <h3 class="text-white font-medium flex-1">
             {{ linkedTicket.title }}
@@ -159,13 +148,25 @@ const formattedDate = (dateString: string) => {
             formattedDate(linkedTicket.created)
           }}</span>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Assignee:</span>
-          <span class="text-white">{{ linkedTicket.assignee }}</span>
+        <div class="flex items-center gap-2 col-span-2">
+          <span class="text-gray-400 min-w-[70px]">Assignee:</span>
+          <UserAvatar 
+            v-if="linkedTicket.assignee" 
+            :name="linkedTicket.assignee" 
+            size="xs" 
+            :showName="true"
+          />
+          <span v-else class="text-white">Unassigned</span>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Requester:</span>
-          <span class="text-white">{{ linkedTicket.requester }}</span>
+        <div class="flex items-center gap-2 col-span-2">
+          <span class="text-gray-400 min-w-[70px]">Requester:</span>
+          <UserAvatar 
+            v-if="linkedTicket.requester" 
+            :name="linkedTicket.requester" 
+            size="xs" 
+            :showName="true"
+          />
+          <span v-else class="text-white">None</span>
         </div>
       </div>
     </div>
