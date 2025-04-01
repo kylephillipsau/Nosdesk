@@ -9,17 +9,26 @@ interface Props {
 }
 
 const props = defineProps<Props>();
-const emit = defineEmits(['updateTitle']);
+const emit = defineEmits(['updateTitle', 'updateTitlePreview']);
 
 const title = ref(props.initialTitle);
 const isEditing = ref(false);
+const originalTitle = ref(props.initialTitle);
 
-watch(title, (newTitle) => {
-  emit('updateTitle', newTitle);
+// Emit title updates as the user types for real-time preview
+watch(title, (newValue) => {
+  if (isEditing.value) {
+    emit('updateTitlePreview', newValue);
+  }
 });
 
+// Only emit final update when editing is complete
 const handleBlur = () => {
   isEditing.value = false;
+  if (title.value !== originalTitle.value) {
+    emit('updateTitle', title.value);
+    originalTitle.value = title.value;
+  }
 };
 
 const handleClick = () => {
@@ -30,6 +39,12 @@ const handleKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Enter') {
     event.preventDefault();
     (event.target as HTMLInputElement).blur();
+  } else if (event.key === 'Escape') {
+    // Reset to original value on Escape
+    title.value = originalTitle.value;
+    isEditing.value = false;
+    // Also emit the original title to reset the preview
+    emit('updateTitlePreview', originalTitle.value);
   }
 };
 </script>

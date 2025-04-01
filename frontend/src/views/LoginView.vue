@@ -2,14 +2,36 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import logo from '@/assets/logo.svg';
 
 const router = useRouter();
+const authStore = useAuthStore();
 const email = ref('');
 const password = ref('');
+const rememberMe = ref(false);
+const isLoading = ref(false);
+const errorMessage = ref('');
 
-const handleLogin = () => {
-  // API endpoint needed: POST /api/auth/login
+const handleLogin = async () => {
+  isLoading.value = true;
+  errorMessage.value = '';
+  
+  try {
+    const success = await authStore.login({
+      email: email.value,
+      password: password.value
+    });
+    
+    if (!success && authStore.error) {
+      errorMessage.value = authStore.error;
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    errorMessage.value = 'An unexpected error occurred. Please try again.';
+  } finally {
+    isLoading.value = false;
+  }
 };
 </script>
 
@@ -20,6 +42,11 @@ const handleLogin = () => {
       <div class="flex flex-col gap-2 items-center">
         <img :src="logo" alt="NosDesk Logo" class="px-8" />
         <p class="text-slate-400 mt-2">Sign in to your account</p>
+      </div>
+
+      <!-- Error Message -->
+      <div v-if="errorMessage" class="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg text-sm">
+        {{ errorMessage }}
       </div>
 
       <!-- Login Form -->
@@ -49,9 +76,10 @@ const handleLogin = () => {
         </div>
 
         <div class="flex items-center justify-between">
-          <div class="flex items-center">
+          <div class="flex items-center gap-1.5">
             <input
               id="remember-me"
+              v-model="rememberMe"
               type="checkbox"
               class="h-4 w-4 rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
             />
@@ -63,9 +91,11 @@ const handleLogin = () => {
 
         <button
           type="submit"
-          class="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-slate-900"
+          :disabled="isLoading"
+          class="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Sign in
+          <span v-if="isLoading">Signing in...</span>
+          <span v-else>Sign in</span>
         </button>
       </form>
     </div>

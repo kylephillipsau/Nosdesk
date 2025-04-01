@@ -1,7 +1,13 @@
 // views/Dashboard.vue
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import TicketHeatmap from '@/components/TicketHeatmap.vue'
+import { getTickets } from '@/services/ticketService'
+import type { Ticket } from '@/services/ticketService'
+import { useAuthStore } from '@/stores/auth'
+
+// Initialize auth store
+const authStore = useAuthStore()
 
 // Get current time for greeting
 const getGreeting = () => {
@@ -12,14 +18,44 @@ const getGreeting = () => {
 }
 
 const greeting = ref(getGreeting())
-const username = ref('Kyle') // This would come from your auth system
 
-// Mock ticket stats - replace with actual data
+// Get username from auth store
+const username = computed(() => {
+  if (!authStore.user?.name) return 'Guest';
+  
+  // Split the full name and take the first part as the first name
+  const firstName = authStore.user.name.split(' ')[0];
+  return firstName;
+})
+
+// Initialize ticket stats with zeros
 const ticketStats = ref({
-  total: 12,
-  open: 5,
-  inProgress: 4,
-  closed: 3
+  total: 0,
+  open: 0,
+  inProgress: 0,
+  closed: 0
+})
+
+// Fetch tickets and update stats
+const fetchTicketStats = async () => {
+  try {
+    const tickets = await getTickets()
+    
+    // Calculate stats
+    ticketStats.value = {
+      total: tickets.length,
+      open: tickets.filter(ticket => ticket.status === 'open').length,
+      inProgress: tickets.filter(ticket => ticket.status === 'in-progress').length,
+      closed: tickets.filter(ticket => ticket.status === 'closed').length
+    }
+  } catch (error) {
+    console.error('Error fetching ticket stats:', error)
+  }
+}
+
+// Fetch data when component mounts
+onMounted(() => {
+  fetchTicketStats()
 })
 </script>
 
@@ -63,7 +99,7 @@ const ticketStats = ref({
           <p class="text-2xl font-semibold text-gray-400 mt-2">{{ ticketStats.closed }}</p>
         </div>
       </div>
-      <TicketHeatmap />
+      <TicketHeatmap ticketStatus="closed" />
 
     </div>
 

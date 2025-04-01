@@ -1,0 +1,960 @@
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import * as Y from "yjs";
+import { WebsocketProvider } from "y-websocket";
+import { EditorView } from "prosemirror-view";
+import { EditorState } from "prosemirror-state";
+import { schema } from "@/components/editor/schema";
+import {
+  ySyncPlugin,
+  yCursorPlugin,
+  yUndoPlugin,
+  undo,
+  redo,
+  initProseMirrorDoc,
+} from "y-prosemirror";
+import { keymap } from "prosemirror-keymap";
+import { baseKeymap } from "prosemirror-commands";
+import { InputRule, inputRules } from "prosemirror-inputrules";
+import {
+  toggleMark,
+  setBlockType,
+  lift as pmLift,
+  selectParentNode as pmSelectParentNode,
+} from "prosemirror-commands";
+import { wrapInList } from "prosemirror-schema-list";
+import "prosemirror-view/style/prosemirror.css";
+
+// Props
+interface Props {
+  docId: string;
+  placeholder?: string;
+  modelValue?: string;
+  isBinaryUpdate?: boolean;
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  placeholder: "Start typing...",
+  modelValue: "",
+  isBinaryUpdate: false,
+});
+
+const emit = defineEmits<{
+  "update:modelValue": [value: string];
+}>();
+
+// Refs for template
+const editorElement = ref<HTMLElement | null>(null);
+const connectBtn = ref<HTMLElement | null>(null);
+const isConnected = ref(false);
+
+// Custom dropdown state for toolbar
+const typeMenuRef = ref<HTMLElement | null>(null);
+const typeButtonRef = ref<HTMLElement | null>(null);
+const insertMenuRef = ref<HTMLElement | null>(null);
+const insertButtonRef = ref<HTMLElement | null>(null);
+const moreMenuRef = ref<HTMLElement | null>(null);
+const moreButtonRef = ref<HTMLElement | null>(null);
+
+const showTypeMenu = ref(false);
+const showInsertMenu = ref(false);
+const showMoreMenu = ref(false);
+
+// Global variables - mirroring the demo approach exactly
+let ydoc: Y.Doc | null = null;
+let provider: WebsocketProvider | null = null;
+let yXmlFragment: Y.XmlFragment | null = null;
+let editorView: EditorView | null = null;
+
+// Enhanced logging
+const log = {
+  info: (message: string, ...args: any[]) =>
+    console.log(`[YJS-Editor] ${message}`, ...args),
+  error: (message: string, ...args: any[]) =>
+    console.error(`[YJS-Editor] ${message}`, ...args),
+  debug: (message: string, ...args: any[]) =>
+    console.debug(`[YJS-Editor] ${message}`, ...args),
+};
+
+// Define input rules for Markdown-like behavior
+const markdownInputRules = inputRules({
+  rules: [
+    // Headings
+    new InputRule(/^(#{1,6})\s$/, (state, match, start, end) => {
+      const level = match[1].length;
+      const tr = state.tr.delete(start, end);
+      return setBlockType(schema.nodes.heading, { level })(state) ? tr : null;
+    }),
+    // Bullet lists
+    new InputRule(/^\s*[-*]\s$/, (state, match, start, end) => {
+      const tr = state.tr.delete(start, end);
+      return wrapInList(schema.nodes.bullet_list)(state) ? tr : null;
+    }),
+    // Numbered lists
+    new InputRule(/^\s*\d+\.\s$/, (state, match, start, end) => {
+      const tr = state.tr.delete(start, end);
+      return wrapInList(schema.nodes.ordered_list)(state) ? tr : null;
+    }),
+    // Blockquotes
+    new InputRule(/^\s*>\s$/, (state, match, start, end) => {
+      const tr = state.tr.delete(start, end);
+      return setBlockType(schema.nodes.blockquote, {})(state) ? tr : null;
+    }),
+    // Code blocks
+    new InputRule(/^\s*```\s$/, (state, match, start, end) => {
+      const tr = state.tr.delete(start, end);
+      return setBlockType(schema.nodes.code_block, {})(state) ? tr : null;
+    }),
+  ],
+});
+
+// Initialize editor following the working direct pattern but with custom styling
+const initEditor = async () => {
+  if (!editorElement.value) return;
+
+  try {
+    log.info("Initializing collaborative editor with docId:", props.docId);
+
+    // 1. Create new Yjs document
+    ydoc = new Y.Doc();
+
+    // Handle binary update if provided
+    if (props.isBinaryUpdate && props.modelValue) {
+      try {
+        const binary = window.atob(props.modelValue);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        Y.applyUpdate(ydoc, bytes);
+        log.debug("Applied binary update to document");
+      } catch (error) {
+        log.error("Error applying binary update:", error);
+      }
+    }
+
+    // 2. Create the websocket provider
+    provider = new WebsocketProvider(
+      "wss://demos.yjs.dev/ws",
+      props.docId,
+      ydoc
+    );
+
+    isConnected.value = true;
+
+    // 3. Set awareness information for cursors
+    provider.awareness.setLocalState({
+      user: {
+        name: "User-" + Math.floor(Math.random() * 1000),
+        color: getRandomColor(),
+      },
+    });
+
+    // 4. Get the XML fragment and initialize ProseMirror document
+    yXmlFragment = ydoc.getXmlFragment("prosemirror");
+    const { doc, meta } = initProseMirrorDoc(yXmlFragment, schema);
+
+    // 5. Create the editor view with proper mapping
+    editorView = new EditorView(editorElement.value, {
+      state: EditorState.create({
+        doc,
+        schema,
+        plugins: [
+          ySyncPlugin(yXmlFragment, { mapping: meta }),
+          yCursorPlugin(provider.awareness),
+          yUndoPlugin(),
+          keymap({
+            "Mod-z": undo,
+            "Mod-y": redo,
+            "Mod-Shift-z": redo,
+          }),
+          keymap(baseKeymap),
+          markdownInputRules,
+        ],
+      }),
+      dispatchTransaction(transaction) {
+        if (editorView) {
+          const newState = editorView.state.apply(transaction);
+          editorView.updateState(newState);
+        }
+      },
+    });
+
+    // 6. Listen for document updates to emit model value changes
+    ydoc.on("update", (update, origin) => {
+      // Only emit updates that originated from this client
+      if (origin === provider) {
+        if (editorView) {
+          const editorState = editorView.state;
+          const prosemirrorDoc = editorState.doc.toJSON();
+          emit("update:modelValue", JSON.stringify(prosemirrorDoc));
+        }
+      }
+    });
+
+    // 7. Apply initial content if provided and not binary
+    if (!props.isBinaryUpdate && props.modelValue) {
+      try {
+        const initialDoc = JSON.parse(props.modelValue);
+        const newDoc = schema.nodeFromJSON(initialDoc);
+        if (editorView && newDoc) {
+          // Create a transaction that preserves selection
+          const tr = editorView.state.tr.replaceWith(
+            0,
+            editorView.state.doc.content.size,
+            newDoc.content
+          );
+          editorView.dispatch(tr);
+          log.debug("Applied initial content to editor");
+        }
+      } catch (error) {
+        log.error("Error applying initial content:", error);
+      }
+    }
+
+    // 8. Store reference for debugging
+    window.example = {
+      provider,
+      ydoc,
+      yXmlFragment,
+      editorView,
+    };
+
+    log.debug("Editor initialized successfully");
+  } catch (error) {
+    log.error("Error initializing editor:", error);
+  }
+};
+
+// Helper function to get random color for user
+const getRandomColor = () => {
+  const colors = [
+    "#f87171",
+    "#fb923c",
+    "#fbbf24",
+    "#a3e635",
+    "#34d399",
+    "#22d3ee",
+    "#60a5fa",
+    "#a78bfa",
+  ];
+  return colors[Math.floor(Math.random() * colors.length)];
+};
+
+// Toggle WebSocket connection
+const toggleConnection = () => {
+  if (!provider) return;
+
+  if (provider.shouldConnect) {
+    provider.disconnect();
+    isConnected.value = false;
+    if (connectBtn.value) {
+      connectBtn.value.textContent = "Connect";
+    }
+  } else {
+    provider.connect();
+    isConnected.value = true;
+    if (connectBtn.value) {
+      connectBtn.value.textContent = "Disconnect";
+    }
+  }
+};
+
+// Event listeners for click outside
+const handleClickOutside = (event: MouseEvent) => {
+  const target = event.target as Node;
+
+  // Handle Type menu
+  if (showTypeMenu.value && typeMenuRef.value && typeButtonRef.value) {
+    if (
+      !typeMenuRef.value.contains(target) &&
+      !typeButtonRef.value.contains(target)
+    ) {
+      showTypeMenu.value = false;
+    }
+  }
+
+  // Handle Insert menu
+  if (showInsertMenu.value && insertMenuRef.value && insertButtonRef.value) {
+    if (
+      !insertMenuRef.value.contains(target) &&
+      !insertButtonRef.value.contains(target)
+    ) {
+      showInsertMenu.value = false;
+    }
+  }
+
+  // Handle More menu
+  if (showMoreMenu.value && moreMenuRef.value && moreButtonRef.value) {
+    if (
+      !moreMenuRef.value.contains(target) &&
+      !moreButtonRef.value.contains(target)
+    ) {
+      showMoreMenu.value = false;
+    }
+  }
+};
+
+const handleKeydown = (event: KeyboardEvent) => {
+  if (event.key === "Escape") {
+    if (showTypeMenu.value) {
+      showTypeMenu.value = false;
+      typeButtonRef.value?.focus();
+    }
+    if (showInsertMenu.value) {
+      showInsertMenu.value = false;
+      insertButtonRef.value?.focus();
+    }
+    if (showMoreMenu.value) {
+      showMoreMenu.value = false;
+      moreButtonRef.value?.focus();
+    }
+  }
+};
+
+const toggleTypeMenu = () => {
+  showTypeMenu.value = !showTypeMenu.value;
+  if (showTypeMenu.value) {
+    showInsertMenu.value = false;
+    showMoreMenu.value = false;
+  }
+};
+
+const toggleInsertMenu = () => {
+  showInsertMenu.value = !showInsertMenu.value;
+  if (showInsertMenu.value) {
+    showTypeMenu.value = false;
+    showMoreMenu.value = false;
+  }
+};
+
+const toggleMoreMenu = () => {
+  showMoreMenu.value = !showMoreMenu.value;
+  if (showMoreMenu.value) {
+    showTypeMenu.value = false;
+    showInsertMenu.value = false;
+  }
+};
+
+// Functions to handle toolbar actions
+const setHeading = (level: number) => {
+  if (!editorView) return;
+  const attrs = { level };
+  setBlockType(schema.nodes.heading, attrs)(
+    editorView.state,
+    editorView.dispatch
+  );
+};
+
+const toggleBold = () => {
+  if (!editorView) return;
+  toggleMark(schema.marks.strong)(editorView.state, editorView.dispatch);
+};
+
+const toggleItalic = () => {
+  if (!editorView) return;
+  toggleMark(schema.marks.em)(editorView.state, editorView.dispatch);
+};
+
+const toggleBlockquote = () => {
+  if (!editorView) return;
+  setBlockType(schema.nodes.blockquote, {})(
+    editorView.state,
+    editorView.dispatch
+  );
+};
+
+const toggleCodeBlock = () => {
+  if (!editorView) return;
+  setBlockType(schema.nodes.code_block, {})(
+    editorView.state,
+    editorView.dispatch
+  );
+};
+
+const setParagraph = () => {
+  if (!editorView) return;
+  setBlockType(schema.nodes.paragraph, {})(
+    editorView.state,
+    editorView.dispatch
+  );
+};
+
+const toggleBulletList = () => {
+  if (!editorView) return;
+  wrapInList(schema.nodes.bullet_list)(editorView.state, editorView.dispatch);
+};
+
+const toggleOrderedList = () => {
+  if (!editorView) return;
+  wrapInList(schema.nodes.ordered_list)(editorView.state, editorView.dispatch);
+};
+
+const insertLink = () => {
+  if (!editorView) return;
+  const { state, dispatch } = editorView;
+  const url = prompt("Enter URL for the link:", "https://");
+  if (url) {
+    const { from, to } = state.selection;
+    const tr = state.tr;
+    if (from === to) {
+      const text = prompt("Enter link text:", "Link");
+      if (text) {
+        tr.insertText(text, from, from);
+        tr.addMark(
+          from,
+          from + text.length,
+          schema.marks.link.create({ href: url })
+        );
+      }
+    } else {
+      tr.addMark(from, to, schema.marks.link.create({ href: url }));
+    }
+    dispatch(tr);
+  }
+};
+
+const undoEdit = () => {
+  if (!editorView) return;
+  undo(editorView.state);
+};
+
+const redoEdit = () => {
+  if (!editorView) return;
+  redo(editorView.state);
+};
+
+// Function to focus the editor
+const focusEditor = () => {
+  if (editorView) {
+    editorView.focus();
+  }
+};
+
+// Cleanup function
+const cleanup = () => {
+  if (editorView) {
+    editorView.destroy();
+    editorView = null;
+  }
+  if (provider) {
+    provider.disconnect();
+    provider = null;
+  }
+  if (ydoc) {
+    ydoc.destroy();
+    ydoc = null;
+  }
+  yXmlFragment = null;
+
+  // Clean up global references
+  window.example = undefined;
+};
+
+// Watch for changes in props.docId
+watch(
+  () => props.docId,
+  (newDocId, oldDocId) => {
+    if (newDocId !== oldDocId) {
+      log.info(
+        `Document ID changed from ${oldDocId} to ${newDocId}, reinitializing...`
+      );
+      cleanup();
+      // Short delay to ensure cleanup completes
+      setTimeout(() => {
+        initEditor();
+      }, 100);
+    }
+  }
+);
+
+// Add method to update editor state
+const updateState = (newState: EditorState) => {
+  if (editorView) {
+    editorView.updateState(newState);
+  }
+};
+
+// Watch for changes in model value
+watch(
+  () => props.modelValue,
+  (newValue, oldValue) => {
+    if (newValue !== oldValue && editorView && !props.isBinaryUpdate) {
+      try {
+        // Only update if JSON is valid and the editor is already initialized
+        const parsedDoc = JSON.parse(newValue);
+        const newDoc = schema.nodeFromJSON(parsedDoc);
+
+        if (newDoc) {
+          // Create a transaction that preserves selection
+          const tr = editorView.state.tr.replaceWith(
+            0,
+            editorView.state.doc.content.size,
+            newDoc.content
+          );
+          editorView.dispatch(tr);
+          log.debug("Applied updated content from model");
+        }
+      } catch (error) {
+        log.error("Error applying content update:", error);
+      }
+    }
+  }
+);
+
+onMounted(() => {
+  initEditor();
+  document.addEventListener("mousedown", handleClickOutside);
+  document.addEventListener("keydown", handleKeydown);
+});
+
+onBeforeUnmount(() => {
+  cleanup();
+  document.removeEventListener("mousedown", handleClickOutside);
+  document.removeEventListener("keydown", handleKeydown);
+});
+
+// Add to window for typescript
+declare global {
+  interface Window {
+    example?: any;
+  }
+}
+</script>
+
+<template>
+  <div class="collaborative-editor">
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <!-- Type Dropdown -->
+      <div class="relative">
+        <button
+          ref="typeButtonRef"
+          @click="toggleTypeMenu"
+          class="toolbar-button"
+          aria-haspopup="true"
+          :aria-expanded="showTypeMenu"
+          title="Text Style"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7V4h16v3"></path>
+            <path d="M9 20h6"></path>
+            <path d="M12 4v16"></path>
+          </svg>
+        </button>
+
+        <!-- Type Menu Dropdown -->
+        <div
+          v-if="showTypeMenu"
+          ref="typeMenuRef"
+          class="dropdown-menu"
+          role="menu"
+          tabindex="-1"
+        >
+          <button
+            @click="setParagraph(); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Plain
+          </button>
+          <button
+            @click="setHeading(1); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Heading 1
+          </button>
+          <button
+            @click="setHeading(2); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Heading 2
+          </button>
+          <button
+            @click="setHeading(3); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Heading 3
+          </button>
+          <button
+            @click="toggleBlockquote(); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Blockquote
+          </button>
+          <button
+            @click="toggleCodeBlock(); showTypeMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Code Block
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- Formatting Buttons -->
+      <button
+        @click="toggleBold"
+        class="toolbar-button"
+        title="Bold"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+          <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+        </svg>
+      </button>
+      <button
+        @click="toggleItalic"
+        class="toolbar-button"
+        title="Italic"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="4" x2="10" y2="4"></line>
+          <line x1="14" y1="20" x2="5" y2="20"></line>
+          <line x1="15" y1="4" x2="9" y2="20"></line>
+        </svg>
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- Insert Dropdown -->
+      <div class="relative">
+        <button
+          ref="insertButtonRef"
+          @click="toggleInsertMenu"
+          class="toolbar-button"
+          aria-haspopup="true"
+          :aria-expanded="showInsertMenu"
+          title="Insert"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+
+        <!-- Insert Menu Dropdown -->
+        <div
+          v-if="showInsertMenu"
+          ref="insertMenuRef"
+          class="dropdown-menu"
+          role="menu"
+          tabindex="-1"
+        >
+          <button
+            @click="toggleBulletList(); showInsertMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Bullet List
+          </button>
+          <button
+            @click="toggleOrderedList(); showInsertMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Numbered List
+          </button>
+          <button
+            @click="insertLink(); showInsertMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Link
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- Undo/Redo Buttons -->
+      <button
+        @click="undoEdit"
+        class="toolbar-button"
+        title="Undo"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7v6h6"></path>
+          <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
+        </svg>
+      </button>
+      <button
+        @click="redoEdit"
+        class="toolbar-button"
+        title="Redo"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 7v6h-6"></path>
+          <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
+        </svg>
+      </button>
+      
+      <!-- Spacer to push connection controls to right -->
+      <div class="flex-grow"></div>
+      
+      <!-- Connection toggle -->
+      <button
+        ref="connectBtn"
+        id="y-connect-btn"
+        @click="toggleConnection"
+        class="toolbar-button"
+        :class="{ active: isConnected }"
+      >
+        {{ isConnected ? "Disconnect" : "Connect" }}
+      </button>
+      <div class="connection-status" :class="{ connected: isConnected }">
+        {{ isConnected ? "Connected" : "Disconnected" }}
+      </div>
+    </div>
+    
+    <!-- Editor content with click handler -->
+    <div 
+      id="editor" 
+      ref="editorElement" 
+      @click="focusEditor"
+      class="editor-container"
+      :data-placeholder="placeholder"
+    ></div>
+  </div>
+</template>
+
+<style>
+.collaborative-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #374151;
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background-color: #1e293b;
+  height: auto;
+  width: 100%;
+  position: relative;
+}
+
+.toolbar {
+  display: flex;
+  padding: 0.5rem;
+  background-color: #314257;
+  border-bottom: 1px solid #374151;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.toolbar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.5rem;
+  background-color: #45556C;
+  border: none;
+  border-radius: 0.25rem;
+  color: #aebaca;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.toolbar-button:hover {
+  background-color: #334155;
+  color: #e6eaee;
+}
+
+.toolbar-button.active {
+  color: #3b82f6;
+}
+
+.toolbar-divider {
+  width: 1px;
+  background-color: #91A1B8;
+  margin: 0 0.5rem;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.25rem;
+  width: 12rem;
+  background-color: #1e293b;
+  border: 1px solid #374151;
+  border-radius: 0.375rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  z-index: 50;
+}
+
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  text-align: left;
+  font-size: 0.875rem;
+  color: #e2e8f0;
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background-color: #334155;
+}
+
+.connection-status {
+  font-size: 0.875rem;
+  color: #ef4444;
+}
+
+.connection-status.connected {
+  color: #10b981;
+}
+
+.editor-container {
+  padding: 1rem;
+  background-color: #212C42;
+  color: #e2e8f0;
+  min-height: 250px;
+}
+
+.ProseMirror {
+  outline: none;
+  min-height: 200px;
+  height: auto;
+}
+
+.ProseMirror p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.ProseMirror h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 0.5rem;
+  line-height: 1.2;
+}
+
+.ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  line-height: 1.3;
+}
+
+.ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  line-height: 1.4;
+}
+
+.ProseMirror blockquote {
+  border-left: 4px solid #3b82f6;
+  padding-left: 1rem;
+  margin-left: 0;
+  margin-right: 0;
+  color: #94a3b8;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.ProseMirror pre {
+  background-color: #0F172B;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.ProseMirror code {
+  background-color: #0F172B;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.ProseMirror ul, .ProseMirror ol {
+  padding-left: 1.5rem;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.ProseMirror li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.ProseMirror a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.ProseMirror .yRemoteSelection {
+  position: absolute;
+  border-left: 2px solid;
+  border-right: 2px solid;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.ProseMirror .yRemoteSelectionHead {
+  position: absolute;
+  height: 1.2em;
+  width: 2px;
+  pointer-events: none;
+}
+
+/* Empty editor placeholder */
+.editor-container:empty::before {
+  content: attr(data-placeholder);
+  color: #64748b;
+  pointer-events: none;
+}
+
+/* Flex spacer */
+.flex-grow {
+  flex-grow: 1;
+}
+
+/* This gives the remote user caret. The colors are automatically overwritten*/
+.ProseMirror-yjs-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid black;
+  border-right: 1px solid black;
+  border-color: orange;
+  word-break: normal;
+  pointer-events: none;
+}
+/* This renders the username above the caret */
+.ProseMirror-yjs-cursor > div {
+  position: absolute;
+  top: -1.05em;
+  left: -1px;
+  font-size: 13px;
+  background-color: rgb(250, 129, 0);
+  font-family: serif;
+  font-style: normal;
+  font-weight: normal;
+  line-height: normal;
+  user-select: none;
+  color: white;
+  padding-left: 2px;
+  padding-right: 2px;
+  white-space: nowrap;
+}
+</style>
