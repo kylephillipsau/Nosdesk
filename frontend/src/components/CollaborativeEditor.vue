@@ -14,16 +14,23 @@ import {
   initProseMirrorDoc,
 } from "y-prosemirror";
 import { keymap } from "prosemirror-keymap";
-import { baseKeymap } from "prosemirror-commands";
-import { InputRule, inputRules } from "prosemirror-inputrules";
-import {
-  toggleMark,
-  setBlockType,
-  lift as pmLift,
-  selectParentNode as pmSelectParentNode,
-} from "prosemirror-commands";
+import { toggleMark, setBlockType } from "prosemirror-commands";
 import { wrapInList } from "prosemirror-schema-list";
 import "prosemirror-view/style/prosemirror.css";
+import { Schema } from "prosemirror-model";
+
+// Import individual components instead of exampleSetup
+import { baseKeymap } from "prosemirror-commands";
+import { dropCursor } from "prosemirror-dropcursor";
+import { gapCursor } from "prosemirror-gapcursor";
+import { 
+  inputRules, 
+  wrappingInputRule, 
+  textblockTypeInputRule,
+  smartQuotes,
+  emDash,
+  ellipsis
+} from "prosemirror-inputrules";
 
 // Props
 interface Props {
@@ -76,37 +83,66 @@ const log = {
     console.debug(`[YJS-Editor] ${message}`, ...args),
 };
 
-// Define input rules for Markdown-like behavior
-const markdownInputRules = inputRules({
-  rules: [
-    // Headings
-    new InputRule(/^(#{1,6})\s$/, (state, match, start, end) => {
-      const level = match[1].length;
-      const tr = state.tr.delete(start, end);
-      return setBlockType(schema.nodes.heading, { level })(state) ? tr : null;
-    }),
-    // Bullet lists
-    new InputRule(/^\s*[-*]\s$/, (state, match, start, end) => {
-      const tr = state.tr.delete(start, end);
-      return wrapInList(schema.nodes.bullet_list)(state) ? tr : null;
-    }),
-    // Numbered lists
-    new InputRule(/^\s*\d+\.\s$/, (state, match, start, end) => {
-      const tr = state.tr.delete(start, end);
-      return wrapInList(schema.nodes.ordered_list)(state) ? tr : null;
-    }),
-    // Blockquotes
-    new InputRule(/^\s*>\s$/, (state, match, start, end) => {
-      const tr = state.tr.delete(start, end);
-      return setBlockType(schema.nodes.blockquote, {})(state) ? tr : null;
-    }),
-    // Code blocks
-    new InputRule(/^\s*```\s$/, (state, match, start, end) => {
-      const tr = state.tr.delete(start, end);
-      return setBlockType(schema.nodes.code_block, {})(state) ? tr : null;
-    }),
-  ],
-});
+// Create custom input rules function to replace exampleSetup
+const buildInputRules = (schema: Schema) => {
+  const rules = [];
+  
+  // Heading rules: # for h1, ## for h2, etc.
+  if (schema.nodes.heading) {
+    for (let i = 1; i <= 6; i++) {
+      rules.push(
+        textblockTypeInputRule(
+          new RegExp(`^(#{${i}})\\s$`),
+          schema.nodes.heading,
+          { level: i }
+        )
+      );
+    }
+  }
+  
+  // Blockquote rule: > followed by space
+  if (schema.nodes.blockquote) {
+    rules.push(
+      wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote)
+    );
+  }
+  
+  // Code block rule: ``` followed by space
+  if (schema.nodes.code_block) {
+    rules.push(
+      textblockTypeInputRule(/^```\s$/, schema.nodes.code_block)
+    );
+  }
+  
+  // List rules
+  if (schema.nodes.bullet_list) {
+    // Bullet list: * or - followed by space
+    rules.push(
+      wrappingInputRule(/^\s*[-*]\s$/, schema.nodes.bullet_list)
+    );
+  }
+  
+  if (schema.nodes.ordered_list) {
+    // Ordered list: 1. followed by space
+    rules.push(
+      wrappingInputRule(
+        /^\s*(\d+)\.\s$/,
+        schema.nodes.ordered_list,
+        match => ({ order: +match[1] }),
+        (match, node) => node.childCount + node.attrs.order === +match[1]
+      )
+    );
+  }
+  
+  // Smart quotes, ellipsis, em-dash
+  rules.push(
+    ...smartQuotes,
+    ellipsis,
+    emDash
+  );
+  
+  return inputRules({ rules });
+};
 
 // Initialize editor following the working direct pattern but with custom styling
 const initEditor = async () => {
@@ -154,7 +190,7 @@ const initEditor = async () => {
     yXmlFragment = ydoc.getXmlFragment("prosemirror");
     const { doc, meta } = initProseMirrorDoc(yXmlFragment, schema);
 
-    // 5. Create the editor view with proper mapping
+    // 5. Create the editor view with proper mapping - using individual plugins instead of exampleSetup
     editorView = new EditorView(editorElement.value, {
       state: EditorState.create({
         doc,
@@ -168,9 +204,12 @@ const initEditor = async () => {
             "Mod-y": redo,
             "Mod-Shift-z": redo,
           }),
-          keymap(baseKeymap),
-          markdownInputRules,
-        ],
+          // Add individual plugins instead of exampleSetup
+          buildInputRules(schema),    // Custom markdown input rules
+          keymap(baseKeymap),         // Basic key bindings
+          dropCursor(),               // Shows cursor when dragging
+          gapCursor()                 // Allows clicking between blocks
+        ]
       }),
       dispatchTransaction(transaction) {
         if (editorView) {
@@ -895,6 +934,37 @@ declare global {
 .ProseMirror li {
   margin-bottom: 0.5rem;
   line-height: 1.6;
+}
+
+/* Enhanced list styles */
+.ProseMirror ul {
+  list-style-type: disc;
+  color: #e2e8f0;
+}
+
+.ProseMirror ul ul {
+  list-style-type: circle;
+}
+
+.ProseMirror ul ul ul {
+  list-style-type: square;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+  color: #e2e8f0;
+}
+
+.ProseMirror ol ol {
+  list-style-type: lower-alpha;
+}
+
+.ProseMirror ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.ProseMirror li p {
+  margin: 0.25rem 0;
 }
 
 .ProseMirror a {
