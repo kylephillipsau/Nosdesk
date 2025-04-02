@@ -42,6 +42,7 @@ coverage
 /backend/target/
 /backend/debug/
 /backend/release/
+/backend/uploads/
 **/*.rs.bk
 *.pdb
 # Keep Cargo.lock for applications
