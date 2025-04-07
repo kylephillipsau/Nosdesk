@@ -299,7 +299,7 @@ pub async fn change_password(
 }
 
 // Helper function to validate token internally
-async fn validate_token_internal(auth: &BearerAuth, conn: &mut DbConnection) -> Result<Claims, actix_web::Error> {
+pub async fn validate_token_internal(auth: &BearerAuth, conn: &mut DbConnection) -> Result<Claims, actix_web::Error> {
     let token = auth.token();
     
     // Decode the token

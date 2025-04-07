@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import TicketHeatmap from '@/components/TicketHeatmap.vue'
+import UserAssignedTickets from '@/components/UserAssignedTickets.vue'
 import { getTickets } from '@/services/ticketService'
 import type { Ticket } from '@/services/ticketService'
 import { useAuthStore } from '@/stores/auth'
@@ -62,9 +63,9 @@ onMounted(() => {
 <template>
   <div class="flex flex-col h-full">
     <!-- Content -->
-    <div class="flex flex-col gap-4 p-6">
+    <div class="flex flex-col gap-6 p-6">
       <!-- Greeting Card -->
-      <div class="mb-6">
+      <div class="mb-2">
         <h2 class="text-3xl font-medium text-white">
           {{ greeting }}, {{ username }}!
         </h2>
@@ -99,9 +100,22 @@ onMounted(() => {
           <p class="text-2xl font-semibold text-gray-400 mt-2">{{ ticketStats.closed }}</p>
         </div>
       </div>
-      <TicketHeatmap ticketStatus="closed" />
 
+      <!-- Two column layout for assigned tickets and heatmap -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Assigned Tickets -->
+        <div class="lg:col-span-2">
+          <UserAssignedTickets :limit="5" />
+        </div>
+
+        <!-- Ticket Activity -->
+        <div>
+          <div class="bg-slate-800 rounded-lg p-6">
+            <h3 class="text-lg font-medium text-white mb-4">Ticket Activity</h3>
+            <TicketHeatmap ticketStatus="closed" />
+          </div>
+        </div>
+      </div>
     </div>
-
   </div>
 </template>

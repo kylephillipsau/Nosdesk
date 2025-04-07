@@ -7,6 +7,7 @@ pub mod tickets;
 pub mod projects;
 pub mod devices;
 pub mod documentation;
+pub mod auth_providers;
 
 // Import all handlers from modules
 pub use auth::*;
@@ -16,6 +17,7 @@ pub use tickets::*;
 pub use projects::*;
 pub use devices::*;
 pub use documentation::*;
+pub use auth_providers::*;
 
 // Import necessary types for placeholders
 use actix_web::{web, HttpResponse, Responder, HttpRequest};

@@ -38,6 +38,9 @@ async fn main() -> std::io::Result<()> {
         eprintln!("Warning: Failed to create tickets uploads directory: {}", e);
     });
 
+    // Initialize WebSocket app state for collaborative editing
+    let yjs_app_state = web::Data::new(handlers::collaboration::YjsAppState::new(web::Data::new(pool.clone())));
+
     println!("Starting server at http://{}:{}", host, port);
     println!("You can access the server at:");
     println!("  - http://localhost:{}", port);
@@ -50,6 +53,7 @@ async fn main() -> std::io::Result<()> {
             .allow_any_method()
             .allow_any_header()
             .expose_headers(vec!["content-disposition"])
+            .supports_credentials()
             .max_age(3600);
 
         // Configure JSON payload limits for file uploads
@@ -63,6 +67,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .app_data(web::Data::new(pool.clone()))
+            .app_data(yjs_app_state.clone())
             .app_data(json_config)
             .app_data(multipart_config)
             .route("/health", web::get().to(health_check))
@@ -74,6 +79,18 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/login", web::post().to(handlers::login))
                     .route("/auth/register", web::post().to(handlers::register))
                     .route("/auth/change-password", web::post().to(handlers::change_password))
+                    
+                    // Authentication Provider endpoints
+                    .route("/auth/providers", web::get().to(handlers::get_auth_providers))
+                    .route("/auth/providers/enabled", web::get().to(handlers::get_enabled_auth_providers))
+                    .route("/auth/providers", web::post().to(handlers::create_auth_provider))
+                    .route("/auth/providers/{id}", web::get().to(handlers::get_auth_provider))
+                    .route("/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
+                    .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
+                    .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
+                    .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
+                    // For Microsoft OAuth Callback - we'll implement this later
+                    .route("/auth/microsoft/callback", web::get().to(health_check))
                     
                     // File upload endpoint
                     .route("/upload", web::post().to(handlers::upload_files))
@@ -104,7 +121,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/comments/{comment_id}/attachments", web::post().to(handlers::add_attachment_to_comment))
                     .route("/attachments/{id}", web::delete().to(handlers::delete_attachment))
                     
-                    // Simplified collaboration endpoints
+                    // Collaboration endpoints
                     .service(
                         web::scope("/collaboration")
                             .configure(handlers::collaboration::config)

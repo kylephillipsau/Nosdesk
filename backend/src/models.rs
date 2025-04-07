@@ -945,3 +945,159 @@ pub struct NewDocumentUpdate {
     pub client_id: String,
     pub update_data: Vec<u8>,
 }
+
+// Authentication Provider models
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(diesel::deserialize::FromSqlRow, diesel::expression::AsExpression)]
+#[diesel(sql_type = diesel::sql_types::Text)]
+pub enum AuthProviderType {
+    #[serde(rename = "local")]
+    Local,
+    #[serde(rename = "microsoft")]
+    Microsoft,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "saml")]
+    Saml,
+}
+
+impl ToSql<diesel::sql_types::Text, Pg> for AuthProviderType {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
+        let s = match *self {
+            AuthProviderType::Local => "local",
+            AuthProviderType::Microsoft => "microsoft",
+            AuthProviderType::Google => "google",
+            AuthProviderType::Saml => "saml",
+        };
+        out.write_all(s.as_bytes())?;
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<diesel::sql_types::Text, Pg> for AuthProviderType {
+    fn from_sql(bytes: PgValue) -> deserialize::Result<Self> {
+        match bytes.as_bytes() {
+            b"local" => Ok(AuthProviderType::Local),
+            b"microsoft" => Ok(AuthProviderType::Microsoft),
+            b"google" => Ok(AuthProviderType::Google),
+            b"saml" => Ok(AuthProviderType::Saml),
+            _ => Err("Unrecognized auth provider type".into()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
+#[diesel(table_name = crate::schema::auth_providers)]
+pub struct AuthProvider {
+    pub id: i32,
+    pub provider_type: String,
+    pub name: String,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::auth_providers)]
+pub struct NewAuthProvider {
+    pub provider_type: String,
+    pub name: String,
+    pub enabled: bool,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::auth_providers)]
+pub struct AuthProviderUpdate {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub is_default: Option<bool>,
+    pub updated_at: Option<NaiveDateTime>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable, Associations)]
+#[diesel(table_name = crate::schema::auth_provider_configs)]
+#[diesel(belongs_to(AuthProvider))]
+pub struct AuthProviderConfig {
+    pub id: i32,
+    pub auth_provider_id: i32,
+    pub config_key: String,
+    pub config_value: String,
+    pub is_secret: bool,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::auth_provider_configs)]
+pub struct NewAuthProviderConfig {
+    pub auth_provider_id: i32,
+    pub config_key: String,
+    pub config_value: String,
+    pub is_secret: bool,
+}
+
+// Request models for authentication
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthProviderConfigRequest {
+    pub provider_id: i32,
+    pub configs: Vec<ConfigItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConfigItem {
+    pub key: String,
+    pub value: String,
+    pub is_secret: bool,
+}
+
+// Response model for client display
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthProviderWithConfig {
+    pub id: i32,
+    pub provider_type: String,
+    pub name: String,
+    pub enabled: bool,
+    pub is_default: bool,
+    pub configs: Vec<AuthProviderConfigResponse>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthProviderConfigResponse {
+    pub key: String,
+    pub value: String,
+    pub is_secret: bool,
+}
+
+// OAuth state management
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OAuthState {
+    pub state: String,
+    pub redirect_uri: String,
+    pub provider_type: String,
+    pub exp: usize,
+}
+
+// OAuth Authentication request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OAuthRequest {
+    pub provider_type: String,
+    pub redirect_uri: Option<String>,
+}
+
+// OAuth Exchange Request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OAuthExchangeRequest {
+    pub code: String,
+    pub state: String,
+}
+
+// Microsoft Entra specific models
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MicrosoftAuthConfig {
+    pub client_id: String,
+    pub tenant_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+}

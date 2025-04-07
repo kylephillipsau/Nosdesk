@@ -96,6 +96,20 @@ export const useAuthStore = defineStore('auth', () => {
     router.push('/login');
   }
 
+  // Temporary function to set admin role for development/testing
+  function setAdminRole(isAdmin: boolean) {
+    if (!user.value) return false;
+    
+    // Update user role
+    user.value.role = isAdmin ? 'admin' : 'user';
+    
+    // Update localStorage
+    localStorage.setItem('user', JSON.stringify(user.value));
+    
+    console.log(`Admin role ${isAdmin ? 'enabled' : 'disabled'} for ${user.value.name}`);
+    return true;
+  }
+
   // Initialize axios with token if it exists
   if (token.value) {
     axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`;
@@ -110,6 +124,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isTechnician,
     login,
-    logout
+    logout,
+    setAdminRole
   };
 }); 

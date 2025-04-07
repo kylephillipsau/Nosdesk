@@ -50,6 +50,7 @@ const emit = defineEmits<{
   'toggle-selection': [event: Event, itemId: string]
   'toggle-all': [event: Event, checked: boolean]
   'add': []
+  'import': []
   'reset-filters': []
   'retry': []
   'update:currentPage': [page: number]
@@ -307,9 +308,8 @@ const defaultPageSizeOptions = [10, 25, 50, 100]
           <slot></slot>
         </div>
         
-        <!-- Pagination controls -->
+        <!-- Pagination controls - now always visible -->
         <div 
-          v-if="totalPages && totalPages > 1" 
           class="flex items-center justify-between p-2 border-t border-slate-700 bg-slate-800"
         >
           <!-- Page size selector -->
@@ -386,9 +386,23 @@ const defaultPageSizeOptions = [10, 25, 50, 100]
             </button>
           </div>
           
-          <!-- Page info -->
-          <div class="text-sm text-gray-400">
-            Page {{ currentPage || 1 }} of {{ totalPages }}
+          <!-- Page info and Import button container -->
+          <div class="flex items-center gap-3">
+            <!-- Page info -->
+            <div class="text-sm text-gray-400">
+              Page {{ currentPage || 1 }} of {{ totalPages }}
+            </div>
+            
+            <!-- Import button -->
+            <button
+              @click="emit('import')"
+              class="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800 flex items-center gap-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" />
+              </svg>
+              Import
+            </button>
           </div>
         </div>
       </div>

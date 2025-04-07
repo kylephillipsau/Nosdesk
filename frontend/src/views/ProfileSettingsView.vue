@@ -3,12 +3,14 @@ import { ref, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import BackButton from '@/components/common/BackButton.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
+import axios from 'axios';
 
 const authStore = useAuthStore();
 const loading = ref(false);
 const error = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const showDeveloperSettings = ref(false);
 
 // Form data
 const formData = ref({
@@ -31,6 +33,44 @@ const updateProfile = async () => {
   } catch (err) {
     error.value = 'Failed to update profile';
     console.error('Error updating profile:', err);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const updatePassword = async () => {
+  loading.value = true;
+  error.value = null;
+  successMessage.value = null;
+
+  // Validation
+  if (formData.value.newPassword !== formData.value.confirmPassword) {
+    error.value = 'New password and confirmation do not match';
+    loading.value = false;
+    return;
+  }
+
+  if (!formData.value.currentPassword || !formData.value.newPassword) {
+    error.value = 'All password fields are required';
+    loading.value = false;
+    return;
+  }
+
+  try {
+    const response = await axios.post('/api/auth/change-password', {
+      current_password: formData.value.currentPassword,
+      new_password: formData.value.newPassword
+    });
+
+    successMessage.value = 'Password updated successfully';
+    
+    // Clear password fields
+    formData.value.currentPassword = '';
+    formData.value.newPassword = '';
+    formData.value.confirmPassword = '';
+  } catch (err: any) {
+    error.value = err.response?.data?.message || 'Failed to update password';
+    console.error('Error updating password:', err);
   } finally {
     loading.value = false;
   }
@@ -65,6 +105,13 @@ const handleFileChange = async (event: Event) => {
     console.error('Error updating avatar:', err);
   } finally {
     loading.value = false;
+  }
+};
+
+const toggleAdminRole = () => {
+  const success = authStore.setAdminRole(!authStore.isAdmin);
+  if (success) {
+    successMessage.value = `Admin role ${authStore.isAdmin ? 'enabled' : 'disabled'} successfully`;
   }
 };
 
@@ -192,7 +239,15 @@ onMounted(() => {
           <div class="bg-slate-800 rounded-2xl p-6">
             <h2 class="text-lg font-medium text-white mb-6">Security Settings</h2>
             
-            <form @submit.prevent="updateProfile" class="flex flex-col gap-6">
+            <form @submit.prevent="updatePassword" class="flex flex-col gap-6">
+              <!-- Success/Error messages -->
+              <div v-if="successMessage" class="p-4 bg-green-900/50 text-green-400 rounded-lg">
+                {{ successMessage }}
+              </div>
+              <div v-if="error" class="p-4 bg-red-900/50 text-red-400 rounded-lg">
+                {{ error }}
+              </div>
+              
               <!-- Current Password -->
               <div class="flex flex-col gap-2">
                 <label for="currentPassword" class="text-sm font-medium text-slate-300">Current Password</label>
@@ -246,6 +301,44 @@ onMounted(() => {
                 </button>
               </div>
             </form>
+          </div>
+          
+          <!-- Developer Options -->
+          <div class="bg-slate-800 rounded-2xl p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 class="text-lg font-medium text-white">Developer Settings</h2>
+              <button 
+                @click="showDeveloperSettings = !showDeveloperSettings"
+                class="text-sm text-slate-400 hover:text-white"
+              >
+                {{ showDeveloperSettings ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+            
+            <div v-if="showDeveloperSettings" class="border-t border-slate-700 pt-4">
+              <div class="text-sm text-slate-400 mb-4">
+                These settings are for development purposes only. They will be removed in production.
+              </div>
+              
+              <!-- Admin Role Toggle -->
+              <div class="flex justify-between items-center py-2">
+                <div>
+                  <div class="text-white font-medium">Admin Role</div>
+                  <div class="text-sm text-slate-400">
+                    Enable admin privileges for testing admin-only features
+                  </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    :checked="authStore.isAdmin"
+                    @change="toggleAdminRole"
+                    class="sr-only peer"
+                  >
+                  <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 peer-checked:after:bg-white"></div>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -38,6 +38,33 @@ diesel::table! {
 }
 
 diesel::table! {
+    auth_provider_configs (id) {
+        id -> Int4,
+        auth_provider_id -> Int4,
+        #[max_length = 255]
+        config_key -> Varchar,
+        config_value -> Text,
+        is_secret -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    auth_providers (id) {
+        id -> Int4,
+        #[max_length = 50]
+        provider_type -> Varchar,
+        #[max_length = 255]
+        name -> Varchar,
+        enabled -> Bool,
+        is_default -> Bool,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     comments (id) {
         id -> Int4,
         content -> Text,
@@ -62,6 +89,18 @@ diesel::table! {
         #[max_length = 50]
         warranty_status -> Varchar,
         ticket_id -> Nullable<Int4>,
+    }
+}
+
+diesel::table! {
+    document_updates (id) {
+        id -> Int4,
+        #[max_length = 255]
+        document_id -> Varchar,
+        update_data -> Bytea,
+        #[max_length = 255]
+        client_id -> Varchar,
+        created_at -> Timestamp,
     }
 }
 
@@ -158,18 +197,9 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    document_updates (id) {
-        id -> Int4,
-        document_id -> Varchar,
-        update_data -> Bytea,
-        client_id -> Varchar,
-        created_at -> Timestamp,
-    }
-}
-
 diesel::joinable!(article_contents -> tickets (ticket_id));
 diesel::joinable!(attachments -> comments (comment_id));
+diesel::joinable!(auth_provider_configs -> auth_providers (auth_provider_id));
 diesel::joinable!(comments -> tickets (ticket_id));
 diesel::joinable!(devices -> tickets (ticket_id));
 diesel::joinable!(documentation_pages -> tickets (ticket_id));
@@ -179,13 +209,15 @@ diesel::joinable!(project_tickets -> tickets (ticket_id));
 diesel::allow_tables_to_appear_in_same_query!(
     article_contents,
     attachments,
+    auth_provider_configs,
+    auth_providers,
     comments,
     devices,
+    document_updates,
     documentation_pages,
     linked_tickets,
     project_tickets,
     projects,
     tickets,
     users,
-    document_updates,
 );
