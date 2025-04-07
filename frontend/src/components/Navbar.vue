@@ -2,11 +2,82 @@
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import DocumentationNav from '@/components/documentationComponents/DocumentationNav.vue'
 import RecentTickets from '@/components/RecentTickets.vue'
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
 const searchTerm = ref('')
+
+// State for collapsed/expanded navbar
+const isCollapsed = ref(false)
+const isSmallScreen = ref(false)
+
+// Provide/inject for sharing with App.vue
+const emit = defineEmits(['update:collapsed'])
+
+// Toggle navbar collapsed state
+const toggleNav = () => {
+  isCollapsed.value = !isCollapsed.value
+  emit('update:collapsed', isCollapsed.value)
+  // Store preference in localStorage
+  localStorage.setItem('navbarCollapsed', isCollapsed.value.toString())
+}
+
+// Check screen size and set navbar state accordingly
+const checkScreenSize = () => {
+  const previouslySmall = isSmallScreen.value
+  isSmallScreen.value = window.innerWidth < 1024 // lg breakpoint
+  
+  // Get stored preference (if any)
+  const storedPref = localStorage.getItem('navbarCollapsed')
+  
+  // If screen size changed from large to small
+  if (isSmallScreen.value && !previouslySmall) {
+    isCollapsed.value = true // Always collapse on small screens
+  } 
+  // If screen size changed from small to large
+  else if (!isSmallScreen.value && previouslySmall) {
+    // On larger screens, use the stored preference or default to expanded
+    isCollapsed.value = storedPref === 'true'
+  }
+  // On initial load for large screens
+  else if (!isSmallScreen.value && !previouslySmall && !storedPref) {
+    // Default to expanded on large screens if no preference is stored
+    isCollapsed.value = false
+  }
+  
+  // Emit the current state
+  emit('update:collapsed', isCollapsed.value)
+}
+
+// Initialize on mount
+onMounted(() => {
+  // Initial state - check if we have a stored preference
+  const storedPref = localStorage.getItem('navbarCollapsed')
+  
+  // Check screen size first
+  isSmallScreen.value = window.innerWidth < 1024
+  
+  // Set initial state based on screen size and preference
+  if (isSmallScreen.value) {
+    // On small screens, always start collapsed
+    isCollapsed.value = true
+  } else {
+    // On larger screens, use stored preference or default to expanded
+    isCollapsed.value = storedPref === 'true'
+  }
+  
+  // Emit initial state
+  emit('update:collapsed', isCollapsed.value)
+  
+  // Add resize listener
+  window.addEventListener('resize', checkScreenSize)
+})
+
+// Clean up on unmount
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkScreenSize)
+})
 
 // Computed property to check if we're on a documentation page
 const isDocumentationPage = computed(() => {
@@ -72,12 +143,17 @@ const isRouteActive = (path: string, exact = false) => {
 </script>
 
 <template>
-  <nav class="w-64 h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden gap-1">
+  <!-- Desktop Sidebar - Hidden on small screens -->
+  <nav 
+    class="h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden gap-1 transition-all duration-300 ease-in-out overflow-hidden lg:fixed lg:left-0 lg:top-0 lg:z-20 hidden lg:flex"
+    :class="[isCollapsed ? 'lg:w-16' : 'lg:w-64']"
+  >
     <div class="flex flex-col p-2 space-y-2 flex-shrink-0 gap-2">
       <RouterLink to="/" class="flex items-center mb-8 hover:opacity-80 transition-opacity text-[#FDBD10]">
         <img 
           alt="Vue logo" 
-          class="px-4 py-2 not-only:mr-3"
+          class="px-4 py-2"
+          :class="{ 'mx-auto': isCollapsed }"
           src="@/assets/logo.svg"
         />
       </RouterLink>
@@ -87,19 +163,23 @@ const isRouteActive = (path: string, exact = false) => {
           v-for="link in navLinks" 
           :key="link.to"
           :to="link.to" 
-          class="px-4 py-2 rounded-lg transition-colors duration-200 text-white hover:bg-slate-700 flex items-center gap-3"
-          :class="{ 'bg-slate-700': isRouteActive(link.to, link.exact) }"
+          class="rounded-lg transition-colors duration-200 text-white hover:bg-slate-700 flex items-center gap-3"
+          :class="[
+            isRouteActive(link.to, link.exact) ? 'bg-slate-700' : '',
+            isCollapsed ? 'px-2 py-2 justify-center' : 'px-4 py-2'
+          ]"
+          :title="isCollapsed ? link.text : ''"
         >
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="link.icon" />
           </svg>
-          {{ link.text }}
+          <span v-if="!isCollapsed">{{ link.text }}</span>
         </RouterLink>
       </div>
     </div>
 
-    <!-- Show both RecentTickets and DocumentationNav -->
-    <div class="flex-1 min-h-0 flex flex-col overflow-hidden gap-1">
+    <!-- Show both RecentTickets and DocumentationNav when not collapsed -->
+    <div class="flex-1 min-h-0 flex flex-col overflow-hidden gap-1" v-if="!isCollapsed">
       <!-- Recent Tickets section -->
       <div class="flex-shrink-0 min-h-0 overflow-y-auto">
         <RecentTickets />
@@ -110,5 +190,52 @@ const isRouteActive = (path: string, exact = false) => {
         <DocumentationNav @search="handleDocSearch" />
       </div>
     </div>
+    
+    <!-- Toggle button at the bottom of sidebar -->
+    <div class="mt-auto border-t border-slate-700 p-2">
+      <button 
+        @click="toggleNav" 
+        class="w-full flex items-center justify-center md:justify-between p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-md transition-colors"
+        aria-label="Toggle sidebar"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path v-if="isCollapsed" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+          <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+        </svg>
+        <span v-if="!isCollapsed" class="ml-2 text-sm">Collapse Sidebar</span>
+      </button>
+    </div>
   </nav>
+
+  <!-- Mobile Bottom Navigation -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-slate-800 border-t border-slate-700 z-20 lg:hidden print:hidden">
+    <div class="flex justify-around items-center h-16">
+      <RouterLink 
+        v-for="link in navLinks" 
+        :key="link.to"
+        :to="link.to" 
+        class="flex flex-col items-center justify-center px-2 py-1 rounded-lg transition-colors duration-200 text-white hover:bg-slate-700 flex-1"
+        :class="isRouteActive(link.to, link.exact) ? 'bg-slate-700/50 text-blue-400' : 'text-slate-300'"
+      >
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="link.icon" />
+        </svg>
+        <span class="text-xs mt-1 truncate w-full text-center">{{ link.text }}</span>
+      </RouterLink>
+    </div>
+  </nav>
+
+  <!-- Show semi-transparent overlay on small screens when nav is expanded -->
+  <div
+    v-if="isSmallScreen && !isCollapsed"
+    class="fixed inset-0 bg-black bg-opacity-50 z-10 lg:hidden"
+    @click="toggleNav"
+  ></div>
 </template>
+
+<style scoped>
+/* Add transition for smooth animation */
+.transition-all {
+  transition-property: all;
+}
+</style>

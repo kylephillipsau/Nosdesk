@@ -33,6 +33,14 @@ const handleLogin = async () => {
     isLoading.value = false;
   }
 };
+
+const handleMicrosoftLogin = () => {
+  // Placeholder for Microsoft Entra integration
+  // This would redirect to Microsoft's authentication endpoint
+  console.log('Microsoft Entra login clicked');
+  // For actual implementation:
+  // window.location.href = 'https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?...'
+};
 </script>
 
 <template>
@@ -96,6 +104,26 @@ const handleLogin = async () => {
         >
           <span v-if="isLoading">Signing in...</span>
           <span v-else>Sign in</span>
+        </button>
+        
+        <div class="relative flex items-center justify-center">
+          <div class="border-t border-slate-700 flex-grow"></div>
+          <span class="mx-4 text-sm text-slate-500">or</span>
+          <div class="border-t border-slate-700 flex-grow"></div>
+        </div>
+        
+        <button
+          type="button"
+          @click="handleMicrosoftLogin"
+          class="w-full flex gap-1 justify-center items-center py-2 px-4 border border-slate-600 rounded-lg shadow-sm text-sm font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 focus:ring-offset-slate-900"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21" class="mr-2">
+            <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+            <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+            <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+          </svg>
+          Sign in with Microsoft Entra
         </button>
       </form>
     </div>

@@ -21,6 +21,7 @@ interface Props {
   document: { id: string; title: string; icon: string } | null;
   isTransitioning?: boolean;
   pageUrl?: string;
+  navbarCollapsed?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -29,6 +30,7 @@ const props = withDefaults(defineProps<Props>(), {
   document: null,
   isTransitioning: false,
   pageUrl: undefined,
+  navbarCollapsed: false,
 });
 
 const emit = defineEmits(["updateTicketTitle", "updateDocumentTitle", "updateDocumentIcon", "previewTicketTitle", "previewDocumentTitle"]);
@@ -192,99 +194,95 @@ const handleLogout = () => {
   }
 };
 
+// Check if we're on mobile
+const isMobile = ref(window.innerWidth < 768); // md breakpoint
+
+// Update mobile status on resize
+const updateMobileStatus = () => {
+  isMobile.value = window.innerWidth < 768;
+};
+
 // Event listeners for click outside
 onMounted(() => {
   document.addEventListener("mousedown", handleClickOutside);
   document.addEventListener("keydown", handleKeydown);
+  
+  // Add resize listener
+  window.addEventListener('resize', updateMobileStatus);
 });
 
 onUnmounted(() => {
   document.removeEventListener("mousedown", handleClickOutside);
   document.removeEventListener("keydown", handleKeydown);
+  
+  // Remove resize listener
+  window.removeEventListener('resize', updateMobileStatus);
 });
 </script>
 
 <template>
   <header class="bg-slate-800 border-b border-slate-700 relative z-[999]">
-    <div class="flex items-center justify-between h-16 px-6 gap-2">
+    <div class="flex items-center justify-between h-16 px-4 md:px-6 gap-2">
       <!-- Left side - Title area -->
-      <div class="flex items-center flex-1 relative overflow-hidden">
+      <div class="flex items-center flex-1 relative overflow-hidden min-w-0">
         <div
-          class="w-full transition-all duration-300 ease-in-out"
+          class="w-full transition-all duration-300 ease-in-out min-w-0"
           :class="{ 'opacity-0 -translate-y-4': isTransitioning }"
         >
           <template v-if="isTicketView && props.ticket">
-            <div class="flex items-center gap-2">
-              <TicketIdentifier :ticketId="props.ticket.id" size="lg" />
+            <div class="flex items-center gap-2 min-w-0">
+              <TicketIdentifier :ticketId="props.ticket.id" size="lg" class="flex-shrink-0" />
               <HeaderTitle
                 :initialTitle="props.ticket.title"
                 :placeholder-text="'Enter ticket title...'"
                 @update-title="handleUpdateTitle"
                 @update-title-preview="handlePreviewTitle"
+                class="min-w-0 truncate"
               />
             </div>
           </template>
           <template v-else-if="isDocumentView && props.document">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0">
               <DocumentIconSelector
                 :initial-icon="props.document.icon"
                 @update:icon="handleUpdateDocumentIcon"
+                class="flex-shrink-0"
               />
               <HeaderTitle
                 :initialTitle="props.document.title"
                 :placeholder-text="'Enter document title...'"
                 @update-title="handleUpdateDocumentTitle"
                 @update-title-preview="handlePreviewDocumentTitle"
+                class="min-w-0 truncate"
               />
             </div>
           </template>
           <template v-else>
-            <div class="flex items-center gap-2">
-              <h1 class="text-xl font-semibold text-white">{{ displayTitle }}</h1>
+            <div class="flex items-center gap-2 min-w-0">
+              <h1 class="text-xl font-semibold text-white truncate">{{ displayTitle }}</h1>
             </div>
           </template>
         </div>
       </div>
 
-      <!-- Debug info (hidden in production) -->
-      <div
-        v-if="false"
-        class="fixed top-0 right-0 bg-black text-white p-2 text-xs z-50"
-      >
-        isTicketView: {{ isTicketView }}<br />
-        isDocumentView: {{ isDocumentView }}<br />
-        title: {{ props.title }}<br />
-        displayTitle: {{ displayTitle }}<br />
-        ticket:
-        {{
-          props.ticket?.id
-            ? `#${props.ticket?.id} ${props.ticket?.title}`
-            : "null"
-        }}<br />
-        document:
-        {{
-          props.document?.id
-            ? `${props.document?.id} ${props.document?.title}`
-            : "null"
-        }}
-      </div>
-
       <!-- Right side -->
-      <div class="flex items-center gap-4">
-        <!-- Create Ticket Button -->
+      <div class="flex items-center gap-2 md:gap-4 flex-shrink-0">
+        <!-- Create Ticket Button - Hide text on mobile -->
         <button
           v-if="props.showCreateButton"
           @click="navigateToCreateTicket"
           :disabled="isCreatingTicket"
-          class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          class="px-2 md:px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 md:gap-2"
+          :aria-label="isCreatingTicket ? 'Creating new ticket...' : 'Create new ticket'"
         >
-          <span v-if="isCreatingTicket" class="animate-spin h-4 w-4">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          </span>
-          {{ isCreatingTicket ? 'Creating...' : 'Create Ticket' }}
+          <!-- Always show icon -->
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path v-if="isCreatingTicket" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" class="animate-spin" />
+            <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          
+          <!-- Only show text on larger screens -->
+          <span class="hidden md:inline">{{ isCreatingTicket ? 'Creating...' : 'Create Ticket' }}</span>
         </button>
 
         <!-- User Profile Menu -->
@@ -300,7 +298,7 @@ onUnmounted(() => {
               :showName="false"
               :name="user.name"
               :avatar="user.avatar"
-              size="lg"
+              size="md" 
               :clickable="false"
             />
           </button>
@@ -309,7 +307,7 @@ onUnmounted(() => {
           <div
             v-if="showUserMenu"
             ref="menuRef"
-            class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg py-1 z-[9999] dropdown-menu"
+            class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg py-1 z-50"
             role="menu"
             tabindex="-1"
           >
@@ -339,6 +337,23 @@ onUnmounted(() => {
               >
                 Preferences
               </button>
+              <router-link
+                v-if="authStore.user?.role === 'admin'"
+                to="/admin/settings"
+                class="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
+                role="menuitem"
+              >
+                <div class="flex items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Administration
+                </div>
+              </router-link>
+              
+              <div v-if="authStore.user?.role === 'admin'" class="border-t border-slate-600 my-1"></div>
+              
               <button
                 @click="handleLogout"
                 class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"

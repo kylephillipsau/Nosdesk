@@ -826,6 +826,7 @@ dependencies = [
  "log",
  "mockall",
  "r2d2",
+ "rand",
  "serde",
  "serde_json",
  "tokio",
