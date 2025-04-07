@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { EditorView } from "prosemirror-view";
 import { EditorState } from "prosemirror-state";
 import { schema } from "@/components/editor/schema";
+import { useAuthStore } from '@/stores/auth';
+import UserAvatar from "./UserAvatar.vue";
 import {
   ySyncPlugin,
   yCursorPlugin,
@@ -50,10 +52,15 @@ const emit = defineEmits<{
   "update:modelValue": [value: string];
 }>();
 
+// Get auth store for user info
+const authStore = useAuthStore();
+
 // Refs for template
 const editorElement = ref<HTMLElement | null>(null);
-const connectBtn = ref<HTMLElement | null>(null);
 const isConnected = ref(false);
+
+// State for connected users
+const connectedUsers = ref<{id: string, user: any}[]>([]);
 
 // Custom dropdown state for toolbar
 const typeMenuRef = ref<HTMLElement | null>(null);
@@ -150,9 +157,20 @@ const initEditor = async () => {
 
   try {
     log.info("Initializing collaborative editor with docId:", props.docId);
+    
+    // Log environment info to help with debugging
+    logEnvironmentInfo();
 
     // 1. Create new Yjs document
     ydoc = new Y.Doc();
+    
+    // Prevent the document from being persisted to localStorage
+    ydoc.on('update', (update, origin) => {
+      // We want to prevent automatic persistence to localStorage
+      // by listening for updates and doing nothing
+      // This effectively prevents Y.js from storing the document state
+      log.debug("Document updated, not persisting to localStorage");
+    });
 
     // Handle binary update if provided
     if (props.isBinaryUpdate && props.modelValue) {
@@ -169,22 +187,93 @@ const initEditor = async () => {
       }
     }
 
-    // 2. Create the websocket provider
+    // Clear any existing local storage for this document to prevent duplication
+    try {
+      // Clear specific document storage
+      localStorage.removeItem(`y-websocket-${props.docId}`);
+      // Also clear generic Y.js persistence keys
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('y-websocket-') || key.startsWith('y-indexeddb-') || key.startsWith('yjs-'))) {
+          if (key.includes(props.docId)) {
+            localStorage.removeItem(key);
+            log.info(`Cleared potential Y.js storage key: ${key}`);
+          }
+        }
+      }
+      log.info("Cleared local storage for document to prevent duplication");
+    } catch (e) {
+      log.error("Error clearing local storage:", e);
+    }
+
+    // 2. Create the websocket provider with custom configuration
+    const wsUrl = import.meta.env.VITE_WS_SERVER_URL || 
+      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8080/api/collaboration/ws`;
+    
+    log.info(`Connecting to WebSocket server at: ${wsUrl} with document ID: ${props.docId}`);
+    
+    // Configure WebSocket provider with options to prevent duplication
     provider = new WebsocketProvider(
-      "wss://demos.yjs.dev/ws",
+      wsUrl,
       props.docId,
-      ydoc
+      ydoc,
+      {
+        disableBc: true, // Disable broadcast channel
+        resyncInterval: 5000 // Resync every 5 seconds
+      }
     );
 
-    isConnected.value = true;
+    // Set up connection status handler
+    provider.on('status', (event: { status: 'connected' | 'disconnected' | 'connecting' }) => {
+      isConnected.value = event.status === 'connected';
+      log.info(`WebSocket connection status: ${event.status}`);
+      
+      // Even if the status is 'disconnected', the provider might be attempting to reconnect
+      // or might still be functional with local changes
+      if (event.status === 'disconnected') {
+        log.info("Connection marked as disconnected, but collaborative features may still work with local changes");
+      }
+    });
 
+    // Add error event listener to provider.ws
+    if (provider.ws) {
+      provider.ws.addEventListener('error', (error) => {
+        log.error(`WebSocket connection error:`, error);
+        log.error(`Please check that your backend server is running on port 8080 and accessible`);
+        log.error(`You can customize the WebSocket URL by setting the VITE_WS_SERVER_URL environment variable`);
+      });
+
+      // Add explicit connection and disconnection event handlers
+      provider.ws.addEventListener('open', () => {
+        log.info(`WebSocket connection established to ${wsUrl}`);
+        isConnected.value = true;
+      });
+      
+      provider.ws.addEventListener('close', (event) => {
+        log.info(`WebSocket connection closed with code: ${event.code}, reason: ${event.reason || 'No reason provided'}`);
+        // Don't set isConnected to false here, as provider may attempt to reconnect
+        
+        // Provide more specific error information based on close code
+        if (event.code === 1006) {
+          log.error(`Abnormal closure (code 1006). Backend server may not be running or accessible.`);
+        }
+      });
+    }
+    
     // 3. Set awareness information for cursors
     provider.awareness.setLocalState({
       user: {
-        name: "User-" + Math.floor(Math.random() * 1000),
+        name: getUserDisplayName(),
         color: getRandomColor(),
+        uuid: authStore.user?.uuid || undefined,
       },
     });
+    
+    // Add awareness change listener to update connected users
+    provider!.awareness.on('change', updateConnectedUsers);
+    
+    // Initialize connected users
+    updateConnectedUsers();
 
     // 4. Get the XML fragment and initialize ProseMirror document
     yXmlFragment = ydoc.getXmlFragment("prosemirror");
@@ -280,22 +369,52 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
-// Toggle WebSocket connection
-const toggleConnection = () => {
-  if (!provider) return;
+// Helper function to get user display name
+const getUserDisplayName = () => {
+  if (!authStore.user) {
+    return "Guest " + Math.floor(Math.random() * 1000);
+  }
+  
+  // Use the user's name from the auth store
+  return authStore.user.name;
+};
 
-  if (provider.shouldConnect) {
-    provider.disconnect();
-    isConnected.value = false;
-    if (connectBtn.value) {
-      connectBtn.value.textContent = "Connect";
-    }
-  } else {
-    provider.connect();
-    isConnected.value = true;
-    if (connectBtn.value) {
-      connectBtn.value.textContent = "Disconnect";
-    }
+// Update connected users based on awareness
+const updateConnectedUsers = () => {
+  if (!provider) return;
+  
+  try {
+    const states = provider.awareness.getStates() as Map<number, any>;
+    const users: {id: string, user: any}[] = [];
+    
+    // Log all connected users for debugging
+    log.debug(`Raw awareness states: ${states.size} users`);
+    
+    // Convert Map to array and exclude the current user
+    states.forEach((state, clientId) => {
+      // Log all user data for debugging
+      log.debug(`User ${clientId}: ${JSON.stringify(state.user || 'No user data')}`);
+      
+      if (state.user && provider && clientId !== provider.awareness.clientID) {
+        // Only include users with valid data and exclude auto-generated names
+        if (typeof state.user.name === 'string' && state.user.name.length > 1 && 
+            !state.user.name.startsWith('User-') && !state.user.name.startsWith('User ') && 
+            !state.user.name.startsWith('Guest-') && !state.user.name.startsWith('Guest ')) {
+          log.debug(`Adding user to connected list: ${state.user.name} (${clientId})`);
+          users.push({
+            id: String(clientId),
+            user: state.user
+          });
+        } else {
+          log.debug(`Skipping user with invalid or system-generated name: ${JSON.stringify(state.user)}`);
+        }
+      }
+    });
+    
+    connectedUsers.value = users;
+    log.debug(`Updated connected users list:`, users.map(u => `${u.user.name} (ID: ${u.id})`));
+  } catch (error) {
+    log.error('Error updating connected users:', error);
   }
 };
 
@@ -477,6 +596,11 @@ const cleanup = () => {
     editorView = null;
   }
   if (provider) {
+    // Remove awareness listener
+    if (provider.awareness) {
+      provider.awareness.off('change', updateConnectedUsers);
+    }
+    
     provider.disconnect();
     provider = null;
   }
@@ -485,6 +609,9 @@ const cleanup = () => {
     ydoc = null;
   }
   yXmlFragment = null;
+  
+  // Reset connected users
+  connectedUsers.value = [];
 
   // Clean up global references
   window.example = undefined;
@@ -503,6 +630,24 @@ watch(
       setTimeout(() => {
         initEditor();
       }, 100);
+    }
+  }
+);
+
+// Watch for changes in the auth user and update awareness
+watch(
+  () => authStore.user,
+  () => {
+    if (provider && provider.awareness) {
+      const currentState = provider.awareness.getLocalState() || {};
+      provider.awareness.setLocalState({
+        ...currentState,
+        user: {
+          ...currentState?.user,
+          name: getUserDisplayName(),
+        }
+      });
+      log.info(`Updated collaborative user name to: ${getUserDisplayName()}`);
     }
   }
 );
@@ -540,6 +685,15 @@ watch(
     }
   }
 );
+
+// Helper function to log environment variables for debugging
+const logEnvironmentInfo = () => {
+  log.info("Environment info:");
+  log.info(`- VITE_WS_SERVER_URL: ${import.meta.env.VITE_WS_SERVER_URL || 'Not set'}`);
+  log.info(`- window.location.host: ${window.location.host}`);
+  log.info(`- window.location.protocol: ${window.location.protocol}`);
+  log.info(`- window.location.origin: ${window.location.origin}`);
+};
 
 onMounted(() => {
   initEditor();
@@ -662,7 +816,39 @@ declare global {
 
       <div class="toolbar-divider"></div>
 
-      <!-- Insert Dropdown -->
+      <!-- List buttons -->
+      <button
+        @click="toggleBulletList"
+        class="toolbar-button"
+        title="Bullet List"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"></line>
+          <line x1="8" y1="12" x2="21" y2="12"></line>
+          <line x1="8" y1="18" x2="21" y2="18"></line>
+          <circle cx="3" cy="6" r="1"></circle>
+          <circle cx="3" cy="12" r="1"></circle>
+          <circle cx="3" cy="18" r="1"></circle>
+        </svg>
+      </button>
+      <button
+        @click="toggleOrderedList"
+        class="toolbar-button"
+        title="Numbered List"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="10" y1="6" x2="21" y2="6"></line>
+          <line x1="10" y1="12" x2="21" y2="12"></line>
+          <line x1="10" y1="18" x2="21" y2="18"></line>
+          <path d="M4 6h1v4"></path>
+          <path d="M4 10h2"></path>
+          <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"></path>
+        </svg>
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <!-- Insert Dropdown Menu with expanded options -->
       <div class="relative">
         <button
           ref="insertButtonRef"
@@ -701,6 +887,20 @@ declare global {
             Numbered List
           </button>
           <button
+            @click="toggleBlockquote(); showInsertMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Blockquote
+          </button>
+          <button
+            @click="toggleCodeBlock(); showInsertMenu = false"
+            class="dropdown-item"
+            role="menuitem"
+          >
+            Code Block
+          </button>
+          <button
             @click="insertLink(); showInsertMenu = false"
             class="dropdown-item"
             role="menuitem"
@@ -737,18 +937,31 @@ declare global {
       <!-- Spacer to push connection controls to right -->
       <div class="flex-grow"></div>
       
-      <!-- Connection toggle -->
-      <button
-        ref="connectBtn"
-        id="y-connect-btn"
-        @click="toggleConnection"
-        class="toolbar-button"
-        :class="{ active: isConnected }"
-      >
-        {{ isConnected ? "Disconnect" : "Connect" }}
-      </button>
+      <!-- Connected users -->
+      <div v-if="connectedUsers.length > 0" class="flex items-center gap-1 mr-2">
+        <div class="text-xs text-slate-300 mr-1">Editing with:</div>
+        <div class="flex">
+          <div 
+            v-for="(connectedUser, index) in connectedUsers" 
+            :key="connectedUser.id"
+            class="flex items-center"
+            :style="{ marginLeft: index > 0 ? '-8px' : '0' }"
+            :title="connectedUser.user.name + (connectedUser.user.uuid ? ' (UUID: ' + connectedUser.user.uuid + ')' : '')"
+            @click="() => { console.log('User data:', connectedUser.user); }"
+          >
+            <UserAvatar 
+              :name="connectedUser.user.uuid || connectedUser.user.name"
+              :showName="false"
+              size="xs"
+              :clickable="!!connectedUser.user.uuid"
+            />
+          </div>
+        </div>
+      </div>
+      
+      <!-- Connection status indicator only -->
       <div class="connection-status" :class="{ connected: isConnected }">
-        {{ isConnected ? "Connected" : "Disconnected" }}
+        {{ isConnected ? "Connected" : "Syncing locally" }}
       </div>
     </div>
     
@@ -771,7 +984,7 @@ declare global {
   border-radius: 0.375rem;
   overflow: hidden;
   background-color: #1e293b;
-  height: auto;
+  height: 100%;
   width: 100%;
   position: relative;
 }
@@ -858,12 +1071,16 @@ declare global {
   background-color: #212C42;
   color: #e2e8f0;
   min-height: 250px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .ProseMirror {
   outline: none;
   min-height: 200px;
-  height: auto;
+  height: 100%;
+  flex: 1;
 }
 
 .ProseMirror p {

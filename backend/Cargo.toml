@@ -46,18 +46,17 @@ derive_more = "0.99.17"
 aws-sdk-s3 = "0.28.0"
 aws-config = "0.55.3"
 aws-credential-types = "0.55.3"
+rand = "0.8.5"              # Random number generation for auth state
 
 # Add yrs for Yjs/CRDT support in Rust
 yrs = "0.23.0"
 lib0 = "0.16.10"
+bytes = "1.5.0"
 
 # For testing only
 [dev-dependencies]
 actix-rt = "2.8.0"
 mockall = "0.11.4"
 
-# Add fastrand dependency somewhere in the dependencies section
+# Add fastrand dependency 
 fastrand = "1.9.0"
-
-# Add bytes dependency
-bytes = "1.0"

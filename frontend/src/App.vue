@@ -1,13 +1,19 @@
 // App.vue
 <script setup lang="ts">
 import { RouterView, useRoute } from 'vue-router'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Navbar from './components/Navbar.vue'
 import PageHeader from './components/SiteHeader.vue'
 import { useTitleManager } from '@/composables/useTitleManager'
 
 const route = useRoute()
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
+
+// State for navbar collapse
+const navbarCollapsed = ref(false)
+const handleNavCollapse = (collapsed: boolean) => {
+  navbarCollapsed.value = collapsed
+}
 
 // Use the centralized title manager
 const titleManager = useTitleManager();
@@ -41,22 +47,47 @@ const currentPageUrl = computed(() => {
   }
   return undefined;
 });
+
+// Computed properties for responsive layout
+const contentPadding = computed(() => {
+  // Only apply left padding on large screens (lg)
+  if (navbarCollapsed.value) {
+    return 'lg:pl-16'; // 4rem when navbar is collapsed on desktop
+  } else {
+    return 'lg:pl-64'; // 16rem when navbar is expanded on desktop
+  }
+})
+
+const headerLeft = computed(() => {
+  // On desktop, position header relative to sidebar
+  // On mobile, position from edge of screen
+  if (navbarCollapsed.value) {
+    return 'lg:left-16 left-0'; // 4rem when navbar is collapsed on desktop
+  } else {
+    return 'lg:left-64 left-0'; // 16rem when navbar is expanded on desktop
+  }
+})
 </script>
 
 <template>
   <!-- Blank layout for login -->
   <RouterView v-if="isBlankLayout" />
 
-  <!-- Default layout with navbar and header -->
+  <!-- Default layout with responsive navigation -->
   <div v-else class="flex w-full h-screen bg-slate-900 overflow-hidden">
-    <!-- Fixed navbar -->
-    <Navbar class="fixed left-0 top-0 h-screen w-64 z-20" />
+    <!-- Navbar component (includes both desktop sidebar and mobile bottom nav) -->
+    <Navbar @update:collapsed="handleNavCollapse" />
     
-    <!-- Main content area -->
-    <div class="flex flex-col not-print:pl-64 w-full h-screen">
-      <!-- Fixed header -->
+    <!-- Main content area with responsive padding -->
+    <div class="flex flex-col w-full h-screen transition-all duration-300 ease-in-out" :class="contentPadding">
+      <!-- Fixed header that adjusts with navbar -->
       <PageHeader 
-        class="not-print:fixed top-0 right-0 left-64 print:left-0 h-16 z-10 border-b border-slate-600 bg-slate-800" 
+        class="not-print:fixed top-0 z-10 border-b border-slate-600 bg-slate-800 transition-all duration-300 ease-in-out right-0"
+        :class="[
+          { 'left-0': true },
+          { 'lg:left-16': navbarCollapsed },
+          { 'lg:left-64': !navbarCollapsed }
+        ]"
         :useRouteTitle="!isDocumentationPage"
         :title="titleManager.pageTitle.value"
         :showCreateButton="true"
@@ -64,6 +95,7 @@ const currentPageUrl = computed(() => {
         :document="titleManager.currentDocument.value"
         :is-transitioning="titleManager.isTransitioning.value"
         :pageUrl="currentPageUrl"
+        :navbarCollapsed="navbarCollapsed"
         @update-ticket-title="titleManager.updateTicketTitle"
         @preview-ticket-title="titleManager.previewTicketTitle"
         @update-document-title="titleManager.updateDocumentTitle"
@@ -71,8 +103,8 @@ const currentPageUrl = computed(() => {
         @update-document-icon="titleManager.updateDocumentIcon"
       />
       
-      <!-- Scrollable content -->
-      <main class="flex-1 not-print:pt-16 overflow-hidden">
+      <!-- Scrollable content with bottom padding for mobile nav -->
+      <main class="flex-1 not-print:pt-16 overflow-hidden pb-16 lg:pb-0">
         <RouterView 
           v-slot="{ Component }" 
           @update:ticket="titleManager.setTicket"
@@ -145,5 +177,16 @@ html, body {
     width: 0.75rem;  /* 12px at default font size */
     height: 0.75rem;
   }
+}
+
+/* Fade transition for page changes */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

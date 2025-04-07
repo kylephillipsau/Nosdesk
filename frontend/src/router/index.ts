@@ -227,6 +227,26 @@ const router = createRouter({
       }
     },
     {
+      path: '/admin/settings',
+      name: 'admin-settings',
+      component: () => import('../views/AdminSettingsView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Administration',
+        adminRequired: true
+      }
+    },
+    {
+      path: '/admin/auth-providers',
+      name: 'admin-auth-providers',
+      component: () => import('../views/AuthProvidersView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Authentication Providers',
+        adminRequired: true
+      }
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/error/404'
     }
@@ -269,13 +289,21 @@ router.beforeEach((to, from, next) => {
 
   // Check if the route requires authentication
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
+  const requiresAdmin = to.matched.some(record => record.meta.adminRequired);
   
   // Get auth status from localStorage
   const isAuthenticated = !!localStorage.getItem('token');
   
+  // Check admin status from auth store (using a simple approach for now)
+  const userDataStr = localStorage.getItem('user');
+  const isAdmin = userDataStr ? JSON.parse(userDataStr)?.role === 'admin' : false;
+  
   if (requiresAuth && !isAuthenticated) {
     // Redirect to login page if not authenticated
     next({ name: 'login', query: { redirect: to.fullPath } });
+  } else if (requiresAdmin && !isAdmin) {
+    // Redirect to home if not an admin
+    next({ name: 'home' });
   } else if (to.path === '/login' && isAuthenticated) {
     // Redirect to home if already authenticated and trying to access login page
     next({ name: 'home' });
