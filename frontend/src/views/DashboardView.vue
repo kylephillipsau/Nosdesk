@@ -70,7 +70,7 @@ onMounted(() => {
           {{ greeting }}, {{ username }}!
         </h2>
         <p class="text-gray-400 mt-2">
-          Welcome to your nosDesk dashboard
+          Welcome to your Nosdesk dashboard
         </p>
       </div>
 

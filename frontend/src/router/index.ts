@@ -255,7 +255,7 @@ const router = createRouter({
 
 // Update document title on navigation
 router.beforeResolve((to, from, next) => {
-  let title = 'nosDesk';
+  let title = 'Nosdesk';
   
   if (to.meta?.title) {
     title = to.meta.title as string;
@@ -270,7 +270,7 @@ router.beforeResolve((to, from, next) => {
       .join(' ');
   }
   
-  document.title = `${title} | nosDesk`;
+  document.title = `${title} | Nosdesk`;
   if (to.meta) {
     to.meta.title = title;
   }

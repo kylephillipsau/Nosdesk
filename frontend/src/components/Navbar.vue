@@ -145,14 +145,14 @@ const isRouteActive = (path: string, exact = false) => {
 <template>
   <!-- Desktop Sidebar - Hidden on small screens -->
   <nav 
-    class="h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden gap-1 transition-all duration-300 ease-in-out overflow-hidden lg:fixed lg:left-0 lg:top-0 lg:z-20 hidden lg:flex"
+    class="h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden gap-1 transition-all duration-300 ease-in-out overflow-hidden lg:fixed lg:left-0 lg:top-0 lg:z-20 lg:flex"
     :class="[isCollapsed ? 'lg:w-16' : 'lg:w-64']"
   >
     <div class="flex flex-col p-2 space-y-2 flex-shrink-0 gap-2">
-      <RouterLink to="/" class="flex items-center mb-8 hover:opacity-80 transition-opacity text-[#FDBD10]">
+      <RouterLink to="/" class="flex items-center mb-8 hover:opacity-80 transition-opacity text-[#FDBD10] select-none">
         <img 
-          alt="Vue logo" 
-          class="px-4 py-2"
+          alt="Nosdesk Logo" 
+          class="px-4 py-2 Nosdesk Logo"
           :class="{ 'mx-auto': isCollapsed }"
           src="@/assets/logo.svg"
         />
