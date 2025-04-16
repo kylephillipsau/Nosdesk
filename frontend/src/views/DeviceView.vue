@@ -1,27 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BackButton from '@/components/common/BackButton.vue';
-
-interface Device {
-  id: string;
-  name: string;
-  type: string;
-  lastSeen: string;
-  status: string;
-  hostname: string;
-  serialNumber: string;
-  model: string;
-  warrantyStatus: string;
-  specs?: {
-    cpu?: string;
-    memory?: string;
-    storage?: string;
-    os?: string;
-  };
-}
+import { getDeviceById } from '@/services/deviceService';
+import type { Device } from '@/types/device';
 
 const route = useRoute();
+const router = useRouter();
 const device = ref<Device | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -31,30 +16,32 @@ const fetchDeviceData = async () => {
     loading.value = true;
     error.value = null;
     
-    // TODO: Replace with actual API call
-    // Mock data for now
-    device.value = {
-      id: route.params.id as string,
-      name: 'MacBook Pro',
-      type: 'Laptop',
-      lastSeen: new Date().toISOString(),
-      status: 'online',
-      hostname: 'MBP-2021',
-      serialNumber: 'FVFXC2YGDH8M',
-      model: 'MacBook Pro (16-inch, 2021)',
-      warrantyStatus: 'Active until Dec 2024',
-      specs: {
-        cpu: 'Apple M1 Pro',
-        memory: '16GB',
-        storage: '512GB SSD',
-        os: 'macOS 14.0'
-      }
-    };
+    const deviceId = Number(route.params.id);
+    if (isNaN(deviceId)) {
+      error.value = 'Invalid device ID';
+      loading.value = false;
+      return;
+    }
+    
+    device.value = await getDeviceById(deviceId);
+    console.log('Device data loaded:', device.value);
   } catch (e) {
     error.value = 'Failed to load device details';
     console.error('Error loading device:', e);
   } finally {
     loading.value = false;
+  }
+};
+
+// Check if the device was accessed from a ticket
+const fromTicket = computed(() => {
+  return route.query.fromTicket ? Number(route.query.fromTicket) : null;
+});
+
+// Navigate back to the ticket if needed
+const navigateToTicket = () => {
+  if (fromTicket.value) {
+    router.push(`/tickets/${fromTicket.value}`);
   }
 };
 
@@ -96,7 +83,16 @@ onMounted(() => {
     <div v-if="device" class="flex flex-col">
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
-        <BackButton fallbackRoute="/" />
+        <BackButton 
+          v-if="fromTicket" 
+          :fallbackRoute="`/tickets/${fromTicket}`" 
+          :label="`Back to Ticket #${fromTicket}`" 
+        />
+        <BackButton 
+          v-else 
+          fallbackRoute="/devices" 
+          label="Back to Devices" 
+        />
       </div>
       
       <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
@@ -109,7 +105,7 @@ onMounted(() => {
               </div>
               <p class="text-slate-400 mt-1">{{ device.type }}</p>
               <p class="text-sm text-slate-500 mt-2">
-                Last seen {{ formatDate(device.lastSeen) }}
+                Last seen {{ device.lastSeen ? formatDate(device.lastSeen) : 'unknown' }}
               </p>
             </div>
           </div>
@@ -127,7 +123,7 @@ onMounted(() => {
               </div>
               <div class="flex flex-col gap-1">
                 <span class="text-sm text-slate-400">Serial Number</span>
-                <span class="text-white">{{ device.serialNumber }}</span>
+                <span class="text-white">{{ device.serial_number }}</span>
               </div>
               <div class="flex flex-col gap-1">
                 <span class="text-sm text-slate-400">Model</span>
@@ -135,7 +131,16 @@ onMounted(() => {
               </div>
               <div class="flex flex-col gap-1">
                 <span class="text-sm text-slate-400">Warranty Status</span>
-                <span class="text-white">{{ device.warrantyStatus }}</span>
+                <span class="text-white">{{ device.warranty_status }}</span>
+              </div>
+              <div v-if="device.ticket_id" class="flex flex-col gap-1">
+                <span class="text-sm text-slate-400">Assigned to Ticket</span>
+                <router-link 
+                  :to="`/tickets/${device.ticket_id}`" 
+                  class="text-blue-400 hover:text-blue-300 hover:underline"
+                >
+                  Ticket #{{ device.ticket_id }}
+                </router-link>
               </div>
             </div>
           </div>

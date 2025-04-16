@@ -1,7 +1,7 @@
 <!-- components/ProjectInfo.vue -->
 <script setup lang="ts">
-import { ref } from 'vue';
-import type { Project } from '@/types/project';
+import { ref, computed } from 'vue';
+import type { Project } from '@/services/ticketService';
 
 const props = defineProps<{
   project: Project;
@@ -13,16 +13,25 @@ const emit = defineEmits<{
   (e: 'view'): void;
 }>();
 
-const getStatusColor = (status: string) => {
+// Compute ticket count from project data or use a default value
+const ticketCount = computed(() => {
+  // Check if the project has a ticket_count property (from API)
+  if ('ticket_count' in props.project) {
+    return (props.project as any).ticket_count;
+  }
+  return '—';
+});
+
+const getStatusClass = (status: string) => {
   switch (status) {
     case 'active':
-      return 'text-green-400';
+      return 'bg-green-500/20 text-green-400 border-green-500/30';
     case 'completed':
-      return 'text-blue-400';
+      return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
     case 'archived':
-      return 'text-gray-400';
+      return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
     default:
-      return 'text-slate-400';
+      return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
   }
 };
 </script>
@@ -63,11 +72,14 @@ const getStatusColor = (status: string) => {
           <span class="text-xs px-2 py-0.5 bg-slate-600/50 text-slate-300 rounded">
             #{{ projectId }}
           </span>
-          <span :class="[getStatusColor(project.status), 'text-xs']">
+          <span 
+            :class="getStatusClass(project.status)"
+            class="text-xs px-2 py-0.5 rounded-full border"
+          >
             {{ project.status }}
           </span>
           <span class="text-xs text-slate-400">
-            {{ project.ticketCount }} tickets
+            {{ ticketCount }} tickets
           </span>
         </div>
       </div>

@@ -7,6 +7,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Frontend (Vue.js)
 node_modules
 .DS_Store
 dist
@@ -14,6 +15,7 @@ dist-ssr
 coverage
 *.local
 
+# Testing
 /cypress/videos/
 /cypress/screenshots/
 
@@ -27,4 +29,42 @@ coverage
 *.sln
 *.sw?
 
+# TypeScript
 *.tsbuildinfo
+
+# Environment variables
+.env
+.env.*
+!.env.example
+/backend/.env
+
+# Rust / Backend
+/backend/target/
+/backend/debug/
+/backend/release/
+/backend/uploads/
+**/*.rs.bk
+*.pdb
+# Keep Cargo.lock for applications
+# Cargo.lock
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+# Keep migrations in version control
+# !**/migrations/**
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+/dist/
+/build/
+/out/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
