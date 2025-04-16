@@ -1,6 +1,6 @@
 <!-- FilePreview.vue -->
 <script setup lang="ts">
-import { computed, ref, onMounted, nextTick } from 'vue';
+import { computed, ref, shallowRef, onMounted, nextTick } from 'vue';
 import UserAvatar from "@/components/UserAvatar.vue";
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 
@@ -42,12 +42,17 @@ const fileType = computed(() => {
   if (['ppt', 'pptx'].includes(ext)) return 'powerpoint';
   if (['txt', 'rtf', 'md'].includes(ext)) return 'text';
   if (['zip', 'rar', '7z'].includes(ext)) return 'archive';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].includes(ext)) return 'image';
+  if (['jpg', 'jpeg', 'png', 'gif', 'apng', 'webp', 'heic', 'avif', 'jxl'].includes(ext)) return 'image';
   return 'generic';
 });
 
 const isHeicImage = computed(() => {
   return fileExtension.value === 'heic';
+});
+
+// Add a computed property to detect animated images
+const isAnimatedImage = computed(() => {
+  return ['gif', 'apng'].includes(fileExtension.value);
 });
 
 const fileIcon = computed(() => {
@@ -114,7 +119,9 @@ const generatePdfThumbnail = async (retryCount = 0) => {
     // Configure the worker source using Vite's asset handling
     pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 
+    // Use loadingTask directly without reactivity
     const loadingTask = pdfjsLib.getDocument(props.src);
+    // Use shallowRef pattern - don't put PDF document directly in a reactive property
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
 
@@ -173,7 +180,25 @@ const loadImagePreview = async () => {
 
 const convertHeicImage = async () => {
   try {
-    // Dynamically import heic2any only when needed
+    // Only need to convert HEIC files
+    if (fileExtension.value !== 'heic') {
+      // For other image formats, just use the original source
+      const response = await fetch(props.src);
+      const blob = await response.blob();
+      convertedImageSrc.value = URL.createObjectURL(blob);
+      
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = convertedImageSrc.value || props.src;
+      });
+      
+      imagePreview.value = img;
+      return;
+    }
+    
+    // HEIC conversion with heic2any
     const heic2any = await import('heic2any');
     
     // Fetch the HEIC file
@@ -195,7 +220,8 @@ const convertHeicImage = async () => {
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = () => reject(new Error('Failed to load converted image'));
-      img.src = convertedImageSrc.value || '';
+      // Fallback to original source if convertedImageSrc is null
+      img.src = convertedImageSrc.value || props.src;
     });
     
     imagePreview.value = img;
@@ -218,13 +244,49 @@ const openPreview = () => {
   }
 };
 
-// Add a method to handle downloading HEIC images
+// Add a method to handle downloading converted images
 const getDownloadFilename = () => {
   if (isHeicImage.value) {
     // Replace .heic extension with .jpg for the downloaded file
     return props.filename.replace(/\.heic$/i, '.jpg');
   }
   return props.filename;
+};
+
+// Add new function to extract display name from filename
+const getDisplayName = (filename: string): string => {
+  if (!filename) return 'File';
+  
+  // Check if the filename is a UUID pattern followed by an extension
+  // Example: 550e8400-e29b-41d4-a716-446655440000.pdf
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+  
+  if (uuidPattern.test(filename)) {
+    // If it's a UUID, return a friendly name based on the file type
+    const ext = fileExtension.value;
+    
+    switch (fileType.value) {
+      case 'pdf':
+        return `PDF Document.${ext}`;
+      case 'word':
+        return `Word Document.${ext}`;
+      case 'excel':
+        return `Excel Spreadsheet.${ext}`;
+      case 'powerpoint':
+        return `Presentation.${ext}`;
+      case 'image':
+        return `Image.${ext}`;
+      case 'archive':
+        return `Archive.${ext}`;
+      case 'text':
+        return `Text Document.${ext}`;
+      default:
+        return `File.${ext}`;
+    }
+  }
+  
+  // Otherwise, return the original filename
+  return filename;
 };
 
 onMounted(async () => {
@@ -289,7 +351,16 @@ onMounted(async () => {
           :src="isHeicImage && convertedImageSrc ? convertedImageSrc : src" 
           :alt="filename" 
           class="w-full h-full object-cover"
+          :class="{ 'animated-image': isAnimatedImage }"
         >
+
+        <!-- Animation badge for GIF/APNG -->
+        <div 
+          v-if="isAnimatedImage" 
+          class="absolute top-3 left-3 bg-indigo-700/80 px-2 py-1 rounded text-xs text-white font-medium animate-pulse z-20"
+        >
+          ANIMATED
+        </div>
 
         <!-- File Icon for other types -->
         <div v-if="!['pdf', 'image'].includes(fileType)" :class="['p-3 rounded-lg', fileColor]">
@@ -327,7 +398,7 @@ onMounted(async () => {
       <div class="min-w-0 flex flex-col gap-1">
         <div class="flex items-start gap-2">
           <div class="flex-grow">
-            <span class="text-sm text-slate-200 line-clamp-2">{{ filename }}</span>
+            <span class="text-sm text-slate-200 line-clamp-2">{{ getDisplayName(filename) }}</span>
             <span class="text-xs text-slate-400 uppercase mt-1 block">
               {{ isHeicImage ? 'HEIC (converted to JPEG)' : fileExtension }}
             </span>
@@ -383,4 +454,35 @@ onMounted(async () => {
       </div>
     </div>
   </div>
-</template> 
+</template>
+
+<style scoped>
+/* Add styles for animated images (GIF, APNG) */
+.animated-image {
+  border: 2px solid rgba(99, 102, 241, 0.5); /* Indigo color to indicate animation */
+}
+
+/* Animation for the pulse effect */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Add a pulsing border animation */
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.8);
+  }
+  50% {
+    border-color: rgba(96, 165, 250, 0.4);
+  }
+}
+</style> 

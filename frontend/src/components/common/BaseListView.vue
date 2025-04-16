@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps<{
   title: string
@@ -152,6 +152,25 @@ const pageNumbers = computed(() => {
 
 // Default page size options if not provided
 const defaultPageSizeOptions = [10, 25, 50, 100]
+
+// Add isMobile ref to track screen size
+const isMobile = ref(false)
+
+// Function to check screen size
+const checkScreenSize = () => {
+  isMobile.value = window.innerWidth < 768 // md breakpoint
+}
+
+// Initialize on mount
+onMounted(() => {
+  checkScreenSize()
+  window.addEventListener('resize', checkScreenSize)
+})
+
+// Clean up on unmount
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkScreenSize)
+})
 </script>
 
 <template>
@@ -192,8 +211,8 @@ const defaultPageSizeOptions = [10, 25, 50, 100]
           />
         </div>
 
-        <!-- Filters -->
-        <template v-if="filters && filters.length > 0">
+        <!-- Filters - Hide on mobile -->
+        <template v-if="filters && filters.length > 0 && !isMobile">
           <div 
             v-for="filter in filters" 
             :key="filter.name"
@@ -261,59 +280,67 @@ const defaultPageSizeOptions = [10, 25, 50, 100]
 
       <!-- Content -->
       <div v-else class="flex-1 flex flex-col overflow-hidden">
-        <!-- Table Header (if columns are provided) -->
-        <div v-if="columns && columns.length > 0" class="sticky top-0 z-10 bg-slate-800 border-b border-slate-700 text-sm text-gray-200">
-          <div class="flex min-w-[800px]">
-            <!-- Selection checkbox in header -->
-            <div v-if="enableSelection" class="p-3 w-10 flex-shrink-0">
-              <input
-                type="checkbox"
-                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-                :checked="allSelected && visibleItems && visibleItems.length > 0"
-                :indeterminate="selectedItems && selectedItems.length > 0 && !allSelected"
-                @change="toggleAllItems"
-              />
-            </div>
-            
-            <!-- Custom header prefix slot -->
-            <slot name="header-prefix"></slot>
-            
-            <!-- Generated column headers -->
-            <div 
-              v-for="column in columns" 
-              :key="column.field"
-              :class="[
-                'p-3 font-medium', 
-                column.sortable !== false ? 'cursor-pointer select-none' : '',
-                column.width || (column.field === 'id' ? 'w-20 flex-shrink-0' : 'flex-1 min-w-0'),
-                column.class || ''
-              ]"
-              @click="column.sortable !== false && toggleSort(column.field)"
-            >
-              <div class="flex items-center gap-1">
-                {{ column.label }}
-                <span v-if="column.sortable !== false && sortField === column.field" class="text-white">
-                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
-                </span>
+        <!-- Desktop Table View -->
+        <template v-if="!isMobile">
+          <!-- Table Header (if columns are provided) -->
+          <div v-if="columns && columns.length > 0" class="sticky top-0 z-10 bg-slate-800 border-b border-slate-700 text-sm text-gray-200">
+            <div class="flex min-w-[800px]">
+              <!-- Selection checkbox in header -->
+              <div v-if="enableSelection" class="p-3 w-10 flex-shrink-0">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                  :checked="allSelected && visibleItems && visibleItems.length > 0"
+                  :indeterminate="selectedItems && selectedItems.length > 0 && !allSelected"
+                  @change="toggleAllItems"
+                />
               </div>
+              
+              <!-- Custom header prefix slot -->
+              <slot name="header-prefix"></slot>
+              
+              <!-- Generated column headers -->
+              <div 
+                v-for="column in columns" 
+                :key="column.field"
+                :class="[
+                  'p-3 font-medium', 
+                  column.sortable !== false ? 'cursor-pointer select-none' : '',
+                  column.width || (column.field === 'id' ? 'w-20 flex-shrink-0' : 'flex-1 min-w-0'),
+                  column.class || ''
+                ]"
+                @click="column.sortable !== false && toggleSort(column.field)"
+              >
+                <div class="flex items-center gap-1">
+                  {{ column.label }}
+                  <span v-if="column.sortable !== false && sortField === column.field" class="text-white">
+                    {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                  </span>
+                </div>
+              </div>
+              
+              <!-- Slot for additional header columns -->
+              <slot name="header-suffix"></slot>
             </div>
-            
-            <!-- Slot for additional header columns -->
-            <slot name="header-suffix"></slot>
           </div>
-        </div>
+          
+          <!-- Table Body -->
+          <div class="flex-1 overflow-y-auto">
+            <slot></slot>
+          </div>
+        </template>
+
+        <!-- Mobile Card View -->
+        <template v-else>
+          <div class="flex-1 overflow-y-auto p-2 space-y-2">
+            <slot name="mobile-view"></slot>
+          </div>
+        </template>
         
-        <!-- Table Body -->
-        <div class="flex-1 overflow-y-auto">
-          <slot></slot>
-        </div>
-        
-        <!-- Pagination controls - now always visible -->
-        <div 
-          class="flex items-center justify-between p-2 border-t border-slate-700 bg-slate-800"
-        >
-          <!-- Page size selector -->
-          <div class="flex items-center gap-2 text-sm text-gray-400">
+        <!-- Pagination controls -->
+        <div class="flex items-center justify-between p-2 border-t border-slate-700 bg-slate-800">
+          <!-- Page size selector - Hide on mobile -->
+          <div v-if="!isMobile" class="flex items-center gap-2 text-sm text-gray-400">
             <span>Show</span>
             <select 
               :value="pageSize" 
@@ -393,8 +420,9 @@ const defaultPageSizeOptions = [10, 25, 50, 100]
               Page {{ currentPage || 1 }} of {{ totalPages }}
             </div>
             
-            <!-- Import button -->
+            <!-- Import button - Hide on mobile -->
             <button
+              v-if="!isMobile"
               @click="emit('import')"
               class="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800 flex items-center gap-1"
             >
@@ -437,5 +465,23 @@ body {
 
 .overflow-y-auto::-webkit-scrollbar-thumb:hover {
   background: #64748b;
+}
+
+/* Mobile-specific styles */
+@media (max-width: 767px) {
+  .flex-1 {
+    min-height: 0;
+  }
+  
+  /* Make buttons more touch-friendly */
+  button {
+    padding: 0.5rem 1rem;
+    min-width: 44px;
+  }
+  
+  /* Adjust spacing for mobile */
+  .space-y-2 > * + * {
+    margin-top: 0.5rem;
+  }
 }
 </style> 
