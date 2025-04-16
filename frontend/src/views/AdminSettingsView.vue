@@ -88,7 +88,7 @@ const navigateToOption = (route: string) => {
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div class="py-2">
           <div class="text-sm text-slate-400">Application Version</div>
-          <div class="text-white">nosDesk v1.0.0</div>
+          <div class="text-white">Nosdesk v1.0.0</div>
         </div>
         <div class="py-2">
           <div class="text-sm text-slate-400">Last Update</div>

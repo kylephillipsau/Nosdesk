@@ -4,6 +4,7 @@ import { ref, watch, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRecentTicketsStore } from "@/stores/recentTickets";
 import { useTitleManager } from '@/composables/useTitleManager';
+import { useAuthStore } from '@/stores/auth';
 import CollaborativeTicketArticle from '@/components/ticketComponents/CollaborativeTicketArticle.vue';
 import TicketDetails from '@/components/ticketComponents/TicketDetails.vue'
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
@@ -65,6 +66,7 @@ const ticket = ref<LocalTicket | null>(null);
 const projectDetails = ref<Project | null>(null);
 const recentTicketsStore = useRecentTicketsStore();
 const titleManager = useTitleManager();
+const authStore = useAuthStore();
 
 // Add users state
 const users = ref<User[]>([]);
@@ -754,7 +756,7 @@ const getStatusColor = (status: string) => {
 }
 
 // Add function to handle new comments
-const handleAddComment = async (data: { content: string; user_uuid: string; attachments: { url: string; name: string }[] }) => {
+const handleAddComment = async (data: { content: string; user_uuid: string; attachments: { url: string; name: string; id?: number }[] }) => {
   if (!ticket.value) return;
   
   try {
@@ -769,6 +771,8 @@ const handleAddComment = async (data: { content: string; user_uuid: string; atta
       data.content = "Attachment added";
     }
     
+    console.log("Sending comment data to API:", data);
+    
     // Create the comment with attachments
     const newComment = await ticketService.addCommentToTicket(
       ticket.value.id,
@@ -777,13 +781,34 @@ const handleAddComment = async (data: { content: string; user_uuid: string; atta
       data.attachments
     );
     
-    console.log('Comment created with attachments:', newComment);
+    console.log('Comment created successfully, response:', newComment);
     
-    // Refresh the ticket data to get the updated comments
-    await fetchTicket(String(ticket.value.id));
-    
+    // Add the new comment to the local state immediately
+    if (ticket.value && ticket.value.commentsAndAttachments) {
+      // Covert the new comment to the expected format
+      const commentToAdd: CommentWithAttachments = {
+        id: newComment.id,
+        content: newComment.content,
+        user_uuid: newComment.user_uuid,
+        createdAt: newComment.created_at,
+        created_at: newComment.created_at,
+        ticket_id: newComment.ticket_id,
+        attachments: newComment.attachments,
+        user: newComment.user
+      };
+      
+      // Add it to the beginning of the array (newest first)
+      ticket.value.commentsAndAttachments.unshift(commentToAdd);
+      console.log('Added new comment to local state:', commentToAdd);
+    } else {
+      console.warn('Unable to add comment to local state, refreshing ticket data');
+      // If we can't add to local state for some reason, refresh the whole ticket
+      await refreshTicket();
+    }
   } catch (error) {
     console.error("Error adding comment:", error);
+    // If there's an error, refresh the ticket data
+    await refreshTicket();
   }
 };
 
@@ -1046,7 +1071,7 @@ const navigateToDeviceView = (deviceId: number) => {
           <div class="comments-area">
             <CommentsAndAttachments 
               :comments="ticket?.commentsAndAttachments || []"
-              :current-user="ticket?.assignee || 'Unknown User'"
+              :current-user="authStore.user?.uuid || 'Unknown User'"
               @add-comment="handleAddComment"
               @delete-attachment="handleDeleteAttachment"
               @delete-comment="handleDeleteComment"

@@ -116,7 +116,7 @@ const toggleAdminRole = () => {
 };
 
 onMounted(() => {
-  document.title = 'Profile Settings | nosDesk';
+  document.title = 'Profile Settings | Nosdesk';
 });
 </script>
 
