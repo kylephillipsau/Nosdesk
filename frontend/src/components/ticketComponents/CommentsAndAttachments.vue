@@ -71,11 +71,11 @@ const uploadFiles = async (): Promise<
     newAttachments.value
   );
 
-  newAttachments.value.forEach((file, index) => {
+  newAttachments.value.forEach((file) => {
     console.log(
       `Adding file to FormData: ${file.name} (${file.type}), size: ${file.size} bytes`
     );
-    formData.append(`files`, file, file.name);
+    formData.append("files", file, file.name);
   });
 
   try {
@@ -115,29 +115,31 @@ const addComment = async () => {
     );
 
     // Check if we have any files to upload
+    let attachmentsToAdd: { id: number; url: string; name: string }[] = [];
     if (newAttachments.value.length > 0) {
       console.log("Uploading files before adding comment...");
       const uploadedFiles = await uploadFiles();
       console.log("Files uploaded successfully:", uploadedFiles);
-
-      // Add the comment with all attachments
-      emit("addComment", {
-        content: newCommentContent.value,
-        user_uuid: props.currentUser,
-        attachments: uploadedFiles.map((file) => ({
-          url: file.url,
-          name: file.name,
-        })),
-      });
-    } else {
-      // No files to upload, just add the comment
-      console.log("Adding comment without attachments");
-      emit("addComment", {
-        content: newCommentContent.value,
-        user_uuid: props.currentUser,
-        attachments: [],
-      });
+      
+      attachmentsToAdd = uploadedFiles.map((file) => ({
+        id: file.id,
+        url: file.url,
+        name: file.name,
+      }));
     }
+
+    console.log("Emitting addComment event with data:", {
+      content: newCommentContent.value,
+      user_uuid: props.currentUser,
+      attachments: attachmentsToAdd,
+    });
+
+    // Add the comment with attachments
+    emit("addComment", {
+      content: newCommentContent.value,
+      user_uuid: props.currentUser,
+      attachments: attachmentsToAdd,
+    });
 
     // Reset form
     newCommentContent.value = "";
@@ -145,8 +147,9 @@ const addComment = async () => {
     uploadedAttachments.value = [];
 
     console.log("Comment submission complete, form reset");
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to add comment:", error);
+    uploadError.value = `Failed to add comment: ${error.message}`;
   }
 };
 

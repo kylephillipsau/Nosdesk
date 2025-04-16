@@ -35,7 +35,7 @@ const devices = ref<Device[]>([]);
 // Update document title when user profile changes
 watch(userProfile, (newProfile) => {
   if (newProfile) {
-    document.title = `${newProfile.name}'s Profile | nosDesk`;
+    document.title = `${newProfile.name}'s Profile | Nosdesk`;
   }
 });
 

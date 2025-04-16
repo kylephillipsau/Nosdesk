@@ -6,13 +6,14 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use yrs::{Doc, Transact, ReadTxn, StateVector, Update};
 use yrs::sync::{Awareness, AwarenessUpdate};
 use yrs::updates::decoder::{Decode, DecoderV1};
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::GetString;
 use bytes::Bytes;
+use uuid::Uuid;
 
 use crate::repository;
 use crate::models::NewArticleContent;
@@ -255,9 +256,14 @@ impl YjsAppState {
 
     // Broadcast update to all sessions in a room except sender
     fn broadcast(&self, doc_id: &str, sender_id: &str, msg: &[u8]) {
+        if msg.is_empty() {
+            return;
+        }
+        
         let sessions = self.sessions.lock().unwrap();
         
         if let Some(room) = sessions.get(doc_id) {
+            // Send message to all clients except the sender
             for (id, (addr, _)) in room {
                 if id != sender_id {
                     addr.do_send(YjsMessage(Bytes::copy_from_slice(msg)));
@@ -323,23 +329,17 @@ struct YjsWebSocket {
     doc_id: String,
     app_state: YjsAppState,
     hb: Instant,
-    doc: Doc,
-    awareness: Awareness,
 }
 
 impl YjsWebSocket {
     fn new(doc_id: String, app_state: YjsAppState) -> Self {
-        let doc = app_state.get_or_create_doc(&doc_id);
-        let awareness = Awareness::new(doc.clone());
-        let id = uuid::Uuid::new_v4().to_string();
+        let id = Uuid::new_v4().to_string();
         
         YjsWebSocket {
             id,
             doc_id,
             app_state,
             hb: Instant::now(),
-            doc,
-            awareness,
         }
     }
     
@@ -348,39 +348,44 @@ impl YjsWebSocket {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 println!("WebSocket Client heartbeat failed, disconnecting!");
-                // Remove from rooms
                 act.app_state.remove_session(&act.doc_id, &act.id);
-                // Stop actor
                 ctx.stop();
                 return;
             }
-            
             ctx.ping(b"");
         });
     }
     
-    // Setup session cleanup task
-    fn setup_cleanup(&self, ctx: &mut <Self as Actor>::Context) {
-        let app_state = self.app_state.clone();
-        
-        // Run cleanup every CLEANUP_INTERVAL
-        ctx.run_interval(CLEANUP_INTERVAL, move |_, _| {
-            app_state.cleanup_stale_sessions();
-        });
-    }
-    
-    // Process incoming messages by forwarding them as-is
-    // This simplifies our implementation while maintaining protocol compatibility
+    // Process incoming messages according to Y-protocol
     fn process_message(&mut self, msg: &[u8], ctx: &mut ws::WebsocketContext<Self>) {
         if msg.is_empty() {
             return;
         }
         
-        // Update activity timestamp for this session
         self.app_state.update_session_activity(&self.doc_id, &self.id);
         
-        // Simply pass through all messages
-        self.app_state.broadcast(&self.doc_id, &self.id, msg);
+        // First byte indicates the message type in Y-protocol
+        match msg[0] {
+            // Sync protocol message
+            MESSAGE_SYNC => {
+                self.app_state.broadcast(&self.doc_id, &self.id, msg);
+            },
+            
+            // Awareness protocol message
+            MESSAGE_AWARENESS => {
+                self.app_state.broadcast(&self.doc_id, &self.id, msg);
+            },
+            
+            // Query awareness (used when client wants to get current awareness state)
+            MESSAGE_QUERY_AWARENESS => {
+                self.app_state.broadcast(&self.doc_id, &self.id, msg);
+            },
+            
+            // Unknown message type - ignore
+            _ => {
+                println!("Received unknown message type: {}", msg[0]);
+            }
+        }
     }
 }
 
@@ -389,24 +394,13 @@ impl Actor for YjsWebSocket {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         println!("WebSocket connection started: {} for doc {}", self.id, self.doc_id);
-        
-        // Start heartbeat
         self.hb(ctx);
-        
-        // Setup session cleanup task - only the first connection for each document
-        // will effectively run the cleanup
-        self.setup_cleanup(ctx);
-        
-        // Register session
         self.app_state.register_session(&self.doc_id, &self.id, ctx.address());
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         println!("WebSocket connection closed: {} for doc {}", self.id, self.doc_id);
-        
-        // Remove session
         self.app_state.remove_session(&self.doc_id, &self.id);
-        
         Running::Stop
     }
 }
@@ -424,11 +418,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for YjsWebSocket {
             Ok(ws::Message::Binary(bin)) => {
                 self.hb = Instant::now();
                 self.process_message(&bin, ctx);
-            },
-            Ok(ws::Message::Text(text)) => {
-                // Convert text to binary and process
-                self.hb = Instant::now();
-                self.process_message(text.as_bytes(), ctx);
             },
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);

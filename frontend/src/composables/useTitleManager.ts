@@ -50,8 +50,8 @@ export function useTitleManager() {
     const routeTitle = route.meta?.title as string;
     
     // Update document title
-    const finalTitle = routeTitle || 'nosDesk';
-    document.title = `${finalTitle} | nosDesk`;
+    const finalTitle = routeTitle || 'Nosdesk';
+    document.title = `${finalTitle} | Nosdesk`;
     
     return finalTitle;
   });
@@ -69,14 +69,14 @@ export function useTitleManager() {
   const setCustomTitle = (title: string | null) => {
     customTitle.value = title;
     if (title) {
-      document.title = `${title} | nosDesk`;
+      document.title = `${title} | Nosdesk`;
     }
   };
   
   const setTicket = (ticketData: TitleableTicket | null) => {
     currentTicket.value = ticketData;
     if (ticketData) {
-      document.title = `#${ticketData.id} ${ticketData.title} | nosDesk`;
+      document.title = `#${ticketData.id} ${ticketData.title} | Nosdesk`;
     }
   };
   
@@ -103,7 +103,7 @@ export function useTitleManager() {
       });
       
       // Update the document title for real-time feedback
-      document.title = `#${currentTicket.value.id} ${newTitle} | nosDesk`;
+      document.title = `#${currentTicket.value.id} ${newTitle} | Nosdesk`;
     }
   };
   
@@ -117,7 +117,7 @@ export function useTitleManager() {
       documentationTitle.value = newTitle;
       
       // Update the document title for real-time feedback
-      document.title = `${newTitle} | nosDesk`;
+      document.title = `${newTitle} | Nosdesk`;
     }
   };
   
@@ -135,7 +135,7 @@ export function useTitleManager() {
       });
       
       // Update the document title
-      document.title = `#${currentTicket.value.id} ${newTitle} | nosDesk`;
+      document.title = `#${currentTicket.value.id} ${newTitle} | Nosdesk`;
       
       // Save the title change to the backend
       try {

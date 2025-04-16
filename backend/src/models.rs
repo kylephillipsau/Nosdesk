@@ -875,16 +875,17 @@ pub struct NewLinkedTicket {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AttachmentData {
+    pub id: Option<i32>,
+    pub url: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NewCommentWithAttachments {
     pub content: String,
     pub user_uuid: String,
     pub attachments: Vec<AttachmentData>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AttachmentData {
-    pub url: String,
-    pub name: String,
 }
 
 // JWT Claims structure

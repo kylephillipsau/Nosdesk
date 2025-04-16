@@ -47,6 +47,13 @@ pub async fn upload_files(
 
     // Process each field in the multipart form
     while let Some(mut field) = payload.try_next().await? {
+        // Check if the field name is "files"
+        let field_name = field.name();
+        if field_name != "files" {
+            println!("Skipping non-file field: {}", field_name);
+            continue;
+        }
+        
         // Get the filename from the field
         let content_disposition = field.content_disposition();
         let filename = content_disposition
@@ -96,7 +103,7 @@ pub async fn upload_files(
         // Create a new attachment record in the database
         let new_attachment = NewAttachment {
             url: format!("/uploads/temp/{}", unique_filename),
-            name: filename,
+            name: filename.clone(),
             comment_id: None, // Not linked to a comment yet
         };
         

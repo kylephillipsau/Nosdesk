@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
 import * as Y from "yjs";
+import { PermanentUserData } from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { EditorView } from "prosemirror-view";
 import { EditorState } from "prosemirror-state";
 import { schema } from "@/components/editor/schema";
-import { useAuthStore } from '@/stores/auth';
+import { useAuthStore } from "@/stores/auth";
 import UserAvatar from "./UserAvatar.vue";
 import {
   ySyncPlugin,
@@ -16,22 +17,36 @@ import {
   initProseMirrorDoc,
 } from "y-prosemirror";
 import { keymap } from "prosemirror-keymap";
-import { toggleMark, setBlockType } from "prosemirror-commands";
-import { wrapInList } from "prosemirror-schema-list";
+import {
+  toggleMark,
+  setBlockType,
+  chainCommands,
+  exitCode,
+  createParagraphNear,
+  liftEmptyBlock,
+  splitBlock,
+} from "prosemirror-commands";
+import {
+  wrapInList,
+  splitListItem,
+  liftListItem,
+  sinkListItem,
+} from "prosemirror-schema-list";
 import "prosemirror-view/style/prosemirror.css";
 import { Schema } from "prosemirror-model";
+import { Plugin, PluginKey } from "prosemirror-state";
 
 // Import individual components instead of exampleSetup
 import { baseKeymap } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
-import { 
-  inputRules, 
-  wrappingInputRule, 
+import {
+  inputRules,
+  wrappingInputRule,
   textblockTypeInputRule,
   smartQuotes,
   emDash,
-  ellipsis
+  ellipsis,
 } from "prosemirror-inputrules";
 
 // Props
@@ -60,7 +75,7 @@ const editorElement = ref<HTMLElement | null>(null);
 const isConnected = ref(false);
 
 // State for connected users
-const connectedUsers = ref<{id: string, user: any}[]>([]);
+const connectedUsers = ref<{ id: string; user: any }[]>([]);
 
 // Custom dropdown state for toolbar
 const typeMenuRef = ref<HTMLElement | null>(null);
@@ -88,12 +103,14 @@ const log = {
     console.error(`[YJS-Editor] ${message}`, ...args),
   debug: (message: string, ...args: any[]) =>
     console.debug(`[YJS-Editor] ${message}`, ...args),
+  warn: (message: string, ...args: any[]) =>
+    console.warn(`[YJS-Editor] ${message}`, ...args),
 };
 
 // Create custom input rules function to replace exampleSetup
 const buildInputRules = (schema: Schema) => {
   const rules = [];
-  
+
   // Heading rules: # for h1, ## for h2, etc.
   if (schema.nodes.heading) {
     for (let i = 1; i <= 6; i++) {
@@ -106,161 +123,93 @@ const buildInputRules = (schema: Schema) => {
       );
     }
   }
-  
+
   // Blockquote rule: > followed by space
   if (schema.nodes.blockquote) {
-    rules.push(
-      wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote)
-    );
+    rules.push(wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote));
   }
-  
+
   // Code block rule: ``` followed by space
   if (schema.nodes.code_block) {
-    rules.push(
-      textblockTypeInputRule(/^```\s$/, schema.nodes.code_block)
-    );
+    rules.push(textblockTypeInputRule(/^```\s$/, schema.nodes.code_block));
   }
-  
+
   // List rules
   if (schema.nodes.bullet_list) {
-    // Bullet list: * or - followed by space
-    rules.push(
-      wrappingInputRule(/^\s*[-*]\s$/, schema.nodes.bullet_list)
-    );
+    // Bullet list: * or - or + followed by space
+    // More permissive rule to catch various list markers
+    rules.push(wrappingInputRule(/^\s*([-*+])\s$/, schema.nodes.bullet_list));
   }
-  
+
   if (schema.nodes.ordered_list) {
     // Ordered list: 1. followed by space
+    // Allow any digit sequence followed by period or right parenthesis
     rules.push(
       wrappingInputRule(
-        /^\s*(\d+)\.\s$/,
+        /^\s*(\d+)[.)]\s$/,
         schema.nodes.ordered_list,
-        match => ({ order: +match[1] }),
+        (match) => ({ order: +match[1] }),
         (match, node) => node.childCount + node.attrs.order === +match[1]
       )
     );
   }
-  
+
   // Smart quotes, ellipsis, em-dash
-  rules.push(
-    ...smartQuotes,
-    ellipsis,
-    emDash
-  );
-  
+  rules.push(...smartQuotes, ellipsis, emDash);
+
   return inputRules({ rules });
 };
 
-// Initialize editor following the working direct pattern but with custom styling
+// Create custom keymap for list behaviors
+const createListKeymap = (schema: Schema) => {
+  const keys: { [key: string]: any } = {};
+
+  // Add key bindings for list behavior
+  if (schema.nodes.bullet_list && schema.nodes.list_item) {
+    // Add Enter key handling for bullet lists - this makes lists continue when pressing Enter
+    keys["Enter"] = splitListItem(schema.nodes.list_item);
+
+    // Tab to indent list items (increase nesting level)
+    keys["Tab"] = sinkListItem(schema.nodes.list_item);
+
+    // Shift-Tab to outdent list items (decrease nesting level)
+    keys["Shift-Tab"] = liftListItem(schema.nodes.list_item);
+
+    // Add keyboard shortcuts for toggling lists
+    keys["Mod-Shift-8"] = wrapInList(schema.nodes.bullet_list); // Ctrl+Shift+8 for bullet list
+
+    if (schema.nodes.ordered_list) {
+      keys["Mod-Shift-9"] = wrapInList(schema.nodes.ordered_list); // Ctrl+Shift+9 for ordered list
+    }
+  }
+
+  return keys;
+};
+
+// Initialize editor following the official Yjs demo pattern
 const initEditor = async () => {
   if (!editorElement.value) return;
 
   try {
     log.info("Initializing collaborative editor with docId:", props.docId);
-    
-    // Log environment info to help with debugging
-    logEnvironmentInfo();
 
     // 1. Create new Yjs document
     ydoc = new Y.Doc();
-    
-    // Prevent the document from being persisted to localStorage
-    ydoc.on('update', (update, origin) => {
-      // We want to prevent automatic persistence to localStorage
-      // by listening for updates and doing nothing
-      // This effectively prevents Y.js from storing the document state
-      log.debug("Document updated, not persisting to localStorage");
-    });
 
-    // Handle binary update if provided
-    if (props.isBinaryUpdate && props.modelValue) {
-      try {
-        const binary = window.atob(props.modelValue);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        Y.applyUpdate(ydoc, bytes);
-        log.debug("Applied binary update to document");
-      } catch (error) {
-        log.error("Error applying binary update:", error);
-      }
-    }
+    // 2. Create the websocket provider
+    const wsUrl =
+      import.meta.env.VITE_WS_SERVER_URL ||
+      `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${
+        window.location.hostname
+      }:8080/api/collaboration/ws`;
 
-    // Clear any existing local storage for this document to prevent duplication
-    try {
-      // Clear specific document storage
-      localStorage.removeItem(`y-websocket-${props.docId}`);
-      // Also clear generic Y.js persistence keys
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('y-websocket-') || key.startsWith('y-indexeddb-') || key.startsWith('yjs-'))) {
-          if (key.includes(props.docId)) {
-            localStorage.removeItem(key);
-            log.info(`Cleared potential Y.js storage key: ${key}`);
-          }
-        }
-      }
-      log.info("Cleared local storage for document to prevent duplication");
-    } catch (e) {
-      log.error("Error clearing local storage:", e);
-    }
-
-    // 2. Create the websocket provider with custom configuration
-    const wsUrl = import.meta.env.VITE_WS_SERVER_URL || 
-      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8080/api/collaboration/ws`;
-    
-    log.info(`Connecting to WebSocket server at: ${wsUrl} with document ID: ${props.docId}`);
-    
-    // Configure WebSocket provider with options to prevent duplication
-    provider = new WebsocketProvider(
-      wsUrl,
-      props.docId,
-      ydoc,
-      {
-        disableBc: true, // Disable broadcast channel
-        resyncInterval: 5000 // Resync every 5 seconds
-      }
+    log.info(
+      `Connecting to WebSocket server at: ${wsUrl} with document ID: ${props.docId}`
     );
 
-    // Set up connection status handler
-    provider.on('status', (event: { status: 'connected' | 'disconnected' | 'connecting' }) => {
-      isConnected.value = event.status === 'connected';
-      log.info(`WebSocket connection status: ${event.status}`);
-      
-      // Even if the status is 'disconnected', the provider might be attempting to reconnect
-      // or might still be functional with local changes
-      if (event.status === 'disconnected') {
-        log.info("Connection marked as disconnected, but collaborative features may still work with local changes");
-      }
-    });
+    provider = new WebsocketProvider(wsUrl, props.docId, ydoc);
 
-    // Add error event listener to provider.ws
-    if (provider.ws) {
-      provider.ws.addEventListener('error', (error) => {
-        log.error(`WebSocket connection error:`, error);
-        log.error(`Please check that your backend server is running on port 8080 and accessible`);
-        log.error(`You can customize the WebSocket URL by setting the VITE_WS_SERVER_URL environment variable`);
-      });
-
-      // Add explicit connection and disconnection event handlers
-      provider.ws.addEventListener('open', () => {
-        log.info(`WebSocket connection established to ${wsUrl}`);
-        isConnected.value = true;
-      });
-      
-      provider.ws.addEventListener('close', (event) => {
-        log.info(`WebSocket connection closed with code: ${event.code}, reason: ${event.reason || 'No reason provided'}`);
-        // Don't set isConnected to false here, as provider may attempt to reconnect
-        
-        // Provide more specific error information based on close code
-        if (event.code === 1006) {
-          log.error(`Abnormal closure (code 1006). Backend server may not be running or accessible.`);
-        }
-      });
-    }
-    
-    // 3. Set awareness information for cursors
+    // 3. Set base awareness information for user identification
     provider.awareness.setLocalState({
       user: {
         name: getUserDisplayName(),
@@ -268,18 +217,12 @@ const initEditor = async () => {
         uuid: authStore.user?.uuid || undefined,
       },
     });
-    
-    // Add awareness change listener to update connected users
-    provider!.awareness.on('change', updateConnectedUsers);
-    
-    // Initialize connected users
-    updateConnectedUsers();
 
     // 4. Get the XML fragment and initialize ProseMirror document
     yXmlFragment = ydoc.getXmlFragment("prosemirror");
     const { doc, meta } = initProseMirrorDoc(yXmlFragment, schema);
 
-    // 5. Create the editor view with proper mapping - using individual plugins instead of exampleSetup
+    // 5. Create the editor view - following the exact pattern in the official demo
     editorView = new EditorView(editorElement.value, {
       state: EditorState.create({
         doc,
@@ -293,54 +236,32 @@ const initEditor = async () => {
             "Mod-y": redo,
             "Mod-Shift-z": redo,
           }),
+          // Add list handling keymap - this is crucial for proper list behavior
+          keymap(createListKeymap(schema)),
           // Add individual plugins instead of exampleSetup
-          buildInputRules(schema),    // Custom markdown input rules
-          keymap(baseKeymap),         // Basic key bindings
-          dropCursor(),               // Shows cursor when dragging
-          gapCursor()                 // Allows clicking between blocks
-        ]
+          buildInputRules(schema), // Custom markdown input rules
+          keymap(baseKeymap), // Basic key bindings
+          dropCursor(), // Shows cursor when dragging
+          gapCursor(), // Allows clicking between blocks
+        ],
       }),
-      dispatchTransaction(transaction) {
-        if (editorView) {
-          const newState = editorView.state.apply(transaction);
-          editorView.updateState(newState);
-        }
-      },
     });
 
-    // 6. Listen for document updates to emit model value changes
-    ydoc.on("update", (update, origin) => {
-      // Only emit updates that originated from this client
-      if (origin === provider) {
-        if (editorView) {
-          const editorState = editorView.state;
-          const prosemirrorDoc = editorState.doc.toJSON();
-          emit("update:modelValue", JSON.stringify(prosemirrorDoc));
-        }
+    // 6. Set up connection status handler
+    provider.on(
+      "status",
+      (event: { status: "connected" | "disconnected" | "connecting" }) => {
+        isConnected.value = event.status === "connected";
+        log.info(`WebSocket connection status: ${event.status}`);
       }
+    );
+
+    // 7. Add awareness change listener to update connected users
+    provider.awareness.on("change", () => {
+      updateConnectedUsers();
     });
 
-    // 7. Apply initial content if provided and not binary
-    if (!props.isBinaryUpdate && props.modelValue) {
-      try {
-        const initialDoc = JSON.parse(props.modelValue);
-        const newDoc = schema.nodeFromJSON(initialDoc);
-        if (editorView && newDoc) {
-          // Create a transaction that preserves selection
-          const tr = editorView.state.tr.replaceWith(
-            0,
-            editorView.state.doc.content.size,
-            newDoc.content
-          );
-          editorView.dispatch(tr);
-          log.debug("Applied initial content to editor");
-        }
-      } catch (error) {
-        log.error("Error applying initial content:", error);
-      }
-    }
-
-    // 8. Store reference for debugging
+    // 8. For debugging purposes
     window.example = {
       provider,
       ydoc,
@@ -374,47 +295,47 @@ const getUserDisplayName = () => {
   if (!authStore.user) {
     return "Guest " + Math.floor(Math.random() * 1000);
   }
-  
+
   // Use the user's name from the auth store
   return authStore.user.name;
 };
 
-// Update connected users based on awareness
+// Simple function to update connected users UI
 const updateConnectedUsers = () => {
   if (!provider) return;
-  
+
   try {
-    const states = provider.awareness.getStates() as Map<number, any>;
-    const users: {id: string, user: any}[] = [];
-    
-    // Log all connected users for debugging
-    log.debug(`Raw awareness states: ${states.size} users`);
-    
+    const states = provider.awareness.getStates();
+    const users: { id: string; user: any }[] = [];
+
     // Convert Map to array and exclude the current user
     states.forEach((state, clientId) => {
-      // Log all user data for debugging
-      log.debug(`User ${clientId}: ${JSON.stringify(state.user || 'No user data')}`);
-      
-      if (state.user && provider && clientId !== provider.awareness.clientID) {
-        // Only include users with valid data and exclude auto-generated names
-        if (typeof state.user.name === 'string' && state.user.name.length > 1 && 
-            !state.user.name.startsWith('User-') && !state.user.name.startsWith('User ') && 
-            !state.user.name.startsWith('Guest-') && !state.user.name.startsWith('Guest ')) {
-          log.debug(`Adding user to connected list: ${state.user.name} (${clientId})`);
+      if (
+        state &&
+        state.user &&
+        provider &&
+        clientId !== provider.awareness.clientID
+      ) {
+        // Only include users with valid user data
+        if (state.user.name && typeof state.user.name === "string") {
           users.push({
             id: String(clientId),
-            user: state.user
+            user: state.user,
           });
-        } else {
-          log.debug(`Skipping user with invalid or system-generated name: ${JSON.stringify(state.user)}`);
         }
       }
     });
-    
+
     connectedUsers.value = users;
-    log.debug(`Updated connected users list:`, users.map(u => `${u.user.name} (ID: ${u.id})`));
   } catch (error) {
-    log.error('Error updating connected users:', error);
+    log.error("Error updating connected users:", error);
+  }
+};
+
+// Simple function to focus the editor
+const focusEditor = () => {
+  if (editorView) {
+    editorView.focus();
   }
 };
 
@@ -582,13 +503,6 @@ const redoEdit = () => {
   redo(editorView.state);
 };
 
-// Function to focus the editor
-const focusEditor = () => {
-  if (editorView) {
-    editorView.focus();
-  }
-};
-
 // Cleanup function
 const cleanup = () => {
   if (editorView) {
@@ -598,9 +512,9 @@ const cleanup = () => {
   if (provider) {
     // Remove awareness listener
     if (provider.awareness) {
-      provider.awareness.off('change', updateConnectedUsers);
+      provider.awareness.off("change", updateConnectedUsers);
     }
-    
+
     provider.disconnect();
     provider = null;
   }
@@ -609,7 +523,7 @@ const cleanup = () => {
     ydoc = null;
   }
   yXmlFragment = null;
-  
+
   // Reset connected users
   connectedUsers.value = [];
 
@@ -645,7 +559,7 @@ watch(
         user: {
           ...currentState?.user,
           name: getUserDisplayName(),
-        }
+        },
       });
       log.info(`Updated collaborative user name to: ${getUserDisplayName()}`);
     }
@@ -689,11 +603,97 @@ watch(
 // Helper function to log environment variables for debugging
 const logEnvironmentInfo = () => {
   log.info("Environment info:");
-  log.info(`- VITE_WS_SERVER_URL: ${import.meta.env.VITE_WS_SERVER_URL || 'Not set'}`);
+  log.info(
+    `- VITE_WS_SERVER_URL: ${import.meta.env.VITE_WS_SERVER_URL || "Not set"}`
+  );
   log.info(`- window.location.host: ${window.location.host}`);
   log.info(`- window.location.protocol: ${window.location.protocol}`);
   log.info(`- window.location.origin: ${window.location.origin}`);
 };
+
+// Add a function to inspect relative positions
+const debugRelativePositions = () => {
+  if (!editorView || !ydoc || !yXmlFragment || !provider) return;
+
+  try {
+    // Get current ProseMirror selection
+    const selection = editorView.state.selection;
+
+    // Log all current absolute positions
+    log.debug("Current selection (absolute positions):", {
+      anchor: selection.anchor,
+      head: selection.head,
+      from: selection.from,
+      to: selection.to,
+    });
+
+    // Create relative positions from current selection
+    const relAnchor = Y.createRelativePositionFromTypeIndex(
+      yXmlFragment,
+      selection.anchor
+    );
+    const relHead = Y.createRelativePositionFromTypeIndex(
+      yXmlFragment,
+      selection.head
+    );
+
+    // Log the relative positions as JSON for inspection
+    log.debug("Relative positions:", {
+      anchor: JSON.stringify(relAnchor),
+      head: JSON.stringify(relHead),
+    });
+
+    // Try to convert back to absolute positions
+    const absAnchor = Y.createAbsolutePositionFromRelativePosition(
+      relAnchor,
+      ydoc
+    );
+    const absHead = Y.createAbsolutePositionFromRelativePosition(relHead, ydoc);
+
+    log.debug("Converted back to absolute positions:", {
+      anchor: absAnchor ? absAnchor.index : "conversion failed",
+      head: absHead ? absHead.index : "conversion failed",
+    });
+
+    // Check what's in the awareness states
+    const states = provider.awareness.getStates();
+    log.debug(`Awareness states (${states.size} clients):`);
+
+    states.forEach((state, clientId) => {
+      if (provider) {
+        const isLocal = clientId === provider.awareness.clientID;
+        if (state.cursor) {
+          log.debug(`Client ${clientId}${isLocal ? " (local)" : ""}:`, {
+            anchor: state.cursor.anchor,
+            head: state.cursor.head,
+            // If these positions are actually stored as relative positions in awareness,
+            // let's try to inspect them directly
+            anchorRelative:
+              typeof state.cursor.anchorRelative === "object"
+                ? JSON.stringify(state.cursor.anchorRelative)
+                : "not available",
+            headRelative:
+              typeof state.cursor.headRelative === "object"
+                ? JSON.stringify(state.cursor.headRelative)
+                : "not available",
+          });
+        }
+      }
+    });
+  } catch (error) {
+    log.error("Error in debugRelativePositions:", error);
+  }
+};
+
+// Add window debug methods
+window.example = undefined; // Initialize with undefined until editor is created
+
+// Update the global interface
+declare global {
+  interface Window {
+    example?: any;
+  }
+}
 
 onMounted(() => {
   initEditor();
@@ -706,13 +706,6 @@ onBeforeUnmount(() => {
   document.removeEventListener("mousedown", handleClickOutside);
   document.removeEventListener("keydown", handleKeydown);
 });
-
-// Add to window for typescript
-declare global {
-  interface Window {
-    example?: any;
-  }
-}
 </script>
 
 <template>
@@ -729,7 +722,17 @@ declare global {
           :aria-expanded="showTypeMenu"
           title="Text Style"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M4 7V4h16v3"></path>
             <path d="M9 20h6"></path>
             <path d="M12 4v16"></path>
@@ -745,42 +748,60 @@ declare global {
           tabindex="-1"
         >
           <button
-            @click="setParagraph(); showTypeMenu = false"
+            @click="
+              setParagraph();
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Plain
           </button>
           <button
-            @click="setHeading(1); showTypeMenu = false"
+            @click="
+              setHeading(1);
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Heading 1
           </button>
           <button
-            @click="setHeading(2); showTypeMenu = false"
+            @click="
+              setHeading(2);
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Heading 2
           </button>
           <button
-            @click="setHeading(3); showTypeMenu = false"
+            @click="
+              setHeading(3);
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Heading 3
           </button>
           <button
-            @click="toggleBlockquote(); showTypeMenu = false"
+            @click="
+              toggleBlockquote();
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Blockquote
           </button>
           <button
-            @click="toggleCodeBlock(); showTypeMenu = false"
+            @click="
+              toggleCodeBlock();
+              showTypeMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
@@ -792,22 +813,34 @@ declare global {
       <div class="toolbar-divider"></div>
 
       <!-- Formatting Buttons -->
-      <button
-        @click="toggleBold"
-        class="toolbar-button"
-        title="Bold"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button @click="toggleBold" class="toolbar-button" title="Bold">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
           <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
         </svg>
       </button>
-      <button
-        @click="toggleItalic"
-        class="toolbar-button"
-        title="Italic"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button @click="toggleItalic" class="toolbar-button" title="Italic">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="19" y1="4" x2="10" y2="4"></line>
           <line x1="14" y1="20" x2="5" y2="20"></line>
           <line x1="15" y1="4" x2="9" y2="20"></line>
@@ -822,7 +855,17 @@ declare global {
         class="toolbar-button"
         title="Bullet List"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="8" y1="6" x2="21" y2="6"></line>
           <line x1="8" y1="12" x2="21" y2="12"></line>
           <line x1="8" y1="18" x2="21" y2="18"></line>
@@ -836,7 +879,17 @@ declare global {
         class="toolbar-button"
         title="Numbered List"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="10" y1="6" x2="21" y2="6"></line>
           <line x1="10" y1="12" x2="21" y2="12"></line>
           <line x1="10" y1="18" x2="21" y2="18"></line>
@@ -858,7 +911,17 @@ declare global {
           :aria-expanded="showInsertMenu"
           title="Insert"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
           </svg>
@@ -873,35 +936,50 @@ declare global {
           tabindex="-1"
         >
           <button
-            @click="toggleBulletList(); showInsertMenu = false"
+            @click="
+              toggleBulletList();
+              showInsertMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Bullet List
           </button>
           <button
-            @click="toggleOrderedList(); showInsertMenu = false"
+            @click="
+              toggleOrderedList();
+              showInsertMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Numbered List
           </button>
           <button
-            @click="toggleBlockquote(); showInsertMenu = false"
+            @click="
+              toggleBlockquote();
+              showInsertMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Blockquote
           </button>
           <button
-            @click="toggleCodeBlock(); showInsertMenu = false"
+            @click="
+              toggleCodeBlock();
+              showInsertMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
             Code Block
           </button>
           <button
-            @click="insertLink(); showInsertMenu = false"
+            @click="
+              insertLink();
+              showInsertMenu = false;
+            "
             class="dropdown-item"
             role="menuitem"
           >
@@ -913,43 +991,67 @@ declare global {
       <div class="toolbar-divider"></div>
 
       <!-- Undo/Redo Buttons -->
-      <button
-        @click="undoEdit"
-        class="toolbar-button"
-        title="Undo"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button @click="undoEdit" class="toolbar-button" title="Undo">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M3 7v6h6"></path>
           <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
         </svg>
       </button>
-      <button
-        @click="redoEdit"
-        class="toolbar-button"
-        title="Redo"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <button @click="redoEdit" class="toolbar-button" title="Redo">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M21 7v6h-6"></path>
           <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
         </svg>
       </button>
-      
+
       <!-- Spacer to push connection controls to right -->
       <div class="flex-grow"></div>
-      
+
       <!-- Connected users -->
-      <div v-if="connectedUsers.length > 0" class="flex items-center gap-1 mr-2">
+      <div
+        v-if="connectedUsers.length > 0"
+        class="flex items-center gap-1 mr-2"
+      >
         <div class="text-xs text-slate-300 mr-1">Editing with:</div>
         <div class="flex">
-          <div 
-            v-for="(connectedUser, index) in connectedUsers" 
+          <div
+            v-for="(connectedUser, index) in connectedUsers"
             :key="connectedUser.id"
             class="flex items-center"
             :style="{ marginLeft: index > 0 ? '-8px' : '0' }"
-            :title="connectedUser.user.name + (connectedUser.user.uuid ? ' (UUID: ' + connectedUser.user.uuid + ')' : '')"
-            @click="() => { console.log('User data:', connectedUser.user); }"
+            :title="
+              connectedUser.user.name +
+              (connectedUser.user.uuid
+                ? ' (UUID: ' + connectedUser.user.uuid + ')'
+                : '')
+            "
+            @click="
+              () => {
+                console.log('User data:', connectedUser.user);
+              }
+            "
           >
-            <UserAvatar 
+            <UserAvatar
               :name="connectedUser.user.uuid || connectedUser.user.name"
               :showName="false"
               size="xs"
@@ -958,17 +1060,17 @@ declare global {
           </div>
         </div>
       </div>
-      
+
       <!-- Connection status indicator only -->
       <div class="connection-status" :class="{ connected: isConnected }">
         {{ isConnected ? "Connected" : "Syncing locally" }}
       </div>
     </div>
-    
+
     <!-- Editor content with click handler -->
-    <div 
-      id="editor" 
-      ref="editorElement" 
+    <div
+      id="editor"
+      ref="editorElement"
       @click="focusEditor"
       class="editor-container"
       :data-placeholder="placeholder"
@@ -1004,7 +1106,7 @@ declare global {
   align-items: center;
   justify-content: center;
   padding: 0.25rem 0.5rem;
-  background-color: #45556C;
+  background-color: #45556c;
   border: none;
   border-radius: 0.25rem;
   color: #aebaca;
@@ -1024,7 +1126,7 @@ declare global {
 
 .toolbar-divider {
   width: 1px;
-  background-color: #91A1B8;
+  background-color: #91a1b8;
   margin: 0 0.5rem;
 }
 
@@ -1037,7 +1139,8 @@ declare global {
   background-color: #1e293b;
   border: 1px solid #374151;
   border-radius: 0.375rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
   z-index: 50;
 }
 
@@ -1068,7 +1171,7 @@ declare global {
 
 .editor-container {
   padding: 1rem;
-  background-color: #212C42;
+  background-color: #212c42;
   color: #e2e8f0;
   min-height: 250px;
   flex: 1;
@@ -1081,6 +1184,7 @@ declare global {
   min-height: 200px;
   height: 100%;
   flex: 1;
+  position: relative;
 }
 
 .ProseMirror p {
@@ -1126,23 +1230,26 @@ declare global {
 }
 
 .ProseMirror pre {
-  background-color: #0F172B;
+  background-color: #0f172b;
   padding: 0.75rem;
   border-radius: 0.375rem;
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
   margin-top: 1rem;
   margin-bottom: 1rem;
 }
 
 .ProseMirror code {
-  background-color: #0F172B;
+  background-color: #0f172b;
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 }
 
-.ProseMirror ul, .ProseMirror ol {
+.ProseMirror ul,
+.ProseMirror ol {
   padding-left: 1.5rem;
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -1221,27 +1328,139 @@ declare global {
   position: relative;
   margin-left: -1px;
   margin-right: -1px;
-  border-left: 1px solid black;
-  border-right: 1px solid black;
+  border-left: 2px solid orange;
+  border-right: 2px solid orange;
   border-color: orange;
   word-break: normal;
   pointer-events: none;
+  opacity: 1;
+  height: 1.2em;
 }
+
 /* This renders the username above the caret */
 .ProseMirror-yjs-cursor > div {
   position: absolute;
-  top: -1.05em;
-  left: -1px;
-  font-size: 13px;
-  background-color: rgb(250, 129, 0);
-  font-family: serif;
-  font-style: normal;
+  top: -1.5em;
+  left: -2px;
+  font-size: 12px;
+  background-color: currentColor;
+  font-family: sans-serif;
   font-weight: normal;
   line-height: normal;
   user-select: none;
   color: white;
-  padding-left: 2px;
-  padding-right: 2px;
+  padding: 1px 5px;
   white-space: nowrap;
+  border-radius: 4px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 10;
+}
+
+/* Additional class for the y-prosemirror cursor plugin */
+.ProseMirror .y-prosemirror-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid orange;
+  border-right: 2px solid orange;
+  border-color: orange;
+  word-break: normal;
+  pointer-events: none;
+}
+
+/* This renders the username with the y-prosemirror cursor */
+.ProseMirror .y-prosemirror-cursor > div {
+  position: absolute;
+  top: -1.5em;
+  left: -2px;
+  font-size: 12px;
+  background-color: currentColor;
+  font-family: sans-serif;
+  font-weight: normal;
+  line-height: normal;
+  user-select: none;
+  color: white;
+  padding: 1px 5px;
+  white-space: nowrap;
+  border-radius: 4px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 10;
+}
+
+/* Custom cursor styles that will be applied by our cursorBuilder */
+.custom-remote-cursor {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  border-right: 2px solid;
+  height: 1.2em;
+  word-break: normal;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.custom-remote-cursor > div {
+  position: absolute;
+  top: -1.5em;
+  left: -2px;
+  font-size: 12px;
+  background-color: #4f46e5; /* Default color if user.color is not passed */
+  font-family: sans-serif;
+  font-weight: normal;
+  line-height: normal;
+  user-select: none;
+  color: white;
+  padding: 1px 5px;
+  white-space: nowrap;
+  border-radius: 4px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 10;
+}
+
+/* this is a rough fix for the first cursor position when the first paragraph is empty */
+.ProseMirror > .ProseMirror-yjs-cursor:first-child,
+.ProseMirror > .y-prosemirror-cursor:first-child,
+.ProseMirror > .yRemoteSelection:first-child {
+  margin-top: 16px;
+}
+
+.ProseMirror p:first-child,
+.ProseMirror h1:first-child,
+.ProseMirror h2:first-child,
+.ProseMirror h3:first-child,
+.ProseMirror h4:first-child,
+.ProseMirror h5:first-child,
+.ProseMirror h6:first-child {
+  margin-top: 16px;
+}
+
+/* Handle empty document state */
+.ProseMirror:empty::before {
+  content: attr(data-placeholder);
+  color: #64748b;
+  pointer-events: none;
+  display: block;
+  margin-top: 16px;
+}
+
+/* Ensure cursor has proper position in empty document */
+.ProseMirror:empty + .ProseMirror-yjs-cursor,
+.ProseMirror:empty + .y-prosemirror-cursor,
+.ProseMirror:empty + .yRemoteSelection {
+  margin-top: 16px;
+}
+
+/* this is a rough fix for the first cursor position when the first paragraph is empty */
+.ProseMirror > .ProseMirror-yjs-cursor:first-child,
+.ProseMirror > .y-prosemirror-cursor:first-child,
+.ProseMirror > .yRemoteSelection:first-child {
+  margin-top: 16px;
 }
 </style>
