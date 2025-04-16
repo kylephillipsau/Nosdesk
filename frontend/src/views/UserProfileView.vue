@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import StatusBadge from '@/components/StatusBadge.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
 import BackButton from '@/components/common/BackButton.vue';
 import { RouterLink } from 'vue-router';
+import ticketService from '@/services/ticketService';
+import userService from '@/services/userService';
+import type { Ticket } from '@/services/ticketService';
+import type { User } from '@/services/userService';
 
-interface UserProfile {
-  username: string;
-  email: string;
-  role: string;
-  department: string;
-  joinedDate: string;
+interface UserProfile extends User {
+  department?: string;
+  joinedDate?: string;
   avatar?: string | null;
 }
 
@@ -20,35 +21,6 @@ interface Device {
   name: string;
   type: string;
   lastSeen: string;
-  status: string;
-}
-
-interface Ticket {
-  id: number;
-  title: string;
-  status: 'open' | 'in-progress' | 'closed';
-  priority: string;
-  created: string;
-  modified: string;
-  assignee: string;
-  requester: string;
-  device: {
-    hostname: string;
-    serialNumber: string;
-    model: string;
-    warrantyStatus: string;
-  };
-  notesAndComments: Array<{
-    id: number;
-    content: string;
-    author: string;
-    createdAt: string;
-    attachments: Array<{
-      url: string;
-      name: string;
-    }>;
-  }>;
-  articleContent: string;
 }
 
 const route = useRoute();
@@ -60,51 +32,61 @@ const assignedTickets = ref<Ticket[]>([]);
 const requestedTickets = ref<Ticket[]>([]);
 const devices = ref<Device[]>([]);
 
+// Update document title when user profile changes
+watch(userProfile, (newProfile) => {
+  if (newProfile) {
+    document.title = `${newProfile.name}'s Profile | Nosdesk`;
+  }
+});
+
 const fetchUserData = async () => {
   try {
     loading.value = true;
     error.value = null;
     
-    // TODO: Replace with actual API calls
-    // Mock data for now
+    // Get the UUID from the route params
+    const userUuid = route.params.uuid as string;
+    
+    if (!userUuid) {
+      error.value = 'User ID is missing';
+      return;
+    }
+    
+    // Fetch the user from the API
+    const user = await userService.getUserByUuid(userUuid);
+    
+    // Create the user profile with the fetched data
     userProfile.value = {
-      username: route.params.username as string,
-      email: `${route.params.username}@company.com`,
-      role: 'Support Engineer',
-      department: 'IT Support',
-      joinedDate: '2023-01-01',
+      ...user,
+      department: 'IT Support', // Default department (could be added to backend later)
+      joinedDate: new Date().toISOString(), // Placeholder - could be created_at from backend
+      avatar: null
     };
 
-    // Load tickets from tickets.json
-    const ticketData = (await import("@/data/tickets.json")).default;
-    const allTickets = ticketData.tickets.map(ticket => ({
-      ...ticket,
-      status: ticket.status as 'open' | 'in-progress' | 'closed'
-    })) as Ticket[];
+    // Load tickets from the API
+    const allTickets = await ticketService.getTickets();
     
     // Filter tickets for this user
     assignedTickets.value = allTickets.filter(t => 
-      t.assignee?.toLowerCase() === route.params.username.toString().toLowerCase()
+      t.assignee === userUuid
     );
     requestedTickets.value = allTickets.filter(t => 
-      t.requester?.toLowerCase() === route.params.username.toString().toLowerCase()
+      t.requester === userUuid
     );
 
-    // Mock devices data
+    // Mock devices data - this could be replaced with real API data later
     devices.value = [
       {
         id: '1',
         name: 'MacBook Pro',
         type: 'Laptop',
-        lastSeen: new Date().toISOString(),
-        status: 'online'
+        lastSeen: new Date().toISOString()
       },
       {
         id: '2',
         name: 'iPhone 13',
         type: 'Mobile',
-        lastSeen: new Date(Date.now() - 3600000).toISOString(),
-        status: 'away'
+        lastSeen: new Date(Date.now() - 3600000).toISOString()
       }
     ];
   } catch (e) {
@@ -154,7 +136,7 @@ onMounted(() => {
     <div v-if="userProfile" class="flex flex-col">
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
-        <BackButton fallbackRoute="/users" />
+        <BackButton fallbackRoute="/users" label="Back to Users" />
       </div>
       
       <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
@@ -168,7 +150,7 @@ onMounted(() => {
                 <!-- Avatar Container with fixed dimensions -->
                 <div class="w-32 h-32 flex-shrink-0">
                   <UserAvatar
-                    :name="userProfile.username"
+                    :name="userProfile.name"
                     size="full"
                     :avatar="userProfile.avatar"
                     :show-name="false"
@@ -176,7 +158,7 @@ onMounted(() => {
                   />
                 </div>
                 <div class="flex-1 min-w-0">
-                  <h1 class="text-2xl font-semibold text-white truncate">{{ userProfile.username }}</h1>
+                  <h1 class="text-2xl font-semibold text-white truncate">{{ userProfile.name }}</h1>
                   <p class="text-slate-400 truncate">{{ userProfile.email }}</p>
                   <div class="mt-2 flex items-center space-x-4">
                     <span class="text-sm text-slate-400">{{ userProfile.role }}</span>
@@ -184,7 +166,7 @@ onMounted(() => {
                     <span class="text-sm text-slate-400">{{ userProfile.department }}</span>
                   </div>
                   <p class="mt-2 text-sm text-slate-500">
-                    Joined {{ formatDate(userProfile.joinedDate) }}
+                    Joined {{ userProfile.joinedDate ? formatDate(userProfile.joinedDate) : 'Recently' }}
                   </p>
                 </div>
               </div>
@@ -209,7 +191,6 @@ onMounted(() => {
                       <p class="text-sm text-slate-400">{{ device.type }}</p>
                       <p class="text-xs text-slate-500">Last seen {{ formatDate(device.lastSeen) }}</p>
                     </div>
-                    <StatusBadge type="status" :value="device.status === 'online' ? 'open' : device.status === 'away' ? 'in-progress' : 'closed'" />
                   </div>
                 </RouterLink>
               </div>
@@ -219,14 +200,22 @@ onMounted(() => {
           <!-- Tickets Area -->
           <div class="tickets-area flex flex-col gap-4">
             <!-- Assigned Tickets -->
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-4">Assigned Tickets</h2>
+            <div class="flex flex-col gap-2 bg-slate-800 rounded-2xl p-6">
+              <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-medium text-white">{{ assignedTickets.length }} Assigned Tickets</h2>
+                <RouterLink 
+                  :to="`/tickets?assignee=${route.params.uuid}`"
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                >
+                  See All
+                </RouterLink>
+              </div>
               <div v-if="assignedTickets.length === 0" class="text-slate-400 text-sm">
                 No assigned tickets
               </div>
               <div v-else class="flex flex-col gap-2 space-y-4">
                 <RouterLink
-                  v-for="ticket in assignedTickets"
+                  v-for="ticket in assignedTickets.slice(0, 5)"
                   :key="ticket.id"
                   :to="`/tickets/${ticket.id}`"
                   class="block bg-slate-700/50 p-3 rounded-lg hover:bg-slate-700 transition-colors"
@@ -243,14 +232,22 @@ onMounted(() => {
             </div>
 
             <!-- Requested Tickets -->
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-4">Requested Tickets</h2>
+            <div class="flex flex-col gap-2 bg-slate-800 rounded-2xl p-6">
+              <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-medium text-white">{{ requestedTickets.length }} Requested Tickets</h2>
+                <RouterLink 
+                  :to="`/tickets?requester=${route.params.uuid}`"
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                >
+                  See All
+                </RouterLink>
+              </div>
               <div v-if="requestedTickets.length === 0" class="text-slate-400 text-sm">
                 No requested tickets
               </div>
-              <div v-else class="space-y-4">
+              <div v-else class="flex flex-col gap-2 space-y-4">
                 <RouterLink
-                  v-for="ticket in requestedTickets"
+                  v-for="ticket in requestedTickets.slice(0, 5)"
                   :key="ticket.id"
                   :to="`/tickets/${ticket.id}`"
                   class="block bg-slate-700/50 p-3 rounded-lg hover:bg-slate-700 transition-colors"

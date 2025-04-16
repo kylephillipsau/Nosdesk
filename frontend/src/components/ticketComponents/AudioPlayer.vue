@@ -22,16 +22,23 @@ const audioData = ref<Float32Array | null>(null);
 const isLoading = ref(true);
 const error = ref<string | null>(null);
 const isDragging = ref(false);
+const durationLoaded = ref(false);
 
 const formatTime = (seconds: number): string => {
-  if (!seconds || isNaN(seconds)) return "0:00";
+  if (!seconds || isNaN(seconds) || !isFinite(seconds)) return "0:00";
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 };
 
 const formattedCurrentTime = computed(() => formatTime(currentTime.value));
-const formattedDuration = computed(() => formatTime(duration.value));
+const formattedDuration = computed(() => {
+  // Only return formatted duration if we have a valid duration
+  if (durationLoaded.value && duration.value > 0 && isFinite(duration.value)) {
+    return formatTime(duration.value);
+  }
+  return "0:00";
+});
 
 const formattedDate = (dateString?: string): string => {
   if (!dateString) return "";
@@ -129,7 +136,8 @@ const drawWaveform = () => {
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  if (duration.value > 0) {
+  // Only draw progress if we have a valid duration
+  if (durationLoaded.value && duration.value > 0 && isFinite(duration.value)) {
     const progress = (currentTime.value / duration.value) * width;
     
     const progressGradient = ctx.createLinearGradient(0, 0, 0, height);
@@ -219,6 +227,7 @@ const loadAudioData = async () => {
   try {
     isLoading.value = true;
     error.value = null;
+    durationLoaded.value = false;
 
     // Reset audio data
     if (audioData.value) {
@@ -236,8 +245,11 @@ const loadAudioData = async () => {
     const arrayBuffer = await response.arrayBuffer();
     const audioBuffer = await audioContext.value!.decodeAudioData(arrayBuffer);
     
-    // Set duration immediately
-    duration.value = audioBuffer.duration;
+    // Set duration immediately and mark as loaded
+    if (audioBuffer.duration && isFinite(audioBuffer.duration)) {
+      duration.value = audioBuffer.duration;
+      durationLoaded.value = true;
+    }
     
     const rawData = audioBuffer.getChannelData(0);
     const samples = 2000;
@@ -280,7 +292,7 @@ const loadAudioData = async () => {
 };
 
 const updateProgress = (event: MouseEvent) => {
-  if (!progressBarRef.value || !audioRef.value || !duration.value) return;
+  if (!progressBarRef.value || !audioRef.value || !durationLoaded.value || !duration.value) return;
   
   const rect = progressBarRef.value.getBoundingClientRect();
   const x = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
@@ -326,6 +338,15 @@ const togglePlayPause = async () => {
   }
 };
 
+// Function to manually check and update duration
+const checkAndUpdateDuration = () => {
+  if (audioRef.value && audioRef.value.duration && isFinite(audioRef.value.duration)) {
+    duration.value = audioRef.value.duration;
+    durationLoaded.value = true;
+    drawWaveform();
+  }
+};
+
 onMounted(async () => {
   if (!audioRef.value) return;
 
@@ -339,6 +360,12 @@ onMounted(async () => {
   audioRef.value.addEventListener('timeupdate', () => {
     if (!audioRef.value) return;
     currentTime.value = audioRef.value.currentTime;
+    
+    // Check duration on timeupdate as well (helps with some browsers/formats)
+    if (!durationLoaded.value) {
+      checkAndUpdateDuration();
+    }
+    
     drawWaveform();
   });
   audioRef.value.addEventListener('play', () => isPlaying.value = true);
@@ -349,15 +376,27 @@ onMounted(async () => {
     drawWaveform();
   });
 
-  // Add load event listener
+  // Add load event listeners
   audioRef.value.addEventListener('loadedmetadata', () => {
-    duration.value = audioRef.value?.duration || 0;
-    drawWaveform();
+    checkAndUpdateDuration();
+  });
+  
+  audioRef.value.addEventListener('durationchange', () => {
+    checkAndUpdateDuration();
+  });
+  
+  audioRef.value.addEventListener('canplaythrough', () => {
+    checkAndUpdateDuration();
   });
 
   // Add global mouse event listeners
   document.addEventListener('mousemove', handleMouseMove);
   document.addEventListener('mouseup', handleMouseUp);
+  
+  // Try to get duration after a short delay as a fallback
+  setTimeout(() => {
+    checkAndUpdateDuration();
+  }, 500);
 });
 
 // Add watch on src prop to reload audio data when it changes
@@ -382,7 +421,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg p-3">
+  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg w-full">
     <!-- Audio player -->
     <audio 
       ref="audioRef" 

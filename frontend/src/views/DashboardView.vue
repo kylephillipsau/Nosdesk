@@ -1,7 +1,14 @@
 // views/Dashboard.vue
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import TicketHeatmap from '@/components/TicketHeatmap.vue'
+import UserAssignedTickets from '@/components/UserAssignedTickets.vue'
+import { getTickets } from '@/services/ticketService'
+import type { Ticket } from '@/services/ticketService'
+import { useAuthStore } from '@/stores/auth'
+
+// Initialize auth store
+const authStore = useAuthStore()
 
 // Get current time for greeting
 const getGreeting = () => {
@@ -12,28 +19,58 @@ const getGreeting = () => {
 }
 
 const greeting = ref(getGreeting())
-const username = ref('Kyle') // This would come from your auth system
 
-// Mock ticket stats - replace with actual data
+// Get username from auth store
+const username = computed(() => {
+  if (!authStore.user?.name) return 'Guest';
+  
+  // Split the full name and take the first part as the first name
+  const firstName = authStore.user.name.split(' ')[0];
+  return firstName;
+})
+
+// Initialize ticket stats with zeros
 const ticketStats = ref({
-  total: 12,
-  open: 5,
-  inProgress: 4,
-  closed: 3
+  total: 0,
+  open: 0,
+  inProgress: 0,
+  closed: 0
+})
+
+// Fetch tickets and update stats
+const fetchTicketStats = async () => {
+  try {
+    const tickets = await getTickets()
+    
+    // Calculate stats
+    ticketStats.value = {
+      total: tickets.length,
+      open: tickets.filter(ticket => ticket.status === 'open').length,
+      inProgress: tickets.filter(ticket => ticket.status === 'in-progress').length,
+      closed: tickets.filter(ticket => ticket.status === 'closed').length
+    }
+  } catch (error) {
+    console.error('Error fetching ticket stats:', error)
+  }
+}
+
+// Fetch data when component mounts
+onMounted(() => {
+  fetchTicketStats()
 })
 </script>
 
 <template>
   <div class="flex flex-col h-full">
     <!-- Content -->
-    <div class="flex flex-col gap-4 p-6">
+    <div class="flex flex-col gap-6 p-6">
       <!-- Greeting Card -->
-      <div class="mb-6">
+      <div class="mb-2">
         <h2 class="text-3xl font-medium text-white">
           {{ greeting }}, {{ username }}!
         </h2>
         <p class="text-gray-400 mt-2">
-          Welcome to your nosDesk dashboard
+          Welcome to your Nosdesk dashboard
         </p>
       </div>
 
@@ -63,9 +100,22 @@ const ticketStats = ref({
           <p class="text-2xl font-semibold text-gray-400 mt-2">{{ ticketStats.closed }}</p>
         </div>
       </div>
-      <TicketHeatmap />
 
+      <!-- Two column layout for assigned tickets and heatmap -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Assigned Tickets -->
+        <div class="lg:col-span-2">
+          <UserAssignedTickets :limit="5" />
+        </div>
+
+        <!-- Ticket Activity -->
+        <div>
+          <div class="bg-slate-800 rounded-lg p-6">
+            <h3 class="text-lg font-medium text-white mb-4">Ticket Activity</h3>
+            <TicketHeatmap ticketStatus="closed" />
+          </div>
+        </div>
+      </div>
     </div>
-
   </div>
 </template>

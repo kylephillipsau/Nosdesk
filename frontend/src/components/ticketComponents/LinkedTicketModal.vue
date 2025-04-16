@@ -2,10 +2,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import type { Ticket } from '@/types/ticket';
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 import StatusBadge from '@/components/StatusBadge.vue';
 import Modal from '@/components/Modal.vue';
+import ticketService from '@/services/ticketService';
+import type { Ticket } from '@/services/ticketService';
 
 const router = useRouter();
 const props = defineProps<{
@@ -23,19 +24,38 @@ const searchQuery = ref('');
 const tickets = ref<Ticket[]>([]);
 const filteredTickets = ref<Ticket[]>([]);
 
-// Load tickets from the JSON file
+// Load tickets from the API
 const loadTickets = async () => {
-  const ticketData = (await import("@/data/tickets.json")).default;
-  // Filter out the current ticket and any already linked tickets
-  tickets.value = ticketData.tickets.map((t: any) => ({
-    ...t,
-    status: t.status as TicketStatus,
-    priority: t.priority as TicketPriority
-  })).filter((t: Ticket) => 
-    t.id !== props.currentTicketId && 
-    !props.existingLinkedTickets?.includes(t.id)
-  );
-  filterTickets();
+  try {
+    const allTickets = await ticketService.getTickets();
+    console.log(`Total tickets fetched: ${allTickets.length}`);
+    console.log(`Current ticket ID: ${props.currentTicketId}`);
+    console.log(`Existing linked tickets: ${JSON.stringify(props.existingLinkedTickets || [])}`);
+    
+    // Filter out the current ticket and any already linked tickets
+    tickets.value = allTickets.filter((t: Ticket) => {
+      // Skip the current ticket
+      if (t.id === props.currentTicketId) {
+        console.log(`Filtering out current ticket #${t.id}`);
+        return false;
+      }
+      
+      // Skip already linked tickets
+      if (props.existingLinkedTickets?.includes(t.id)) {
+        console.log(`Filtering out already linked ticket #${t.id}`);
+        return false;
+      }
+      
+      return true;
+    });
+    
+    console.log(`Filtered out current ticket #${props.currentTicketId} and ${props.existingLinkedTickets?.length || 0} linked tickets`);
+    console.log(`Displaying ${tickets.value.length} available tickets for linking`);
+    
+    filterTickets();
+  } catch (error) {
+    console.error('Error loading tickets:', error);
+  }
 };
 
 // Filter tickets based on search query
@@ -78,16 +98,12 @@ const viewTicket = (ticketId: number, event: Event) => {
 
 <template>
   <Modal :show="show" title="Link to Another Ticket" @close="emit('close')">
-    <div class="flex flex-col gap-2">
-      <p class="text-sm text-gray-400">
-        Select a ticket to create a link. Click the view button to open the ticket in a new tab.
-      </p>
-
+    <div class="flex flex-col gap-4">
       <!-- Search -->
       <div>
         <input type="text" 
           v-model="searchQuery"
-          class="w-full p-2 rounded-lg border-gray-600 bg-slate-800 text-white placeholder-gray-400 focus:border-blue-500 focus:ring-blue-500"
+          class="w-full p-2 rounded-lg border-gray-600 bg-slate-700 text-white placeholder-gray-400 focus:border-blue-500 focus:ring-blue-500"
           placeholder="Search tickets by ID or title..."
         >
       </div>

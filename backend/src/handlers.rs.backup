@@ -1,0 +1,2357 @@
+use actix_web::{web, HttpResponse, Responder, error};
+use diesel::prelude::*;
+use diesel::result::Error;
+use serde::{Serialize, Deserialize};
+use serde_json::json;
+use std::fs;
+use std::path::Path;
+use chrono::{Local, Utc};
+use uuid::Uuid;
+use actix_multipart::Multipart;
+use futures::{StreamExt, TryStreamExt};
+use std::io::Write;
+use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey, Algorithm};
+use bcrypt::{hash, verify, DEFAULT_COST};
+use actix_web_httpauth::extractors::bearer::BearerAuth;
+use std::time::{SystemTime, UNIX_EPOCH};
+use crate::models::{LoginRequest, Claims, LoginResponse, UserResponse, UserRole, NewUser, UserRegistration, UserUpdateForm, PasswordChangeRequest};
+
+use crate::db::DbConnection;
+use crate::models::{
+    ArticleContent, Attachment, Comment, CommentJson, CommentWithAttachments, CompleteTicket, 
+    Device, DeviceJson, DocumentationPage, DocumentationPageWithChildren, 
+    DocumentationStatus, MovePageRequest, NewArticleContent, NewAttachment, NewComment, NewDevice, 
+    NewDocumentationPage, NewProject, NewTicket, PageOrder, ProjectUpdate, 
+    ProjectWithTicketCount, ReorderPagesRequest, Ticket, TicketJson, TicketPriority, 
+    TicketStatus, TicketsJson, TicketUpdate, User, UserUpdate
+};
+use crate::repository;
+
+// JWT secret for token generation and validation
+const JWT_SECRET: &str = "your_jwt_secret_key"; // In production, this should be loaded from environment variables
+
+// Pagination query parameters
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    page: Option<i64>,
+    #[serde(rename = "pageSize")]
+    page_size: Option<i64>,
+    #[serde(rename = "sortField")]
+    sort_field: Option<String>,
+    #[serde(rename = "sortDirection")]
+    sort_direction: Option<String>,
+    search: Option<String>,
+    status: Option<String>,
+    priority: Option<String>,
+}
+
+// Paginated response
+#[derive(Serialize)]
+pub struct PaginatedResponse<T> {
+    data: Vec<T>,
+    total: i64,
+    page: i64,
+    #[serde(rename = "pageSize")]
+    page_size: i64,
+    #[serde(rename = "totalPages")]
+    total_pages: i64,
+}
+
+// Get all tickets
+pub async fn get_tickets(pool: web::Data<crate::db::Pool>) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_all_tickets(&mut conn) {
+        Ok(tickets) => HttpResponse::Ok().json(tickets),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to get tickets"),
+    }
+}
+
+// Get paginated tickets
+pub async fn get_paginated_tickets(
+    pool: web::Data<crate::db::Pool>,
+    query: web::Query<PaginationParams>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Extract and validate pagination parameters
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(10).clamp(1, 100);
+
+    match repository::get_paginated_tickets(
+        &mut conn,
+        page,
+        page_size,
+        query.sort_field.clone(),
+        query.sort_direction.clone(),
+        query.search.clone(),
+        query.status.clone(),
+        query.priority.clone(),
+    ) {
+        Ok((tickets, total)) => {
+            // Calculate total pages
+            let total_pages = (total as f64 / page_size as f64).ceil() as i64;
+            
+            // Create paginated response
+            let response = PaginatedResponse {
+                data: tickets,
+                total,
+                page,
+                page_size,
+                total_pages,
+            };
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(e) => {
+            eprintln!("Error fetching paginated tickets: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get paginated tickets")
+        },
+    }
+}
+
+// Get a ticket by ID with all related data
+pub async fn get_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_complete_ticket(&mut conn, ticket_id) {
+        Ok(ticket) => HttpResponse::Ok().json(ticket),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Ticket not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to get ticket"),
+    }
+}
+
+// Create a new ticket
+pub async fn create_ticket(
+    pool: web::Data<crate::db::Pool>,
+    ticket: web::Json<NewTicket>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::create_ticket(&mut conn, ticket.into_inner()) {
+        Ok(ticket) => HttpResponse::Created().json(ticket),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to create ticket"),
+    }
+}
+
+// Update a ticket
+pub async fn update_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    ticket: web::Json<NewTicket>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::update_ticket(&mut conn, ticket_id, ticket.into_inner()) {
+        Ok(ticket) => HttpResponse::Ok().json(ticket),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Ticket not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to update ticket"),
+    }
+}
+
+// Delete a ticket
+pub async fn delete_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::delete_ticket(&mut conn, ticket_id) {
+        Ok(0) => HttpResponse::NotFound().json("Ticket not found"),
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to delete ticket"),
+    }
+}
+
+// Import tickets from JSON file
+pub async fn import_tickets_from_json(
+    pool: web::Data<crate::db::Pool>,
+    json_path: web::Path<String>,
+) -> impl Responder {
+    let json_path_str = json_path.into_inner();
+    let path = Path::new(&json_path_str);
+    
+    let json_content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .json(json!({ "error": format!("Failed to read file: {}", e) }));
+        }
+    };
+
+    // Parse the JSON
+    let tickets_json: TicketsJson = match serde_json::from_str(&json_content) {
+        Ok(tickets) => tickets,
+        Err(_) => return HttpResponse::BadRequest().json("Failed to parse JSON"),
+    };
+
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Import each ticket
+    let mut imported_count = 0;
+    let mut failed_count = 0;
+
+    for ticket_json in tickets_json.tickets {
+        match repository::import_ticket_from_json(&mut conn, &ticket_json) {
+            Ok(_) => imported_count += 1,
+            Err(_) => failed_count += 1,
+        }
+    }
+
+    HttpResponse::Ok().json(json!({
+        "imported": imported_count,
+        "failed": failed_count
+    }))
+}
+
+// Import tickets from JSON string
+pub async fn import_tickets_from_json_string(
+    pool: web::Data<crate::db::Pool>,
+    tickets_json: web::Json<TicketsJson>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Import each ticket
+    let mut imported_count = 0;
+    let mut failed_count = 0;
+
+    for ticket_json in tickets_json.tickets.iter() {
+        match repository::import_ticket_from_json(&mut conn, ticket_json) {
+            Ok(_) => imported_count += 1,
+            Err(_) => failed_count += 1,
+        }
+    }
+
+    HttpResponse::Ok().json(json!({
+        "imported": imported_count,
+        "failed": failed_count
+    }))
+}
+
+// Create an empty ticket with default values
+pub async fn create_empty_ticket(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Create a new ticket with default values
+    let now = Local::now().naive_local();
+    let empty_ticket = NewTicket {
+        title: "New Ticket".to_string(),
+        status: TicketStatus::Open,
+        priority: TicketPriority::Medium,
+        created: now,
+        modified: now,
+        assignee: None,
+        requester: "".to_string(),
+        closed_at: None,
+    };
+
+    // Create the ticket and then add empty article content
+    match repository::create_ticket(&mut conn, empty_ticket) {
+        Ok(ticket) => {
+            // Create empty article content for the ticket
+            let new_article_content = crate::models::NewArticleContent {
+                content: "".to_string(),
+                ticket_id: ticket.id,
+            };
+            
+            match repository::create_article_content(&mut conn, new_article_content) {
+                Ok(_) => {
+                    // Return the complete ticket with article content
+                    match repository::get_complete_ticket(&mut conn, ticket.id) {
+                        Ok(complete_ticket) => HttpResponse::Created().json(complete_ticket),
+                        Err(_) => HttpResponse::Created().json(ticket), // Fallback to just the ticket if getting complete ticket fails
+                    }
+                },
+                Err(_) => {
+                    // If article content creation fails, still return the ticket
+                    HttpResponse::Created().json(ticket)
+                }
+            }
+        },
+        Err(e) => {
+            println!("Error creating empty ticket: {:?}", e);
+            HttpResponse::InternalServerError().json(format!("Failed to create empty ticket: {}", e))
+        }
+    }
+}
+
+// Add a new handler for partial ticket updates
+pub async fn update_ticket_partial(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    ticket_update: web::Json<TicketUpdate>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    println!("Received update request for ticket {}: {:?}", ticket_id, ticket_update);
+    
+    // Ensure modified date is set if not provided
+    let mut update_data = ticket_update.into_inner();
+    if update_data.modified.is_none() {
+        let now = Local::now().naive_local();
+        println!("No modified date provided, using current time: {}", now);
+        update_data.modified = Some(now);
+    } else {
+        println!("Using provided modified date: {:?}", update_data.modified);
+    }
+
+    // If status is being changed to closed, set closed_at timestamp
+    if let Some(status) = &update_data.status {
+        if *status == TicketStatus::Closed {
+            // Check if we're changing to closed status
+            let current_ticket = repository::get_ticket_by_id(&mut conn, ticket_id);
+            if let Ok(ticket) = current_ticket {
+                if ticket.status != TicketStatus::Closed {
+                    // Only set closed_at if it's a transition to closed
+                    let now = Local::now().naive_local();
+                    println!("Setting closed_at to current time: {}", now);
+                    update_data.closed_at = Some(Some(now));
+                }
+            }
+        } else if *status != TicketStatus::Closed {
+            // If changing from closed to another status, clear the closed_at timestamp
+            update_data.closed_at = Some(None);
+        }
+    }
+
+    match repository::update_ticket_partial(&mut conn, ticket_id, update_data) {
+        Ok(ticket) => {
+            println!("Successfully updated ticket {}: {:?}", ticket_id, ticket);
+            
+            // Return the complete ticket with all related data
+            match repository::get_complete_ticket(&mut conn, ticket_id) {
+                Ok(complete_ticket) => HttpResponse::Ok().json(complete_ticket),
+                Err(_) => HttpResponse::Ok().json(ticket), // Fallback to just the ticket
+            }
+        },
+        Err(e) => {
+            println!("Error updating ticket {}: {:?}", ticket_id, e);
+            HttpResponse::InternalServerError().json(format!("Error updating ticket: {}", e))
+        }
+    }
+}
+
+// Update article content
+pub async fn update_article_content(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    content: web::Json<String>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Create a NewArticleContent struct from the content string
+    let new_article_content = crate::models::NewArticleContent {
+        content: content.into_inner(),
+        ticket_id: ticket_id,
+    };
+
+    // Update the article content
+    match repository::update_article_content(&mut conn, ticket_id, new_article_content) {
+        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Article content not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to update article content"),
+    }
+}
+
+// Update article content in chunks for large content
+pub async fn update_article_content_chunk(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    chunk_data: web::Json<ArticleContentChunk>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Get information about the chunk
+    let chunk = chunk_data.chunk.clone();
+    let chunk_index = chunk_data.chunkIndex;
+    let total_chunks = chunk_data.totalChunks;
+    let is_last_chunk = chunk_data.isLastChunk;
+
+    println!(
+        "Received chunk {}/{} for ticket {}, size: {} bytes, is last: {}",
+        chunk_index + 1,
+        total_chunks,
+        ticket_id,
+        chunk.len(),
+        is_last_chunk
+    );
+
+    // Use a static cache to store chunks between requests
+    // We'll use ticket_id as the key to avoid conflicts between tickets
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    use lazy_static::lazy_static;
+
+    // This is a simple in-memory cache for chunks. In a production environment,
+    // you might want to use Redis or another distributed cache.
+    lazy_static! {
+        static ref CHUNK_CACHE: Mutex<HashMap<i32, Vec<String>>> = Mutex::new(HashMap::new());
+    }
+
+    // Lock the cache to store the chunk
+    let mut cache = match CHUNK_CACHE.lock() {
+        Ok(cache) => cache,
+        Err(_) => return HttpResponse::InternalServerError().json("Failed to acquire cache lock"),
+    };
+
+    // If this is the first chunk, initialize the vector
+    if chunk_index == 0 {
+        cache.insert(ticket_id, Vec::with_capacity(total_chunks));
+    }
+
+    // Get the chunks vector for this ticket
+    let chunks = match cache.get_mut(&ticket_id) {
+        Some(chunks) => chunks,
+        None => return HttpResponse::BadRequest().json("Invalid chunk sequence. Start with index 0."),
+    };
+
+    // If the index is out of sequence, return an error
+    if chunk_index != chunks.len() as i32 {
+        return HttpResponse::BadRequest().json(format!(
+            "Invalid chunk sequence. Expected index {}, got {}",
+            chunks.len(), chunk_index
+        ));
+    }
+
+    // Add the chunk
+    chunks.push(chunk);
+
+    // If this is the last chunk, combine all chunks and update the article content
+    if is_last_chunk || chunks.len() == total_chunks {
+        // Combine all chunks
+        let combined_content = chunks.join("");
+        
+        // Remove the chunks from the cache
+        cache.remove(&ticket_id);
+        
+        // Drop the cache lock before the DB operation
+        drop(cache);
+
+        // Create a NewArticleContent struct from the combined content
+        let new_article_content = crate::models::NewArticleContent {
+            content: combined_content,
+            ticket_id: ticket_id,
+        };
+
+        // Update the article content
+        match repository::update_article_content(&mut conn, ticket_id, new_article_content) {
+            Ok(_) => {
+                println!("Article content updated for ticket {}", ticket_id);
+                HttpResponse::Ok().json(json!({"success": true}))
+            },
+            Err(Error::NotFound) => HttpResponse::NotFound().json("Article content not found"),
+            Err(_) => HttpResponse::InternalServerError().json("Failed to update article content"),
+        }
+    } else {
+        // If not the last chunk, return success and wait for more chunks
+        HttpResponse::Ok().json(json!({
+            "success": true, 
+            "message": format!("Chunk {}/{} received", chunk_index + 1, total_chunks)
+        }))
+    }
+}
+
+// Documentation Page Handlers
+pub async fn get_documentation_pages(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_documentation_pages(&mut conn) {
+        Ok(pages) => HttpResponse::Ok().json(pages),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to fetch pages"),
+    }
+}
+
+pub async fn get_documentation_page(
+    id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let page_id = id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_documentation_page(page_id, &mut conn) {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(_) => HttpResponse::NotFound().json("Page not found"),
+    }
+}
+
+pub async fn get_documentation_page_by_slug(
+    slug: web::Path<String>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let page_slug = slug.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_documentation_page_by_slug(&page_slug, &mut conn) {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(_) => HttpResponse::NotFound().json("Page not found"),
+    }
+}
+
+pub async fn create_documentation_page(
+    page: web::Json<NewDocumentationPage>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut new_page = page.into_inner();
+    new_page.created_at = Utc::now().naive_utc();
+    new_page.updated_at = Utc::now().naive_utc();
+    
+    // Set a default display_order if not provided
+    if new_page.display_order.is_none() {
+        new_page.display_order = Some(0);
+    }
+
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::create_documentation_page(new_page, &mut conn) {
+        Ok(created_page) => HttpResponse::Created().json(created_page),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to create page"),
+    }
+}
+
+pub async fn update_documentation_page(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    page: web::Json<NewDocumentationPage>,
+) -> impl Responder {
+    let page_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Check if the page exists and get its current state
+    match repository::get_documentation_page(page_id, &mut conn) {
+        Ok(mut existing_page) => {
+            // Update the fields from the request
+            let new_page = page.into_inner();
+            existing_page.slug = new_page.slug;
+            existing_page.title = new_page.title;
+            existing_page.description = new_page.description;
+            existing_page.content = new_page.content;
+            existing_page.author = new_page.author;
+            existing_page.status = new_page.status;
+            existing_page.icon = new_page.icon;
+            existing_page.updated_at = Utc::now().naive_utc();
+            existing_page.parent_id = new_page.parent_id;
+            existing_page.ticket_id = new_page.ticket_id;
+
+            // Update the page
+            match repository::update_documentation_page(&mut conn, &existing_page) {
+                Ok(updated_page) => {
+                    println!("Documentation page updated: {}", updated_page.id);
+                    HttpResponse::Ok().json(updated_page)
+                },
+                Err(e) => {
+                    println!("Error updating documentation page: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to update documentation page")
+                },
+            }
+        },
+        Err(_) => HttpResponse::NotFound().json("Documentation page not found"),
+    }
+}
+
+pub async fn delete_documentation_page(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let page_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Check if the page exists
+    match repository::get_documentation_page(page_id, &mut conn) {
+        Ok(_) => {
+            // Delete the page
+            match repository::delete_documentation_page(page_id, &mut conn) {
+                Ok(_) => {
+                    println!("Documentation page deleted: {}", page_id);
+                    HttpResponse::NoContent().finish()
+                },
+                Err(e) => {
+                    println!("Error deleting documentation page: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to delete documentation page")
+                },
+            }
+        },
+        Err(_) => HttpResponse::NotFound().json("Documentation page not found"),
+    }
+}
+
+// New handlers for wiki-like documentation structure
+pub async fn get_top_level_documentation_pages(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_top_level_pages(&mut conn) {
+        Ok(pages) => HttpResponse::Ok().json(pages),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to fetch top-level pages"),
+    }
+}
+
+pub async fn get_documentation_pages_by_parent_id(
+    parent_id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let parent = parent_id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_pages_by_parent_id(parent, &mut conn) {
+        Ok(pages) => HttpResponse::Ok().json(pages),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to fetch pages by parent ID"),
+    }
+}
+
+pub async fn get_page_with_children_by_parent_id(
+    id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let page_id = id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // First get the page
+    let page = match repository::get_documentation_page(page_id, &mut conn) {
+        Ok(page) => page,
+        Err(_) => return HttpResponse::NotFound().json("Page not found"),
+    };
+
+    // Then get its children
+    let children = match repository::get_pages_by_parent_id(page_id, &mut conn) {
+        Ok(children) => children,
+        Err(_) => return HttpResponse::InternalServerError().json("Failed to fetch children"),
+    };
+
+    // Combine into a single response
+    let page_with_children = DocumentationPageWithChildren {
+        page,
+        children,
+    };
+
+    HttpResponse::Ok().json(page_with_children)
+}
+
+// New endpoint to get a page with ordered children
+pub async fn get_page_with_ordered_children(
+    id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let page_id = id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_page_with_ordered_children(&mut conn, page_id) {
+        Ok(page_with_children) => HttpResponse::Ok().json(page_with_children),
+        Err(_) => HttpResponse::NotFound().json("Page not found or error fetching children"),
+    }
+}
+
+// Get ordered documentation pages by parent ID
+pub async fn get_ordered_pages_by_parent_id(
+    parent_id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let parent = parent_id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_ordered_pages_by_parent_id(&mut conn, parent) {
+        Ok(pages) => HttpResponse::Ok().json(pages),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to fetch ordered pages by parent ID"),
+    }
+}
+
+// Reorder pages under a parent
+pub async fn reorder_pages(
+    pool: web::Data<crate::db::Pool>,
+    request: web::Json<ReorderPagesRequest>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::reorder_pages(&mut conn, request.parent_id, &request.page_orders) {
+        Ok(updated_pages) => HttpResponse::Ok().json(updated_pages),
+        Err(e) => {
+            eprintln!("Error reordering pages: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to reorder pages")
+        }
+    }
+}
+
+// Move a page to a new parent
+pub async fn move_page_to_parent(
+    pool: web::Data<crate::db::Pool>,
+    request: web::Json<MovePageRequest>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::move_page_to_parent(&mut conn, request.page_id, request.new_parent_id, request.display_order) {
+        Ok(page) => HttpResponse::Ok().json(page),
+        Err(e) => {
+            eprintln!("Error moving page: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to move page to new parent")
+        }
+    }
+}
+
+// Get top-level pages (with ordering)
+pub async fn get_ordered_top_level_pages(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Get all top-level pages with appropriate ordering
+    match repository::get_ordered_top_level_pages(&mut conn) {
+        Ok(pages) => HttpResponse::Ok().json(pages),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to fetch top-level pages"),
+    }
+}
+
+pub async fn get_documentation_page_by_slug_with_children(
+    slug: web::Path<String>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let page_slug = slug.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // First get the page by slug
+    let page = match repository::get_documentation_page_by_slug(&page_slug, &mut conn) {
+        Ok(page) => page,
+        Err(_) => return HttpResponse::NotFound().json("Page not found"),
+    };
+
+    // Then get its children
+    let children = match repository::get_pages_by_parent_id(page.id, &mut conn) {
+        Ok(children) => children,
+        Err(_) => return HttpResponse::InternalServerError().json("Failed to fetch children"),
+    };
+
+    // Combine into a single response
+    let page_with_children = DocumentationPageWithChildren {
+        page,
+        children,
+    };
+
+    HttpResponse::Ok().json(page_with_children)
+}
+
+// User handlers
+pub async fn get_users(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    println!("GET /api/users - Handler called");
+    
+    let mut conn = match pool.get() {
+        Ok(conn) => {
+            println!("Database connection obtained successfully");
+            conn
+        },
+        Err(e) => {
+            println!("Database connection error: {:?}", e);
+            return HttpResponse::InternalServerError().json("Database connection error");
+        },
+    };
+
+    println!("Calling repository::get_users");
+    match repository::get_users(&mut conn) {
+        Ok(users) => {
+            println!("Successfully retrieved {} users", users.len());
+            // Convert to UserResponse to hide sensitive information
+            let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
+            println!("Converted to UserResponse, returning JSON");
+            HttpResponse::Ok().json(user_responses)
+        },
+        Err(e) => {
+            println!("Error fetching users: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to fetch users")
+        },
+    }
+}
+
+pub async fn get_user_by_id(
+    id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let user_id = id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_user_by_id(user_id, &mut conn) {
+        Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+        Err(_) => HttpResponse::NotFound().json("User not found"),
+    }
+}
+
+pub async fn get_user_by_uuid(
+    uuid: web::Path<String>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let user_uuid = uuid.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+        Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+        Err(_) => HttpResponse::NotFound().json("User not found"),
+    }
+}
+
+pub async fn create_user(
+    db_pool: web::Data<crate::db::Pool>,
+    user_data: web::Json<NewUser>,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    println!("Checking if user with email {} already exists", user_data.email);
+    if let Ok(_) = repository::get_user_by_email(&user_data.email, &mut conn) {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "User with this email already exists"
+        }));
+    }
+
+    // Generate UUID if not provided
+    let uuid = if user_data.uuid.is_empty() {
+        Uuid::new_v4().to_string()
+    } else {
+        user_data.uuid.clone()
+    };
+
+    // Create new user
+    let new_user = NewUser {
+        uuid,
+        name: user_data.name.clone(),
+        email: user_data.email.clone(),
+        role: user_data.role.clone(),
+        password_hash: hash("changeme", DEFAULT_COST).unwrap().into_bytes(), // Default password
+    };
+
+    println!("Creating user with name {}", new_user.name);
+    match repository::create_user(new_user, &mut conn) {
+        Ok(user) => {
+            println!("User created successfully");
+            HttpResponse::Created().json(UserResponse::from(user))
+        },
+        Err(e) => {
+            println!("Error creating user: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error creating user"
+            }))
+        }
+    }
+}
+
+pub async fn update_user(
+    db_pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    user_data: web::Json<UserUpdateForm>,
+) -> impl Responder {
+    let user_id = path.into_inner();
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    if let Err(_) = repository::get_user_by_id(user_id, &mut conn) {
+        return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        }));
+    }
+
+    // Check if email is being updated and if it's already in use
+    if let Some(email) = &user_data.email {
+        if let Ok(existing_user) = repository::get_user_by_email(email, &mut conn) {
+            if existing_user.id != user_id {
+                return HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "message": "Email already in use by another user"
+                }));
+            }
+        }
+    }
+
+    // Create password hash if password is provided
+    let password_hash = if let Some(password) = &user_data.password {
+        match hash(password, DEFAULT_COST) {
+            Ok(hash) => Some(hash.into_bytes()),
+            Err(_) => return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error hashing password"
+            })),
+        }
+    } else {
+        None
+    };
+
+    // Update user
+    let user_update = UserUpdate {
+        name: user_data.name.clone(),
+        email: user_data.email.clone(),
+        role: user_data.role.clone(),
+        password_hash,
+    };
+
+    match repository::update_user(user_id, user_update, &mut conn) {
+        Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+        Err(_) => HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error updating user"
+        })),
+    }
+}
+
+pub async fn delete_user(
+    id: web::Path<i32>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let user_id = id.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::delete_user(user_id, &mut conn) {
+        Ok(count) if count > 0 => HttpResponse::NoContent().finish(),
+        Ok(_) => HttpResponse::NotFound().json("User not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to delete user"),
+    }
+}
+
+// Project handlers
+pub async fn get_all_projects(
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::get_projects_with_ticket_count(&mut conn) {
+        Ok(projects) => HttpResponse::Ok().json(projects),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to get projects"),
+    }
+}
+
+pub async fn get_project(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let project_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::get_project_with_ticket_count(&mut conn, project_id) {
+        Ok(project) => HttpResponse::Ok().json(project),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Project not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to get project"),
+    }
+}
+
+pub async fn create_project(
+    pool: web::Data<crate::db::Pool>,
+    project: web::Json<NewProject>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::create_project(&mut conn, project.into_inner()) {
+        Ok(project) => HttpResponse::Created().json(project),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to create project"),
+    }
+}
+
+pub async fn update_project(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    project_update: web::Json<ProjectUpdate>,
+) -> impl Responder {
+    let project_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::update_project(&mut conn, project_id, project_update.into_inner()) {
+        Ok(project) => HttpResponse::Ok().json(project),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Project not found"),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to update project"),
+    }
+}
+
+pub async fn delete_project(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let project_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::delete_project(&mut conn, project_id) {
+        Ok(0) => HttpResponse::NotFound().json("Project not found"),
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to delete project"),
+    }
+}
+
+pub async fn get_project_tickets(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let project_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::get_project_tickets(&mut conn, project_id) {
+        Ok(tickets) => HttpResponse::Ok().json(tickets),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to get project tickets"),
+    }
+}
+
+pub async fn add_ticket_to_project(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (project_id, ticket_id) = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::add_ticket_to_project(&mut conn, project_id, ticket_id) {
+        Ok(association) => HttpResponse::Created().json(association),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to add ticket to project"),
+    }
+}
+
+pub async fn remove_ticket_from_project(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (project_id, ticket_id) = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::remove_ticket_from_project(&mut conn, project_id, ticket_id) {
+        Ok(0) => HttpResponse::NotFound().json("Association not found"),
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(_) => HttpResponse::InternalServerError().json("Failed to remove ticket from project"),
+    }
+}
+
+// Link two tickets
+pub async fn link_tickets(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (ticket1_id, ticket2_id) = path.into_inner();
+    
+    println!("API request to link tickets: {} and {}", ticket1_id, ticket2_id);
+    
+    // Prevent linking a ticket to itself
+    if ticket1_id == ticket2_id {
+        println!("Rejected attempt to link ticket {} to itself", ticket1_id);
+        return HttpResponse::BadRequest().json("Cannot link a ticket to itself");
+    }
+    
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::link_tickets(&mut conn, ticket1_id, ticket2_id) {
+        Ok(_) => {
+            println!("Successfully linked tickets {} and {}", ticket1_id, ticket2_id);
+            HttpResponse::Ok().json("Tickets linked successfully")
+        },
+        Err(Error::NotFound) => {
+            println!("Failed to link tickets: one or both tickets not found");
+            HttpResponse::NotFound().json("One or both tickets not found")
+        },
+        Err(e) => {
+            println!("Failed to link tickets: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to link tickets")
+        },
+    }
+}
+
+// Unlink two tickets
+pub async fn unlink_tickets(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (ticket1_id, ticket2_id) = path.into_inner();
+    
+    println!("API request to unlink tickets: {} and {}", ticket1_id, ticket2_id);
+    
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::unlink_tickets(&mut conn, ticket1_id, ticket2_id) {
+        Ok(_) => {
+            println!("Successfully unlinked tickets {} and {}", ticket1_id, ticket2_id);
+            HttpResponse::Ok().json("Tickets unlinked successfully")
+        },
+        Err(e) => {
+            println!("Failed to unlink tickets: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to unlink tickets")
+        },
+    }
+}
+
+// Add a comment to a ticket
+pub async fn add_comment_to_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    comment: web::Json<crate::models::NewCommentWithAttachments>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // Check if the ticket exists
+    match repository::get_ticket_by_id(&mut conn, ticket_id) {
+        Ok(_) => {
+            // Create the comment
+            let new_comment = crate::models::NewComment {
+                content: comment.content.clone(),
+                created_at: Some(chrono::Utc::now().naive_utc()),
+                user_uuid: comment.user_uuid.clone(),
+                ticket_id,
+            };
+            
+            // Save the comment to the database
+            match repository::create_comment(&mut conn, new_comment) {
+                Ok(created_comment) => {
+                    // Create ticket directory if it doesn't exist
+                    let ticket_dir = format!("uploads/tickets/{}", ticket_id);
+                    if !Path::new(&ticket_dir).exists() {
+                        println!("Creating ticket directory: {}", ticket_dir);
+                        if let Err(e) = fs::create_dir_all(&ticket_dir) {
+                            println!("Error creating ticket directory: {:?}", e);
+                            // Continue anyway, we'll use the temp directory as fallback
+                        }
+                    }
+                    
+                    // Associate uploaded attachments with the comment
+                    let mut attachment_list = Vec::new();
+                    
+                    // For each attachment in the request
+                    for attachment_data in &comment.attachments {
+                        // Extract the ID from the URL if it exists
+                        // URLs from upload_files will be in the format "/uploads/temp/{uuid}_{filename}"
+                        
+                        println!("Looking for existing attachment with URL: {}", attachment_data.url);
+                        
+                        // Use diesel to find an existing attachment with this URL and NULL comment_id
+                        use diesel::prelude::*;
+                        use crate::schema::attachments::dsl;
+                        
+                        let existing_attachment_result = dsl::attachments
+                            .filter(dsl::url.eq(&attachment_data.url))
+                            .filter(dsl::comment_id.is_null())
+                            .first::<crate::models::Attachment>(&mut conn);
+                            
+                        match existing_attachment_result {
+                            Ok(mut existing) => {
+                                println!("Found existing attachment id={} with URL: {}", existing.id, existing.url);
+                                
+                                // Move the file from temp to ticket directory
+                                let old_path = format!(".{}", existing.url);
+                                
+                                // Extract the filename from the URL
+                                let filename = match Path::new(&old_path).file_name() {
+                                    Some(name) => name.to_string_lossy().to_string(),
+                                    None => {
+                                        println!("Error extracting filename from path: {}", old_path);
+                                        continue;
+                                    }
+                                };
+                                
+                                let new_path = format!("{}/{}", ticket_dir, filename);
+                                let new_url = format!("/uploads/tickets/{}/{}", ticket_id, filename);
+                                
+                                println!("Moving file from {} to {}", old_path, new_path);
+                                
+                                // Create the directory if it doesn't exist
+                                if let Some(parent) = Path::new(&new_path).parent() {
+                                    if !parent.exists() {
+                                        if let Err(e) = fs::create_dir_all(parent) {
+                                            println!("Error creating directory: {:?}", e);
+                                            // Continue with old path
+                                        }
+                                    }
+                                }
+                                
+                                // Try to move the file
+                                let move_result = fs::rename(&old_path, &new_path);
+                                
+                                // Update the URL in the database
+                                let updated_url = match move_result {
+                                    Ok(_) => {
+                                        println!("Successfully moved file to ticket directory");
+                                        new_url
+                                    },
+                                    Err(e) => {
+                                        println!("Error moving file: {:?}, keeping original location", e);
+                                        existing.url.clone()
+                                    }
+                                };
+                                
+                                // Update the existing attachment with the comment_id and possibly new URL
+                                use diesel::update;
+                                let updated = update(dsl::attachments.find(existing.id))
+                                    .set((
+                                        dsl::comment_id.eq(Some(created_comment.id)),
+                                        dsl::url.eq(&updated_url)
+                                    ))
+                                    .execute(&mut conn);
+                                    
+                                match updated {
+                                    Ok(_) => {
+                                        // Update the local copy with the new comment_id and URL
+                                        existing.comment_id = Some(created_comment.id);
+                                        existing.url = updated_url;
+                                        
+                                        // Print before pushing to the vector
+                                        println!("Updated attachment id={} with comment_id={} and URL={}", 
+                                            existing.id, created_comment.id, existing.url);
+                                        
+                                        // Now push to the vector
+                                        attachment_list.push(existing);
+                                    },
+                                    Err(e) => {
+                                        println!("Error updating attachment: {:?}", e);
+                                        // If we can't update, create a new one as fallback
+                                        let new_attachment = crate::models::NewAttachment {
+                                            url: attachment_data.url.clone(),
+                                            name: attachment_data.name.clone(),
+                                            comment_id: Some(created_comment.id),
+                                        };
+                                        
+                                        match repository::create_attachment(&mut conn, new_attachment) {
+                                            Ok(attachment) => {
+                                                attachment_list.push(attachment);
+                                            },
+                                            Err(e) => {
+                                                println!("Error creating attachment: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            Err(diesel::result::Error::NotFound) => {
+                                // No existing attachment found, create a new one
+                                println!("No existing attachment found with URL: {}, creating new", attachment_data.url);
+                                let new_attachment = crate::models::NewAttachment {
+                                    url: attachment_data.url.clone(),
+                                    name: attachment_data.name.clone(),
+                                    comment_id: Some(created_comment.id),
+                                };
+                                
+                                match repository::create_attachment(&mut conn, new_attachment) {
+                                    Ok(attachment) => {
+                                        attachment_list.push(attachment);
+                                    },
+                                    Err(e) => {
+                                        println!("Error creating attachment: {:?}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                println!("Error finding existing attachment: {:?}", e);
+                                // Create a new attachment as fallback
+                                let new_attachment = crate::models::NewAttachment {
+                                    url: attachment_data.url.clone(),
+                                    name: attachment_data.name.clone(),
+                                    comment_id: Some(created_comment.id),
+                                };
+                                
+                                match repository::create_attachment(&mut conn, new_attachment) {
+                                    Ok(attachment) => {
+                                        attachment_list.push(attachment);
+                                    },
+                                    Err(e) => {
+                                        println!("Error creating attachment: {:?}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Fetch the user info if available
+                    let user_info = match repository::get_user_by_uuid(&created_comment.user_uuid, &mut conn) {
+                        Ok(user) => Some(crate::models::UserInfo::from(user)),
+                        Err(_) => None,
+                    };
+                    
+                    // Create a CommentWithAttachments response
+                    let comment_with_attachments = crate::models::CommentWithAttachments {
+                        comment: created_comment,
+                        attachments: attachment_list,
+                        user: user_info,
+                    };
+                    
+                    HttpResponse::Created().json(comment_with_attachments)
+                },
+                Err(e) => {
+                    println!("Error creating comment: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to create comment")
+                }
+            }
+        },
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Ticket not found"),
+        Err(e) => {
+            println!("Error checking ticket: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to check ticket")
+        }
+    }
+}
+
+// Add an attachment to a comment
+pub async fn add_attachment_to_comment(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    attachment: web::Json<crate::models::NewAttachment>,
+) -> impl Responder {
+    let comment_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // Check if the comment exists
+    match repository::get_comment_by_id(&mut conn, comment_id) {
+        Ok(_) => {
+            // Create the attachment
+            let mut new_attachment = attachment.into_inner();
+            new_attachment.comment_id = Some(comment_id);
+            
+            println!("Adding attachment to comment {}: {:?}", comment_id, new_attachment);
+            
+            match repository::create_attachment(&mut conn, new_attachment) {
+                Ok(created_attachment) => HttpResponse::Created().json(created_attachment),
+                Err(e) => {
+                    println!("Error creating attachment: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to create attachment")
+                }
+            }
+        },
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Comment not found"),
+        Err(e) => {
+            println!("Error checking comment: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to check comment")
+        }
+    }
+}
+
+// Get all comments for a ticket
+pub async fn get_comments_by_ticket_id(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // Get comments with attachments
+    match repository::get_comments_with_attachments_by_ticket_id(&mut conn, ticket_id) {
+        Ok(comments) => HttpResponse::Ok().json(comments),
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Ticket not found"),
+        Err(e) => {
+            println!("Error getting comments: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get comments")
+        }
+    }
+}
+
+// Delete a comment
+pub async fn delete_comment(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let comment_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // First, get all attachments for this comment so we can delete the files
+    match repository::get_attachments_by_comment_id(&mut conn, comment_id) {
+        Ok(attachments) => {
+            // Try to delete each attachment file
+            for attachment in &attachments {
+                let file_path = format!(".{}", attachment.url);
+                println!("Attempting to delete attachment file: {}", file_path);
+                
+                if let Err(e) = fs::remove_file(&file_path) {
+                    println!("Warning: Failed to delete attachment file {}: {:?}", file_path, e);
+                    // Continue with other files even if one fails
+                }
+            }
+            
+            // Now delete the comment (which will also delete the attachment records from the database)
+            match repository::delete_comment(&mut conn, comment_id) {
+                Ok(0) => HttpResponse::NotFound().json("Comment not found"),
+                Ok(_) => HttpResponse::Ok().json("Comment and attachments deleted"),
+                Err(e) => {
+                    println!("Error deleting comment: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to delete comment")
+                }
+            }
+        },
+        Err(e) => {
+            println!("Error fetching attachments: {:?}", e);
+            
+            // Still try to delete the comment even if we couldn't get the attachments
+            match repository::delete_comment(&mut conn, comment_id) {
+                Ok(0) => HttpResponse::NotFound().json("Comment not found"),
+                Ok(_) => HttpResponse::Ok().json("Comment deleted but some attachments may remain"),
+                Err(e) => {
+                    println!("Error deleting comment: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to delete comment")
+                }
+            }
+        }
+    }
+}
+
+// Delete an attachment
+pub async fn delete_attachment(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let attachment_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // First, get the attachment to know its URL
+    match repository::get_attachment_by_id(&mut conn, attachment_id) {
+        Ok(attachment) => {
+            // Extract the filename from the URL
+            // URL format could be either:
+            // - "/uploads/temp/{uuid}_{filename}" (for unassociated files)
+            // - "/uploads/tickets/{ticket_id}/{uuid}_{filename}" (for files associated with tickets)
+            let file_path = format!(".{}", attachment.url);
+            
+            println!("Attempting to delete file: {}", file_path);
+            
+            // Delete the attachment from the database
+            match repository::delete_attachment(&mut conn, attachment_id) {
+                Ok(0) => HttpResponse::NotFound().json("Attachment not found"),
+                Ok(_) => {
+                    // Now try to delete the physical file
+                    match fs::remove_file(file_path) {
+                        Ok(_) => {
+                            println!("Successfully deleted attachment file");
+                            HttpResponse::Ok().json("Attachment deleted")
+                        },
+                        Err(e) => {
+                            println!("Warning: Deleted attachment from database but failed to delete file: {:?}", e);
+                            // Still return success since the database record was deleted
+                            HttpResponse::Ok().json("Attachment deleted from database, but file removal failed")
+                        }
+                    }
+                },
+                Err(e) => {
+                    println!("Error deleting attachment: {:?}", e);
+                    HttpResponse::InternalServerError().json("Failed to delete attachment")
+                }
+            }
+        },
+        Err(Error::NotFound) => HttpResponse::NotFound().json("Attachment not found"),
+        Err(e) => {
+            println!("Error getting attachment: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get attachment")
+        }
+    }
+}
+
+// Get documentation pages for a ticket
+pub async fn get_documentation_pages_by_ticket_id(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    
+    // Get a connection from the pool
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    match repository::get_documentation_pages_by_ticket_id(&mut conn, ticket_id) {
+        Ok(pages) => {
+            println!("Found {} documentation pages for ticket {}", pages.len(), ticket_id);
+            HttpResponse::Ok().json(pages)
+        },
+        Err(e) => {
+            println!("Error fetching documentation pages for ticket {}: {:?}", ticket_id, e);
+            HttpResponse::InternalServerError().json("Failed to fetch documentation pages")
+        }
+    }
+}
+
+// Create a documentation page for a ticket
+pub async fn create_documentation_page_for_ticket(
+    pool: web::Data<crate::db::Pool>,
+    ticket_id: web::Path<i32>,
+    new_page: web::Json<NewDocumentationPage>,
+) -> impl Responder {
+    let mut conn = pool.get().expect("couldn't get db connection from pool");
+
+    // Set the ticket_id from the path parameter
+    let mut page = new_page.into_inner();
+    page.ticket_id = Some(*ticket_id);
+    
+    // Set a default display_order if not provided
+    if page.display_order.is_none() {
+        page.display_order = Some(0);
+    }
+
+    match repository::create_documentation_page(page, &mut conn) {
+        Ok(page) => HttpResponse::Created().json(page),
+        Err(e) => {
+            eprintln!("Failed to create documentation page: {}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "error": "Failed to create documentation page"
+            }))
+        }
+    }
+}
+
+// Create a documentation page from a ticket's article content
+pub async fn create_documentation_page_from_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    page_data: web::Json<CreateDocPageFromTicket>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Get the ticket's article content
+    let article_content = match repository::get_article_content_by_ticket_id(&mut conn, ticket_id) {
+        Ok(content) => content,
+        Err(_) => return HttpResponse::NotFound().json("Article content not found for ticket"),
+    };
+
+    // Generate a slug from the title
+    let slug = page_data.title.to_lowercase().replace(" ", "-");
+
+    // Create a new documentation page with the ticket's article content
+    let now = chrono::Utc::now().naive_utc();
+    let new_page = crate::models::NewDocumentationPage {
+        slug,
+        title: page_data.title.clone(),
+        description: page_data.description.clone(),
+        content: article_content.content,
+        author: page_data.author.clone(),
+        status: crate::models::DocumentationStatus::Draft,
+        icon: page_data.icon.clone(),
+        created_at: now,
+        updated_at: now,
+        parent_id: page_data.parent_id,
+        ticket_id: Some(ticket_id),
+        display_order: Some(0), // Default display order, will be updated when reordering
+    };
+
+    // Create the documentation page
+    match repository::create_documentation_page(new_page, &mut conn) {
+        Ok(page) => HttpResponse::Created().json(page),
+        Err(e) => {
+            eprintln!("Error creating documentation page: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to create documentation page")
+        }
+    }
+}
+
+// Upload files and store them locally
+pub async fn upload_files(
+    mut payload: Multipart,
+    pool: web::Data<crate::db::Pool>,
+) -> Result<HttpResponse, actix_web::Error> {
+    println!("Received file upload request");
+    
+    let mut conn = pool.get().map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        actix_web::error::ErrorInternalServerError("Database connection error")
+    })?;
+    
+    // Create uploads directory if it doesn't exist
+    let storage_path = "uploads";
+    if !Path::new(storage_path).exists() {
+        println!("Creating uploads directory: {}", storage_path);
+        fs::create_dir_all(storage_path).map_err(|e| {
+            eprintln!("Failed to create uploads directory: {:?}", e);
+            actix_web::error::ErrorInternalServerError("Failed to create uploads directory")
+        })?;
+    }
+    
+    // Create a temporary directory for uploads that haven't been associated with a ticket yet
+    let temp_path = "uploads/temp";
+    if !Path::new(temp_path).exists() {
+        println!("Creating temporary uploads directory: {}", temp_path);
+        fs::create_dir_all(temp_path).map_err(|e| {
+            eprintln!("Failed to create temporary uploads directory: {:?}", e);
+            actix_web::error::ErrorInternalServerError("Failed to create temporary uploads directory")
+        })?;
+    }
+
+    let mut uploaded_attachments = Vec::new();
+
+    // Process each field in the multipart form
+    while let Ok(Some(mut field)) = payload.try_next().await {
+        // Get the filename from the field
+        let content_disposition = field.content_disposition();
+        let filename = content_disposition
+            .get_filename()
+            .map_or_else(|| Uuid::new_v4().to_string(), |f| f.to_string());
+        
+        // Get content type if available
+        let content_type = field.content_type().map(|ct| ct.to_string()).unwrap_or_else(|| "application/octet-stream".to_string());
+        
+        println!("Processing uploaded file: {} ({})", filename, content_type);
+        
+        // Generate a unique filename to prevent collisions
+        let unique_filename = format!("{}_{}", Uuid::new_v4(), filename);
+        let filepath = format!("{}/{}", temp_path, unique_filename);
+        
+        println!("Saving file to: {}", filepath);
+        
+        // Create a file to save the uploaded content
+        let file_path = filepath.clone();
+        let _file = web::block(move || std::fs::File::create(file_path))
+            .await
+            .map_err(|e| {
+                eprintln!("Failed to create file: {:?}", e);
+                actix_web::error::ErrorInternalServerError("Failed to create file")
+            })?;
+        
+        // Write the field data to the file
+        let mut file_data = Vec::new();
+        while let Some(chunk) = field.next().await {
+            let data = chunk.map_err(|e| {
+                eprintln!("Error reading chunk: {:?}", e);
+                actix_web::error::ErrorInternalServerError("Error reading chunk")
+            })?;
+            file_data.extend_from_slice(&data);
+        }
+        
+        println!("Read {} bytes of data for file {}", file_data.len(), filename);
+        
+        // Write the collected data to the file
+        web::block(move || std::fs::write(filepath, &file_data))
+            .await
+            .map_err(|e| {
+                eprintln!("Error writing to file: {:?}", e);
+                actix_web::error::ErrorInternalServerError("Error writing to file")
+            })?;
+        
+        // Create a new attachment record in the database
+        let new_attachment = NewAttachment {
+            url: format!("/uploads/temp/{}", unique_filename),
+            name: filename,
+            comment_id: None, // Not linked to a comment yet
+        };
+        
+        println!("Creating attachment record in database: {:?}", new_attachment);
+        
+        // Save the attachment to the database
+        match repository::create_attachment(&mut conn, new_attachment) {
+            Ok(attachment) => {
+                let attachment_json = json!({
+                    "id": attachment.id,
+                    "url": attachment.url,
+                    "name": attachment.name
+                });
+                println!("Attachment created successfully: {:?}", attachment_json);
+                uploaded_attachments.push(attachment_json);
+            },
+            Err(e) => {
+                eprintln!("Error creating attachment record: {:?}", e);
+                return Err(actix_web::error::ErrorInternalServerError("Error creating attachment record"));
+            }
+        }
+    }
+    
+    println!("Upload complete. Returning {} attachments", uploaded_attachments.len());
+    Ok(HttpResponse::Ok().json(uploaded_attachments))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateDocPageFromTicket {
+    pub title: String,
+    pub description: Option<String>,
+    pub author: String,
+    pub icon: Option<String>,
+    pub parent_id: Option<i32>,
+}
+
+// ===== DEVICE HANDLERS =====
+
+/// Get all devices
+pub async fn get_all_devices(pool: web::Data<crate::db::Pool>) -> impl Responder {
+    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    
+    let devices = web::block(move || {
+        use crate::repository;
+        repository::get_all_devices(&mut conn)
+    })
+    .await;
+
+    match devices {
+        Ok(Ok(devices)) => HttpResponse::Ok().json(devices),
+        Ok(Err(e)) => {
+            eprintln!("Database error getting all devices: {:?}", e);
+            HttpResponse::InternalServerError().body("Database error getting all devices")
+        },
+        Err(e) => {
+            eprintln!("Error getting all devices: {:?}", e);
+            HttpResponse::InternalServerError().body("Error getting all devices")
+        }
+    }
+}
+
+/// Get a device by ID
+pub async fn get_device(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let device_id = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().body(format!("Database connection error")),
+    };
+
+    match repository::get_device_by_id(&mut conn, device_id) {
+        Ok(device) => HttpResponse::Ok().json(device),
+        Err(diesel::result::Error::NotFound) => {
+            eprintln!("Device {} not found", device_id);
+            HttpResponse::NotFound().body(format!("Device {} not found", device_id))
+        },
+        Err(e) => {
+            eprintln!("Database error getting device {}: {:?}", device_id, e);
+            HttpResponse::InternalServerError().body(format!("Database error getting device {}", device_id))
+        },
+    }
+}
+
+/// Get a device by ticket ID
+pub async fn get_device_by_ticket_id(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let ticket_id = path.into_inner();
+    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    
+    let device = web::block(move || {
+        use crate::repository;
+        repository::get_device_by_ticket_id(&mut conn, ticket_id)
+    })
+    .await;
+
+    match device {
+        Ok(Ok(device)) => HttpResponse::Ok().json(device),
+        Ok(Err(e)) => {
+            eprintln!("Database error getting device for ticket {}: {:?}", ticket_id, e);
+            HttpResponse::InternalServerError().body(format!("Database error getting device for ticket {}", ticket_id))
+        },
+        Err(e) => {
+            eprintln!("Error getting device for ticket {}: {:?}", ticket_id, e);
+            HttpResponse::InternalServerError().body(format!("Error getting device for ticket {}", ticket_id))
+        }
+    }
+}
+
+/// Create a new device
+pub async fn create_device(
+    pool: web::Data<crate::db::Pool>,
+    device: web::Json<NewDevice>,
+) -> impl Responder {
+    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    
+    let device = web::block(move || {
+        use crate::repository;
+        repository::create_device(&mut conn, device.into_inner())
+    })
+    .await;
+
+    match device {
+        Ok(Ok(device)) => HttpResponse::Created().json(device),
+        Ok(Err(e)) => {
+            eprintln!("Database error creating device: {:?}", e);
+            HttpResponse::InternalServerError().body("Database error creating device")
+        },
+        Err(e) => {
+            eprintln!("Error creating device: {:?}", e);
+            HttpResponse::InternalServerError().body("Error creating device")
+        }
+    }
+}
+
+/// Update a device
+pub async fn update_device(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+    device: web::Json<NewDevice>,
+) -> impl Responder {
+    let device_id = path.into_inner();
+    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    
+    let device = web::block(move || {
+        use crate::repository;
+        repository::update_device(&mut conn, device_id, device.into_inner())
+    })
+    .await;
+
+    match device {
+        Ok(Ok(device)) => HttpResponse::Ok().json(device),
+        Ok(Err(e)) => {
+            eprintln!("Database error updating device {}: {:?}", device_id, e);
+            HttpResponse::InternalServerError().body(format!("Database error updating device {}", device_id))
+        },
+        Err(e) => {
+            eprintln!("Error updating device {}: {:?}", device_id, e);
+            HttpResponse::InternalServerError().body(format!("Error updating device {}", device_id))
+        }
+    }
+}
+
+/// Delete a device
+pub async fn delete_device(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<i32>,
+) -> impl Responder {
+    let device_id = path.into_inner();
+    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    
+    let result = web::block(move || {
+        use crate::repository;
+        repository::delete_device(&mut conn, device_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(count)) => {
+            if count > 0 {
+                HttpResponse::NoContent().finish()
+            } else {
+                HttpResponse::NotFound().body(format!("Device with ID {} not found", device_id))
+            }
+        },
+        Ok(Err(e)) => {
+            eprintln!("Database error deleting device {}: {:?}", device_id, e);
+            HttpResponse::InternalServerError().body(format!("Database error deleting device {}", device_id))
+        },
+        Err(e) => {
+            eprintln!("Error deleting device {}: {:?}", device_id, e);
+            HttpResponse::InternalServerError().body(format!("Error deleting device {}", device_id))
+        }
+    }
+}
+
+// Authentication handlers
+pub async fn login(
+    db_pool: web::Data<crate::db::Pool>,
+    login_data: web::Json<LoginRequest>,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Find user by email
+    let user = match repository::get_user_by_email(&login_data.email, &mut conn) {
+        Ok(user) => user,
+        Err(e) => {
+            eprintln!("Error finding user by email: {:?}", e);
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    // Print debug information
+    eprintln!("User found: {:?}", user);
+    eprintln!("Password from request: {}", login_data.password);
+    
+    // Convert bytea to string for verification
+    let hash_str = match std::str::from_utf8(&user.password_hash) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            eprintln!("Error converting hash to string");
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error processing credentials"
+            }));
+        }
+    };
+    
+    eprintln!("Password hash from database: {}", hash_str);
+    
+    // Verify password
+    let password_matches = match verify(&login_data.password, &hash_str) {
+        Ok(matches) => {
+            eprintln!("Password verification result: {}", matches);
+            matches
+        },
+        Err(e) => {
+            eprintln!("Error verifying password: {:?}", e);
+            false
+        }
+    };
+
+    if !password_matches {
+        return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid email or password"
+        }));
+    }
+
+    // Generate JWT token
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
+    let claims = Claims {
+        sub: user.uuid.clone(),
+        name: user.name.clone(),
+        email: user.email.clone(),
+        role: match user.role {
+            UserRole::Admin => "admin".to_string(),
+            UserRole::Technician => "technician".to_string(),
+            UserRole::User => "user".to_string(),
+        },
+        exp: now + 24 * 60 * 60, // 24 hours from now
+        iat: now,
+    };
+
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "nosdesk_secret_key".to_string());
+    let token = match encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    ) {
+        Ok(token) => token,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error generating token"
+        })),
+    };
+
+    // Return token and user info
+    HttpResponse::Ok().json(LoginResponse {
+        token,
+        user: user.into(),
+    })
+}
+
+pub async fn register(
+    db_pool: web::Data<crate::db::Pool>,
+    user_data: web::Json<UserRegistration>,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Check if user with this email already exists
+    if let Ok(_) = repository::get_user_by_email(&user_data.email, &mut conn) {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "User with this email already exists"
+        }));
+    }
+
+    // Hash the password
+    let password_hash = match hash(&user_data.password, DEFAULT_COST) {
+        Ok(hash) => hash.into_bytes(),
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error hashing password"
+        })),
+    };
+
+    // Generate a UUID if not provided
+    let uuid = Uuid::new_v4().to_string();
+
+    // Create new user with hashed password
+    let new_user = NewUser {
+        uuid,
+        name: user_data.name.clone(),
+        email: user_data.email.clone(),
+        role: user_data.role.clone(),
+        password_hash,
+    };
+
+    // Save user to database
+    match repository::create_user(new_user, &mut conn) {
+        Ok(created_user) => HttpResponse::Created().json(UserResponse::from(created_user)),
+        Err(_) => HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error creating user"
+        })),
+    }
+}
+
+// Middleware for validating JWT tokens
+pub async fn validate_token(auth: BearerAuth, db_pool: web::Data<crate::db::Pool>) -> Result<UserResponse, actix_web::Error> {
+    let token = auth.token();
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "nosdesk_secret_key".to_string());
+    
+    // Decode and validate token
+    let token_data = match decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    ) {
+        Ok(data) => data,
+        Err(_) => return Err(actix_web::error::ErrorUnauthorized("Invalid token")),
+    };
+    
+    let claims = token_data.claims;
+    
+    // Get user from database to ensure they still exist
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return Err(actix_web::error::ErrorInternalServerError("Database error")),
+    };
+    
+    let user = match repository::get_user_by_uuid(&claims.sub, &mut conn) {
+        Ok(user) => user,
+        Err(_) => return Err(actix_web::error::ErrorUnauthorized("User not found")),
+    };
+    
+    Ok(UserResponse::from(user))
+}
+
+pub async fn change_password(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+    password_data: web::Json<PasswordChangeRequest>,
+) -> impl Responder {
+    // Get database connection
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Validate the token and get user info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Get the user from the database
+    let user = match repository::get_user_by_uuid(&claims.sub, &mut conn) {
+        Ok(user) => user,
+        Err(_) => return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        })),
+    };
+
+    // Convert bytea to string for verification
+    let hash_str = match std::str::from_utf8(&user.password_hash) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            eprintln!("Error converting hash to string");
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error processing credentials"
+            }));
+        }
+    };
+
+    // Verify current password
+    let password_matches = match verify(&password_data.current_password, &hash_str) {
+        Ok(matches) => matches,
+        Err(e) => {
+            eprintln!("Error verifying password: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error verifying password"
+            }));
+        }
+    };
+
+    if !password_matches {
+        return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Current password is incorrect"
+        }));
+    }
+
+    // Hash the new password
+    let new_password_hash = match hash(&password_data.new_password, DEFAULT_COST) {
+        Ok(hash) => hash.into_bytes(),
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error hashing new password"
+        })),
+    };
+
+    // Update the user's password
+    let user_update = UserUpdate {
+        name: None,
+        email: None,
+        role: None,
+        password_hash: Some(new_password_hash),
+    };
+
+    match repository::update_user(user.id, user_update, &mut conn) {
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "message": "Password changed successfully"
+        })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error updating password"
+        })),
+    }
+}
+
+// Helper function to validate token internally
+async fn validate_token_internal(auth: &BearerAuth, conn: &mut DbConnection) -> Result<Claims, actix_web::Error> {
+    let token = auth.token();
+    
+    // Decode the token
+    let token_data = match jsonwebtoken::decode::<Claims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(JWT_SECRET.as_bytes()),
+        &jsonwebtoken::Validation::default(),
+    ) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error decoding token: {:?}", e);
+            return Err(actix_web::error::ErrorUnauthorized("Invalid token"));
+        }
+    };
+    
+    let claims = token_data.claims;
+    
+    // Check if user exists
+    if let Err(e) = repository::get_user_by_uuid(&claims.sub, conn) {
+        eprintln!("Error finding user by UUID: {:?}", e);
+        return Err(actix_web::error::ErrorUnauthorized("Invalid token"));
+    }
+    
+    Ok(claims)
+}
+
+#[derive(Deserialize)]
+pub struct AdminPasswordResetRequest {
+    pub user_id: i32,
+    pub new_password: String,
+}
+
+pub async fn admin_reset_password(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+    reset_data: web::Json<AdminPasswordResetRequest>,
+) -> impl Responder {
+    // Get database connection
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Validate the token and get admin info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Check if the user is an admin
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Only administrators can reset passwords"
+        }));
+    }
+
+    // Get the target user
+    let user = match repository::get_user_by_id(reset_data.user_id, &mut conn) {
+        Ok(user) => user,
+        Err(_) => return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        })),
+    };
+
+    // Hash the new password
+    let new_password_hash = match hash(&reset_data.new_password, DEFAULT_COST) {
+        Ok(hash) => hash.into_bytes(),
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error hashing new password"
+        })),
+    };
+
+    // Update the user's password
+    let user_update = UserUpdate {
+        name: None,
+        email: None,
+        role: None,
+        password_hash: Some(new_password_hash),
+    };
+
+    match repository::update_user(user.id, user_update, &mut conn) {
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "message": "Password reset successfully"
+        })),
+        Err(_) => HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error resetting password"
+        })),
+    }
+}

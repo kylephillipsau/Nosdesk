@@ -1,112 +1,317 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { ref, onMounted, computed } from 'vue'
 import BaseListView from '@/components/common/BaseListView.vue'
-import SelectableTable from '@/components/common/SelectableTable.vue'
-import { useDataLoader } from '@/composables/useDataLoader'
-import { useSearch } from '@/composables/useSearch'
-import { useSelection } from '@/composables/useSelection'
-
-interface Device {
-  id: string
-  name: string
-  type: string
-  model: string
-  serialNumber: string
-  status: 'active' | 'inactive'
-  lastSeen: string
-  assignedTo: string | null
-}
+import Modal from '@/components/Modal.vue'
+import DeviceForm from '@/components/DeviceForm.vue'
+import { getDevices, createDevice } from '@/services/deviceService'
+import type { Device, DeviceFormData } from '@/types/device'
 
 const router = useRouter()
+const devices = ref<Device[]>([])
+const loading = ref(true)
+const error = ref<string | null>(null)
+const selectedDevices = ref<number[]>([])
+const lastSelectedDeviceId = ref<number | null>(null)
 
-// Data loading
-const { data: devices, isLoading } = useDataLoader<Device>({
-  fetchData: async () => {
-    // TODO: Replace with actual API call
-    return [
-      {
-        id: '1',
-        name: 'MacBook Pro 16"',
-        type: 'Laptop',
-        model: 'MacBook Pro M2',
-        serialNumber: 'MBP2023001',
-        status: 'active',
-        lastSeen: '2024-03-15T10:30:00Z',
-        assignedTo: 'john.doe'
-      },
-      {
-        id: '2',
-        name: 'iPhone 15 Pro',
-        type: 'Mobile',
-        model: 'iPhone 15 Pro Max',
-        serialNumber: 'IP15P2023002',
-        status: 'active',
-        lastSeen: '2024-03-15T09:45:00Z',
-        assignedTo: 'jane.smith'
-      },
-      {
-        id: '3',
-        name: 'Dell XPS 15',
-        type: 'Laptop',
-        model: 'XPS 15 9570',
-        serialNumber: 'DXP2023003',
-        status: 'inactive',
-        lastSeen: '2024-02-28T14:20:00Z',
-        assignedTo: null
-      },
-      {
-        id: '4',
-        name: 'iPad Pro 12.9"',
-        type: 'Tablet',
-        model: 'iPad Pro M2',
-        serialNumber: 'IPP2023004',
-        status: 'active',
-        lastSeen: '2024-03-14T16:45:00Z',
-        assignedTo: 'jane.smith'
-      }
-    ]
+// Add state for the modal
+const showAddDeviceModal = ref(false)
+const isCreatingDevice = ref(false)
+const createDeviceError = ref<string | null>(null)
+
+// Sorting state
+const sortField = ref<string>("name")
+const sortDirection = ref<"asc" | "desc">("asc")
+
+// Search and filter state
+const searchQuery = ref("")
+const typeFilter = ref<string>("all")
+const warrantyFilter = ref<string>("all")
+
+// Define columns for the table
+const columns = [
+  { field: 'id', label: 'ID', width: 'w-20 flex-shrink-0' },
+  { field: 'name', label: 'Name', width: 'flex-1 min-w-0' },
+  { field: 'type', label: 'Type', width: 'w-32 flex-shrink-0' },
+  { field: 'model', label: 'Model', width: 'w-32 flex-shrink-0' },
+  { field: 'warranty_status', label: 'Warranty', width: 'w-32 flex-shrink-0' },
+  { field: 'lastSeen', label: 'Last Seen', width: 'w-40 flex-shrink-0' }
+];
+
+// Function to format date in locale format
+const formatDate = (dateString: string) => {
+  try {
+    const date = new Date(dateString)
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return 'Unknown'
+    }
+
+    // Format date in user's locale
+    return date.toLocaleString()
+  } catch (error) {
+    console.error("Error formatting date:", error)
+    return 'Unknown'
   }
+}
+
+// Fetch devices from API
+const fetchDevices = async () => {
+  loading.value = true
+  error.value = null
+
+  try {
+    devices.value = await getDevices()
+  } catch (err) {
+    console.error("Failed to fetch devices:", err)
+    error.value = "Failed to load devices. Please try again later."
+  } finally {
+    loading.value = false
+  }
+}
+
+// Load devices when component mounts
+onMounted(() => {
+  fetchDevices()
 })
 
-// Search functionality
-const { searchQuery, filteredItems: filteredDevices } = useSearch<Device>({
-  items: devices,
-  searchableFields: [
-    device => device.name,
-    device => device.type,
-    device => device.model,
-    device => device.serialNumber,
-    device => device.assignedTo || ''
+// Filter devices based on search query and filters
+const filteredDevices = computed(() => {
+  if (!devices.value.length) return []
+
+  return devices.value.filter((device) => {
+    // Text search (case insensitive)
+    const searchLower = searchQuery.value.toLowerCase()
+    const matchesSearch =
+      searchQuery.value === "" ||
+      device.name.toLowerCase().includes(searchLower) ||
+      device.hostname.toLowerCase().includes(searchLower) ||
+      device.serial_number.toLowerCase().includes(searchLower) ||
+      device.model.toLowerCase().includes(searchLower) ||
+      (device.type && device.type.toLowerCase().includes(searchLower))
+
+    // Type filter
+    const matchesType =
+      typeFilter.value === "all" || 
+      (device.type && device.type === typeFilter.value)
+
+    // Warranty filter
+    const matchesWarranty =
+      warrantyFilter.value === "all" ||
+      device.warranty_status === warrantyFilter.value
+
+    return matchesSearch && matchesType && matchesWarranty
+  })
+})
+
+// Sort devices based on current sort field and direction
+const sortedDevices = computed(() => {
+  if (!filteredDevices.value.length) return []
+
+  return [...filteredDevices.value].sort((a, b) => {
+    let valueA, valueB
+
+    // Extract the values to compare based on the sort field
+    switch (sortField.value) {
+      case "id":
+        valueA = a.id
+        valueB = b.id
+        break
+      case "name":
+        valueA = a.name.toLowerCase()
+        valueB = b.name.toLowerCase()
+        break
+      case "type":
+        valueA = (a.type || '').toLowerCase()
+        valueB = (b.type || '').toLowerCase()
+        break
+      case "model":
+        valueA = a.model.toLowerCase()
+        valueB = b.model.toLowerCase()
+        break
+      case "warranty_status":
+        valueA = a.warranty_status.toLowerCase()
+        valueB = b.warranty_status.toLowerCase()
+        break
+      case "lastSeen":
+        valueA = a.lastSeen ? new Date(a.lastSeen).getTime() : 0
+        valueB = b.lastSeen ? new Date(b.lastSeen).getTime() : 0
+        break
+      default:
+        valueA = a.id
+        valueB = b.id
+    }
+
+    // Compare the values based on sort direction
+    if (sortDirection.value === "asc") {
+      return valueA > valueB ? 1 : valueA < valueB ? -1 : 0
+    } else {
+      return valueA < valueB ? 1 : valueA > valueB ? -1 : 0
+    }
+  })
+})
+
+// Get unique device types from devices
+const availableTypes = computed(() => {
+  if (!devices.value.length) return []
+  const types = new Set(devices.value.map((device) => device.type).filter(Boolean))
+  return Array.from(types) as string[]
+})
+
+// Get unique warranty statuses from devices
+const availableWarrantyStatuses = computed(() => {
+  if (!devices.value.length) return []
+  const statuses = new Set(devices.value.map((device) => device.warranty_status))
+  return Array.from(statuses) as string[]
+})
+
+// Prepare filter options for BaseListView
+const filterOptions = computed(() => {
+  return [
+    {
+      name: 'type',
+      value: typeFilter.value,
+      options: [
+        { value: 'all', label: 'All Types' },
+        ...availableTypes.value.map(type => ({ value: type, label: type }))
+      ],
+      width: 'w-[120px]'
+    },
+    {
+      name: 'warranty',
+      value: warrantyFilter.value,
+      options: [
+        { value: 'all', label: 'All Warranty' },
+        ...availableWarrantyStatuses.value.map(status => ({ value: status, label: status }))
+      ],
+      width: 'w-[120px]'
+    }
   ]
 })
 
-// Selection functionality
-const { selectedIds, toggleSelection, toggleAll } = useSelection<Device>({
-  items: devices,
-  getItemId: device => device.id
-})
-
-// Table columns
-const columns = [
-  { key: 'device', label: 'Device' },
-  { key: 'type', label: 'Type' },
-  { key: 'serialNumber', label: 'Serial Number', hidden: true },
-  { key: 'model', label: 'Model' },
-  { key: 'lastSeen', label: 'Last Seen', hidden: true },
-  { key: 'assignedTo', label: 'Assigned To', hidden: true }
-]
-
-const navigateToDevice = (device: Device) => {
-  router.push(`/devices/${device.id}`)
+// Reset all filters
+const resetFilters = () => {
+  searchQuery.value = ""
+  typeFilter.value = "all"
+  warrantyFilter.value = "all"
 }
 
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString()
+// Handle filter updates from BaseListView
+const handleFilterUpdate = (name: string, value: string) => {
+  if (name === 'type') {
+    typeFilter.value = value
+  } else if (name === 'warranty') {
+    warrantyFilter.value = value
+  }
+}
+
+// Handle sort update from BaseListView
+const handleSortUpdate = (field: string, direction: 'asc' | 'desc') => {
+  sortField.value = field;
+  sortDirection.value = direction;
+};
+
+const toggleSelection = (event: Event, deviceId: number) => {
+  event.stopPropagation()
+
+  // Handle shift key for range selection
+  if (
+    event instanceof MouseEvent &&
+    event.shiftKey &&
+    lastSelectedDeviceId.value !== null
+  ) {
+    const currentIndex = sortedDevices.value.findIndex(
+      (device) => device.id === deviceId
+    )
+    const lastIndex = sortedDevices.value.findIndex(
+      (device) => device.id === lastSelectedDeviceId.value
+    )
+
+    if (currentIndex !== -1 && lastIndex !== -1) {
+      const startIndex = Math.min(currentIndex, lastIndex)
+      const endIndex = Math.max(currentIndex, lastIndex)
+
+      const devicesToSelect = sortedDevices.value
+        .slice(startIndex, endIndex + 1)
+        .map((device) => device.id)
+
+      // Add all devices in range to selection if they're not already selected
+      devicesToSelect.forEach((id) => {
+        if (!selectedDevices.value.includes(id)) {
+          selectedDevices.value.push(id)
+        }
+      })
+    }
+  } 
+  // Handle Ctrl/Cmd key for toggling individual items without affecting others
+  else if (event instanceof MouseEvent && (event.ctrlKey || event.metaKey)) {
+    const index = selectedDevices.value.indexOf(deviceId)
+    if (index === -1) {
+      selectedDevices.value.push(deviceId)
+    } else {
+      selectedDevices.value.splice(index, 1)
+    }
+    
+    // Update last selected device
+    lastSelectedDeviceId.value = deviceId
+  }
+  // Regular single selection toggle (clears other selections if not using modifier keys)
+  else {
+    const index = selectedDevices.value.indexOf(deviceId);
+    if (index === -1) {
+      // Add to selection without clearing others
+      selectedDevices.value.push(deviceId);
+    } else {
+      // Remove from selection
+      selectedDevices.value.splice(index, 1);
+    }
+
+    // Update last selected device
+    lastSelectedDeviceId.value = deviceId;
+  }
+}
+
+const toggleAllDevices = (event: Event) => {
+  event.stopPropagation()
+  const checkbox = event.target as HTMLInputElement
+  
+  // If we're checking the box, select all visible devices
+  if (checkbox.checked) {
+    selectedDevices.value = sortedDevices.value.map((device) => device.id)
+  } 
+  // If unchecking, clear all selections
+  else {
+    selectedDevices.value = []
+  }
+  
+  // Reset last selected device
+  lastSelectedDeviceId.value = null
+}
+
+const navigateToDevice = (deviceId: number) => {
+  router.push(`/devices/${deviceId}`)
 }
 
 const handleAddDevice = () => {
-  // TODO: Implement add device functionality
-  console.log('Add device clicked')
+  showAddDeviceModal.value = true
+}
+
+// Function to handle device creation
+const handleCreateDevice = async (deviceData: DeviceFormData) => {
+  isCreatingDevice.value = true
+  createDeviceError.value = null
+  
+  try {
+    await createDevice(deviceData)
+    showAddDeviceModal.value = false
+    // Refresh the device list
+    await fetchDevices()
+  } catch (err) {
+    console.error('Error creating device:', err)
+    createDeviceError.value = 'Failed to create device. Please try again.'
+  } finally {
+    isCreatingDevice.value = false
+  }
 }
 </script>
 
@@ -114,59 +319,110 @@ const handleAddDevice = () => {
   <BaseListView
     title="Devices"
     :search-query="searchQuery"
-    :is-loading="isLoading"
-    :is-empty="filteredDevices.length === 0"
+    :is-loading="loading"
+    :is-empty="sortedDevices.length === 0"
+    :error="error"
+    :filters="filterOptions"
+    :results-count="sortedDevices.length"
+    :selected-items="selectedDevices.map(id => id.toString())"
+    :visible-items="sortedDevices"
+    :item-id-field="'id'"
+    :enable-selection="true"
+    :sort-field="sortField"
+    :sort-direction="sortDirection"
+    :columns="columns"
     @update:search-query="value => searchQuery = value"
+    @update:filter="handleFilterUpdate"
+    @update:sort="handleSortUpdate"
+    @toggle-selection="(event, id) => toggleSelection(event, parseInt(id, 10))"
+    @toggle-all="toggleAllDevices"
+    @reset-filters="resetFilters"
     @add="handleAddDevice"
+    @retry="fetchDevices"
   >
-    <SelectableTable
-      :items="filteredDevices"
-      :columns="columns"
-      :selected-ids="selectedIds"
-      @toggle-selection="toggleSelection"
-      @toggle-all="toggleAll"
-      @row-click="navigateToDevice"
+    <!-- Devices display -->
+    <div class="min-w-[960px]">
+      <div
+        v-for="device in sortedDevices"
+        :key="device.id"
+        class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+        @click="navigateToDevice(device.id)"
+      >
+        <div class="flex items-center p-3 w-10 flex-shrink-0">
+          <input
+            type="checkbox"
+            class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+            :checked="selectedDevices.includes(device.id)"
+            @click.stop="(event) => toggleSelection(event, device.id)"
+          />
+        </div>
+        <div class="flex items-center p-3 w-20 flex-shrink-0">
+          #{{ device.id }}
+        </div>
+        <div class="flex items-center p-3 flex-1 min-w-0">
+          <div class="truncate">{{ device.name }}</div>
+        </div>
+        <div class="flex items-center p-3 w-32 flex-shrink-0">
+          {{ device.type || 'N/A' }}
+        </div>
+        <div class="flex items-center p-3 w-32 flex-shrink-0">
+          {{ device.model }}
+        </div>
+        <div class="flex items-center p-3 w-32 flex-shrink-0">
+          <span 
+            :class="{
+              'text-green-400': device.warranty_status === 'active',
+              'text-yellow-400': device.warranty_status === 'expiring',
+              'text-red-400': device.warranty_status === 'expired'
+            }"
+          >
+            {{ device.warranty_status }}
+          </span>
+        </div>
+        <div class="flex items-center p-3 w-40 flex-shrink-0">
+          {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Device Modal -->
+    <Modal
+      :show="showAddDeviceModal"
+      title="Add New Device"
+      @close="showAddDeviceModal = false"
     >
-      <!-- Custom cell rendering -->
-      <template #cell="{ item: device, column }">
-        <!-- Device column with icon and name -->
-        <td v-if="column.key === 'device'" class="px-6 py-4 whitespace-nowrap">
-          <div class="flex items-center gap-2">
-            <div class="flex-shrink-0 h-10 w-10 bg-slate-700 rounded-full flex items-center justify-center">
-              <svg class="h-6 w-6 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path v-if="device.type === 'Laptop'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                <path v-else-if="device.type === 'Mobile'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
-                <path v-else-if="device.type === 'Tablet'" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <div class="ml-4">
-              <div class="text-sm font-medium">{{ device.name }}</div>
-              <div class="text-sm text-gray-400 md:hidden">{{ device.serialNumber }}</div>
-              <div class="text-sm text-gray-400 md:hidden">{{ device.assignedTo || 'Unassigned' }}</div>
-            </div>
-          </div>
-        </td>
-        
-        <!-- Last Seen column with formatted date -->
-        <td v-else-if="column.key === 'lastSeen'" :class="['px-6 py-4 whitespace-nowrap text-sm', column.hidden ? 'hidden md:table-cell' : '']">
-          {{ formatDate(device.lastSeen) }}
-        </td>
-        
-        <!-- Assigned To column with unassigned fallback -->
-        <td v-else-if="column.key === 'assignedTo'" :class="['px-6 py-4 whitespace-nowrap text-sm', column.hidden ? 'hidden md:table-cell' : '']">
-          {{ device.assignedTo || 'Unassigned' }}
-        </td>
-        
-        <!-- Default rendering for other columns -->
-        <td v-else :class="['px-6 py-4 whitespace-nowrap text-sm', column.hidden ? 'hidden md:table-cell' : '']">
-          {{ device[column.key as keyof Device] }}
-        </td>
-      </template>
+      <div v-if="createDeviceError" class="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-white">
+        {{ createDeviceError }}
+      </div>
       
-      <template #empty>
-        No devices found matching your search.
-      </template>
-    </SelectableTable>
+      <DeviceForm
+        @submit="handleCreateDevice"
+        @cancel="showAddDeviceModal = false"
+      />
+      
+      <div v-if="isCreatingDevice" class="mt-4 flex justify-center">
+        <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    </Modal>
   </BaseListView>
-</template> 
+</template>
+
+<style scoped>
+/* Optional: Custom scrollbar styling */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 8px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+</style> 
