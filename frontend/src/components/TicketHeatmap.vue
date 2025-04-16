@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { getTickets } from '@/services/ticketService';
 import type { Ticket } from '@/services/ticketService';
+import HeatmapTooltip from '@/components/HeatmapTooltip.vue';
 
 interface Props {
   ticketStatus?: 'open' | 'in-progress' | 'closed';
@@ -108,29 +109,24 @@ const formatDate = (date: string) => {
 };
 
 // Create tooltip content with ticket details
-const getTooltipContent = (day: DayData) => {
-  const dateStr = formatDate(day.date);
+const getTooltipDetails = (day: DayData) => {
   if (day.count === 0) {
-    return `${dateStr}: No tickets`;
+    return {
+      title: 'No tickets',
+      date: formatDate(day.date)
+    };
   }
   
   const ticketWord = day.count === 1 ? 'ticket' : 'tickets';
-  let tooltip = `${dateStr}: ${day.count} ${ticketWord}`;
-  
-  // Add ticket titles if available (limit to first 5)
-  if (day.tickets.length > 0) {
-    tooltip += '\n\nTickets:';
-    const displayTickets = day.tickets.slice(0, 5);
-    displayTickets.forEach(ticket => {
-      tooltip += `\n• #${ticket.id}: ${ticket.title}`;
-    });
-    
-    if (day.tickets.length > 5) {
-      tooltip += `\n• ...and ${day.tickets.length - 5} more`;
-    }
-  }
-  
-  return tooltip;
+  return {
+    title: `${day.count} ${ticketWord}`,
+    date: formatDate(day.date),
+    tickets: day.tickets.slice(0, 5).map(ticket => ({
+      id: ticket.id,
+      title: ticket.title
+    })),
+    totalTickets: day.tickets.length
+  };
 };
 
 // Group data by week for display
@@ -175,45 +171,55 @@ onMounted(() => {
     </div>
     
     <div class="w-full" v-if="!isLoading && !error">
-      <div class="flex gap-[1px] w-full">
+      <div class="grid grid-cols-[auto_1fr] gap-1.5">
         <!-- Days of week labels -->
-        <div class="flex flex-col gap-1 text-xs text-gray-400 mr-2">
-          <span class="h-3 flex items-center">Sun</span>
-          <span class="h-3 flex items-center">Mon</span>
-          <span class="h-3 flex items-center">Tue</span>
-          <span class="h-3 flex items-center">Wed</span>
-          <span class="h-3 flex items-center">Thu</span>
-          <span class="h-3 flex items-center">Fri</span>
-          <span class="h-3 flex items-center">Sat</span>
+        <div class="grid grid-rows-7 gap-0.5 text-[10px] text-gray-400/80">
+          <span class="h-2.5 flex items-center">Sun</span>
+          <span class="h-2.5 flex items-center">Mon</span>
+          <span class="h-2.5 flex items-center">Tue</span>
+          <span class="h-2.5 flex items-center">Wed</span>
+          <span class="h-2.5 flex items-center">Thu</span>
+          <span class="h-2.5 flex items-center">Fri</span>
+          <span class="h-2.5 flex items-center">Sat</span>
         </div>
         
         <!-- Heatmap grid -->
-        <div class="flex flex-1 gap-0.5">
-          <div 
+        <div class="grid grid-cols-[repeat(53,1fr)] gap-0.5">
+          <div
             v-for="(week, weekIndex) in weeklyData" 
             :key="weekIndex" 
-            class="flex flex-col flex-1 gap-0.5"
+            class="grid grid-rows-7 gap-0.5"
           >
-            <div
+            <HeatmapTooltip
               v-for="day in week"
               :key="day.date"
-              class="h-3.5 rounded-sm cursor-pointer transition-colors duration-200"
-              :style="{ backgroundColor: getColor(day.count) }"
-              :title="getTooltipContent(day)"
-            />
+              :text="day.count.toString()"
+              :details="getTooltipDetails(day)"
+            >
+              <div
+                class="h-2.5 rounded-[1px] cursor-pointer transition-all duration-200 hover:scale-110 hover:z-10 hover:shadow-lg"
+                :style="{ 
+                  backgroundColor: getColor(day.count),
+                  boxShadow: day.count > 0 ? `0 0 0 1px ${getColor(day.count)}` : 'none'
+                }"
+              />
+            </HeatmapTooltip>
           </div>
         </div>
       </div>
       
       <!-- Legend -->
-      <div class="flex items-center gap-2 mt-4 text-xs text-gray-400">
+      <div class="flex items-center gap-2 mt-3 text-[10px] text-gray-400/80">
         <span>Less</span>
-        <div class="flex gap-1">
+        <div class="flex gap-0.5">
           <div
             v-for="i in 5"
             :key="i"
-            class="w-3 h-3 rounded-sm"
-            :style="{ backgroundColor: getColor(i - 1) }"
+            class="w-2.5 h-2.5 rounded-[1px]"
+            :style="{ 
+              backgroundColor: getColor(i - 1),
+              boxShadow: i > 1 ? `0 0 0 1px ${getColor(i - 1)}` : 'none'
+            }"
           />
         </div>
         <span>More</span>
