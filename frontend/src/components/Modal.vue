@@ -5,6 +5,9 @@ import { onMounted, onUnmounted } from 'vue'
 defineProps<{
   show: boolean;
   title: string;
+  contentClass?: string;
+  headerClass?: string;
+  removePadding?: boolean;
 }>()
 
 const emit = defineEmits<{
@@ -39,11 +42,11 @@ onUnmounted(() => {
       <!-- Modal -->
       <div class="flex min-h-full items-center justify-center p-4">
         <div
-          class="relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl z-[10000]"
+          :class="['relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl z-[10000]', contentClass]"
           @click.stop
         >
           <!-- Header -->
-          <div class="flex items-center justify-between p-4 border-b border-slate-700">
+          <div :class="['flex items-center justify-between p-4 border-b border-slate-700', headerClass]">
             <h3 class="text-lg font-medium text-white">{{ title }}</h3>
             <button
               @click="emit('close')"
@@ -56,7 +59,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Content -->
-          <div class="p-6">
+          <div :class="[removePadding ? '' : 'p-6']">
             <slot></slot>
           </div>
         </div>

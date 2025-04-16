@@ -146,7 +146,7 @@ const isRouteActive = (path: string, exact = false) => {
   <!-- Desktop Sidebar - Hidden on small screens -->
   <nav 
     class="h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden gap-1 transition-all duration-300 ease-in-out overflow-hidden lg:fixed lg:left-0 lg:top-0 lg:z-20 lg:flex"
-    :class="[isCollapsed ? 'lg:w-16' : 'lg:w-64']"
+    :class="[isCollapsed ? 'lg:w-16' : 'lg:w-64', isSmallScreen ? 'hidden' : '']"
   >
     <div class="flex flex-col p-2 space-y-2 flex-shrink-0 gap-2">
       <RouterLink to="/" class="flex items-center mb-8 hover:opacity-80 transition-opacity text-[#FDBD10] select-none">
@@ -208,7 +208,7 @@ const isRouteActive = (path: string, exact = false) => {
   </nav>
 
   <!-- Mobile Bottom Navigation -->
-  <nav class="fixed bottom-0 left-0 right-0 bg-slate-800 border-t border-slate-700 z-20 lg:hidden print:hidden">
+  <nav class="fixed bottom-0 left-0 right-0 bg-slate-800 border-t border-slate-700 z-20 lg:hidden print:hidden" v-if="isSmallScreen">
     <div class="flex justify-around items-center h-16">
       <RouterLink 
         v-for="link in navLinks" 
