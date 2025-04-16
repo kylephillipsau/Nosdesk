@@ -1,25 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from "vue";
+import { ref, onMounted, watch, computed, provide, onUnmounted, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import MarkdownEditor from "@/components/MarkdownEditor.vue";
-import { usePageTitle } from "@/composables/usePageTitle";
+import CollaborativeEditor from "@/components/CollaborativeEditor.vue";
+import { useTitleManager } from "@/composables/useTitleManager";
 import documentationService from "@/services/documentationService";
-import type { Article, Category } from "@/services/documentationService";
+import ticketService from "@/services/ticketService";
+import type { Article, Page, PageChild } from "@/services/documentationService";
 import BackButton from '@/components/common/BackButton.vue';
+import { useDocumentationNavStore } from "@/stores/documentationNav";
+import mitt from 'mitt';
+import DocumentationTocItem from '@/components/documentationComponents/DocumentationTocItem.vue';
+
+// Create events for documentation updates
+const emitter = mitt();
+
+// Define event types
+type Events = {
+  'doc:created': { id: string | number };
+  'doc:updated': { id: string | number };
+  'doc:deleted': { id: string | number };
+};
+
+// Create typed emitter
+const docsEmitter = mitt<Events>();
+
+// Provide the emitter to child components
+provide('docsEmitter', docsEmitter);
 
 const route = useRoute();
 const router = useRouter();
+const documentationNavStore = useDocumentationNavStore();
 const article = ref<Article | null>(null);
-const category = ref<Category | null>(null);
+const page = ref<Page | null>(null);
+const pages = ref<Page[]>([]);
+const pageParentMap = ref<Record<string, string | null>>({});
 const isLoading = ref(true);
 const showSuccessMessage = ref(false);
 const isSaving = ref(false);
 const saveMessage = ref("Document saved successfully");
-const { setCustomTitle } = usePageTitle();
+const titleManager = useTitleManager();
 const isTicketNote = ref(false);
-const isCategory = ref(false);
+const isIndexPage = ref(false);
 const ticketId = ref<string | null>(null);
-const categoryId = ref<string | null>(null);
+const searchQuery = ref('');
+const isEditing = ref(false);
+const isCreateFromTicket = ref(false);
+const searchResults = ref<Article[]>([]);
+const selectedTicketId = ref<number | null>(null);
+const searchDropdownVisible = ref(false);
+const searchRef = ref<HTMLElement | null>(null);
 
 // Content editing
 const editContent = ref("");
@@ -29,162 +58,132 @@ const editTitle = ref("");
 const documentIcon = ref('📄');
 
 // Create a document object for the header
-const document = computed(() => {
-  if (isCategory.value && category.value) {
+const documentObj = computed(() => {
+  if (page.value) {
     return {
-      id: category.value.id,
-      title: category.value.name,
-      icon: category.value.icon || '📁'
+      id: String(page.value.id),
+      title: page.value.title,
+      icon: page.value.icon || '📄',
+      slug: page.value.slug
     };
   } else if (!article.value) {
     return null;
   }
   
   return {
-    id: article.value.id,
+    id: String(article.value.id),
     title: editTitle.value || article.value.title,
-    icon: documentIcon.value
+    icon: documentIcon.value,
+    slug: article.value.slug
   };
 });
 
 // Define emits for article data
 const emit = defineEmits<{
   (e: 'update:title', title: string): void;
-  (e: 'update:document', document: { id: string; title: string; icon: string } | null): void;
+  (e: 'update:document', document: { id: string; title: string; icon: string; slug?: string } | null): void;
 }>();
 
-// Fetch article data
-const fetchArticle = async (id: string) => {
+// Add a computed property to determine if we should show the page URL
+const isMainDocumentationPage = computed(() => {
+  return isIndexPage.value;
+});
+
+// Add a function to load the main documentation page
+const loadAllPages = async () => {
   isLoading.value = true;
-  
-  // Check if this is a category note
-  if (route.name === 'documentation-category') {
-    isCategory.value = true;
-    categoryId.value = route.params.categoryId as string;
+  try {
+    // Get all pages from the API - they're already organized in a hierarchy
+    const topLevelPages = await documentationService.getPages();
+    console.log("Received organized pages:", topLevelPages);
     
-    try {
-      // Fetch category data
-      const fetchedCategory = await documentationService.getCategoryById(categoryId.value);
+    // Add additional debugging to check the page structure
+    console.log("Debugging page structures:");
+    topLevelPages.forEach((page, index) => {
+      console.log(`Top level page ${index + 1}: ${page.title} (ID: ${page.id})`);
+      if (page.children && page.children.length > 0) {
+        console.log(`  Has ${page.children.length} children`);
+        page.children.forEach((child, childIndex) => {
+          console.log(`    Child ${childIndex + 1}: ${child.title} (ID: ${child.id})`);
+        });
+      } else {
+        console.log(`  No children`);
+      }
+    });
+    
+    // Build a parent-child relationship map for navigation
+    const parentMap: Record<string, string | null> = {};
+    const hierarchyMap: Record<string, string[]> = {};
+    
+    // Function to build maps recursively
+    const buildMaps = (page: Page, parentId: string | null = null) => {
+      const pageId = String(page.id);
+      parentMap[pageId] = parentId;
       
-      if (fetchedCategory) {
-        category.value = fetchedCategory;
-        editContent.value = fetchedCategory.content || "";
-        editTitle.value = fetchedCategory.name || "";
-        documentIcon.value = fetchedCategory.icon || '📁';
-        
-        // Emit the title and document
-        console.log('Emitting title from fetchArticle (category):', fetchedCategory.name);
-        emit('update:title', fetchedCategory.name || "");
-        emit('update:document', document.value);
-        setCustomTitle(fetchedCategory.name || "");
-      } else {
-        console.error("Category not found");
-        category.value = null;
+      // Initialize hierarchy entry
+      if (!hierarchyMap[pageId]) {
+        hierarchyMap[pageId] = [];
       }
-    } catch (error) {
-      console.error("Error fetching category:", error);
-      category.value = null;
-    } finally {
-      isLoading.value = false;
-    }
-    
-    return;
-  }
-  
-  // Check if this is a ticket note
-  if (id.startsWith('ticket-')) {
-    isTicketNote.value = true;
-    ticketId.value = id.replace('ticket-', '');
-    
-    try {
-      // Fetch ticket data instead of article data
-      // TODO: Replace with actual API call
-      const ticketData = (await import("@/data/tickets.json")).default;
-      const ticket = ticketData.tickets.find((t: any) => t.id === Number(ticketId.value));
       
-      if (ticket) {
-        // Create an article-like object from the ticket
-        article.value = {
-          id: `ticket-${ticket.id}`,
-          title: `Ticket #${ticket.id} Notes`,
-          description: ticket.title || '',
-          content: ticket.articleContent || '',
-          category: 'tickets',
-          author: ticket.assignee || 'System',
-          lastUpdated: ticket.modified || new Date().toISOString(),
-          status: 'published',
-          icon: '🎫' // Default icon for ticket notes
-        };
-        
-        editContent.value = article.value.content || "";
-        editTitle.value = article.value.title || "";
-        documentIcon.value = article.value.icon || '🎫';
-        
-        // Emit the title and document
-        console.log('Emitting title from fetchArticle (ticket):', article.value.title);
-        emit('update:title', article.value.title || "");
-        emit('update:document', document.value);
-        setCustomTitle(article.value.title || "");
-      } else {
-        console.error("Ticket not found");
-        article.value = null;
+      // Process children recursively
+      if (page.children && page.children.length > 0) {
+        page.children.forEach(child => {
+          const childId = String(child.id);
+          hierarchyMap[pageId].push(childId);
+          buildMaps(child, pageId);
+        });
       }
-    } catch (error) {
-      console.error("Error fetching ticket:", error);
-      article.value = null;
-    } finally {
-      isLoading.value = false;
-    }
-  } else {
-    // Regular documentation article
-    try {
-      const fetchedArticle = await documentationService.getArticleById(id);
-      if (fetchedArticle) {
-        article.value = fetchedArticle;
-        editContent.value = fetchedArticle.content || "";
-        editTitle.value = fetchedArticle.title || "";
-        documentIcon.value = fetchedArticle.icon || '📄'; // Use article icon or default
-        
-        // Immediately emit the title and document to ensure it's displayed in the header
-        console.log('Emitting title from fetchArticle:', fetchedArticle.title);
-        emit('update:title', fetchedArticle.title || "");
-        emit('update:document', document.value);
-        setCustomTitle(fetchedArticle.title || "");
-      } else {
-        console.error("Article not found");
-        article.value = null;
-      }
-    } catch (error) {
-      console.error("Error fetching article:", error);
-      article.value = null;
-    } finally {
-      isLoading.value = false;
-    }
+    };
+    
+    topLevelPages.forEach(page => buildMaps(page));
+    
+    // Store the parent map in a ref for later use
+    pageParentMap.value = parentMap;
+    
+    // Update the store with the hierarchy
+    documentationNavStore.updatePageHierarchy(hierarchyMap);
+    
+    // Set the pages for display
+    pages.value = topLevelPages;
+    
+    console.log("Parent map:", parentMap);
+    console.log("Hierarchy map:", hierarchyMap);
+    
+    isIndexPage.value = true;
+    titleManager.setCustomTitle('Documentation');
+    emit('update:title', 'Documentation');
+  } catch (error) {
+    console.error('Error loading pages:', error);
+  } finally {
+    isLoading.value = false;
   }
 };
 
-// Watch article changes to emit updates
-watch(article, (newArticle) => {
-  if (newArticle) {
-    console.log('Emitting title from article watch:', editTitle.value);
-    emit('update:title', editTitle.value);
-    setCustomTitle(editTitle.value);
-  } else {
-    emit('update:title', '');
+// Add a docId computed property for the CollaborativeEditor
+const docId = computed(() => {
+  if (isTicketNote.value && ticketId.value) {
+    return `ticket-${ticketId.value}`;
+  } else if (page.value) {
+    return `documentation-${page.value.id}`;
+  } else if (article.value) {
+    return `documentation-${article.value.id}`;
   }
-}, { immediate: true });
+  return 'documentation-new';
+});
 
-// Watch document changes to emit updates
-watch(document, (newDocument) => {
-  console.log('Emitting document from document watch:', newDocument);
-  emit('update:document', newDocument);
-}, { immediate: true });
+// Add a flag to determine if we have a binary update
+const isBinaryUpdate = ref(false);
 
-// Handle content update from the markdown editor
+// Replace the updateContent method
 const updateContent = (newContent: string) => {
   editContent.value = newContent;
-  // Auto-save after a short delay
-  saveArticleDebounced();
+  
+  // Update the local state immediately
+  if (article.value) {
+    article.value.content = newContent;
+  } else if (page.value) {
+    page.value.content = newContent;
+  }
 };
 
 // Handle title update
@@ -192,35 +191,27 @@ const updateTitle = (newTitle: string) => {
   editTitle.value = newTitle;
   
   // Update the title in the header
-  if (article.value) {
-    console.log('Emitting title from updateTitle:', newTitle);
+  if (article.value || page.value) {
     emit('update:title', newTitle);
-    setCustomTitle(newTitle);
-  }
-  
-  // Auto-save after a short delay
-  saveArticleDebounced();
-};
-
-// Handle document title update from header
-const updateDocumentTitle = (newTitle: string) => {
-  editTitle.value = newTitle;
-  
-  // Auto-save after a short delay
-  saveArticleDebounced();
-};
-
-// Handle document icon update
-const updateDocumentIcon = (newIcon: string) => {
-  documentIcon.value = newIcon;
-  
-  // Update the document object and emit changes
-  if (article.value) {
-    emit('update:document', document.value);
+    titleManager.setCustomTitle(newTitle);
     
-    // Auto-save after a short delay
-    saveArticleDebounced();
+    // Generate a slug from the title
+    const slug = newTitle.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    
+    // Update the document object with new title and slug
+    if (article.value) {
+      article.value.title = newTitle;
+      article.value.slug = slug;
+      // documentObj watcher will handle document updates
+    } else if (page.value) {
+      page.value.title = newTitle;
+      page.value.slug = slug;
+      // documentObj watcher will handle document updates
+    }
   }
+  
+  // Auto-save after a short delay
+  saveArticleDebounced();
 };
 
 // Debounced save function
@@ -232,59 +223,103 @@ const saveArticleDebounced = () => {
 
   saveTimeout = setTimeout(() => {
     saveMessage.value = "Document saved successfully";
-    saveArticle();
-  }, 1000) as unknown as number;
+    saveDocument();
+  }, 300) as unknown as number; // Reduced from 1000ms to 300ms
 };
 
-// Save article changes
-const saveArticle = async () => {
-  if (!article.value) return;
-
+// Save document changes
+const saveDocument = async () => {
+  isSaving.value = true;
+  
   try {
-    isSaving.value = true;
-    
-    // Update the article with new content, title, and icon
-    const updatedArticle: Article = {
-      ...article.value,
-      title: editTitle.value,
-      content: editContent.value,
-      lastUpdated: new Date().toISOString(),
-      icon: documentIcon.value
-    };
-
-    if (isTicketNote.value && ticketId.value) {
-      // Save ticket note
-      // TODO: Replace with actual API call to save ticket note
-      console.log(`Saving ticket note for ticket #${ticketId.value}`);
+    if (isTicketNote.value && route.query.ticketId) {
+      // Save ticket note using the dedicated article content endpoint
+      const ticketId = route.query.ticketId as string;
       
-      // For now, just update the local article
+      // Implement retry logic for ticket notes
+      const maxRetries = 2;
+      let retryCount = 0;
+      let success = false;
+      
+      while (retryCount <= maxRetries && !success) {
+        try {
+          // Update the article content with timeout - only update the ticket with article content
+          const nowDateTime = new Date().toISOString();
+          await Promise.race([
+            ticketService.updateTicket(Number(ticketId), {
+              modified: nowDateTime,
+              article_content: editContent.value // Explicitly update article_content in the ticket
+            }),
+            // Add a timeout to prevent hanging requests
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Request timeout')), 10000))
+          ]);
+          
+          if (article.value) {
+            article.value.content = editContent.value;
+            article.value.lastUpdated = nowDateTime;
+          }
+          
+          showSuccessMessage.value = true;
+          saveMessage.value = "Ticket notes saved successfully";
+          success = true;
+        } catch (err) {
+          retryCount++;
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          
+          if (retryCount <= maxRetries) {
+            console.warn(`Error saving ticket notes (attempt ${retryCount}/${maxRetries}): ${errorMessage}. Retrying...`);
+            // Wait a bit before retrying (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+          } else {
+            console.error(`Error saving ticket notes after ${maxRetries} attempts: ${errorMessage}`);
+            showSuccessMessage.value = true;
+            saveMessage.value = "Changes saved locally but not synced to server";
+          }
+        }
+      }
+    } else if (page.value) {
+      // Save page content
+      const updatedPage = await documentationService.savePageContent(
+        String(page.value.id), 
+        editContent.value,
+        'System Admin' // Default author
+      );
+      
+      if (updatedPage) {
+        page.value = updatedPage;
+        showSuccessMessage.value = true;
+      } else {
+        showSuccessMessage.value = false;
+        saveMessage.value = "Error saving document";
+      }
+    } else if (article.value) {
+      // Save article content
+      const updatedArticle = await documentationService.saveArticle({
+        ...article.value,
+        content: editContent.value,
+        title: editTitle.value,
+        slug: article.value.slug,
+        children: article.value.children || [] // Ensure children is always an array
+      } as import('@/services/documentationService').Page); // Type assertion to Page
+      
       article.value = updatedArticle;
-      
-      // In a real implementation, you would call a ticket service method here
-      // Example: await ticketService.saveTicketNotes(ticketId.value, editContent.value);
-    } else {
-      // Save regular documentation article
-      const savedArticle = await documentationService.saveArticle(updatedArticle);
-      article.value = savedArticle;
+      showSuccessMessage.value = true;
     }
-
-    // Show success message
-    showSuccessMessage.value = true;
-    setTimeout(() => {
-      showSuccessMessage.value = false;
-    }, 3000);
   } catch (error) {
-    console.error("Error saving article:", error);
-    saveMessage.value = "Error saving document";
+    console.error('Error saving document:', error);
     showSuccessMessage.value = true;
-    setTimeout(() => {
-      showSuccessMessage.value = false;
-    }, 3000);
+    saveMessage.value = "Error saving document";
   } finally {
     isSaving.value = false;
+    
+    // Hide success message after 3 seconds
+    setTimeout(() => {
+      showSuccessMessage.value = false;
+    }, 3000);
   }
 };
 
+// Format date for display
 const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString("en-US", {
     year: "numeric",
@@ -299,125 +334,538 @@ const formatDate = (dateString: string) => {
 const fallbackRoute = computed(() => {
   if (isTicketNote.value && ticketId.value) {
     return `/tickets/${ticketId.value}`;
-  } else {
+  } else if (!isIndexPage.value) {
     return '/documentation';
+  } else {
+    return '/';
   }
 });
 
 // Add a computed property for the back button label
 const backButtonLabel = computed(() => {
-  return isTicketNote.value ? 'Back to Ticket' : 'Back to Documentation';
-});
-
-// Watch for changes in the article title
-watch(() => article.value?.title, (newTitle) => {
-  if (newTitle && newTitle !== editTitle.value) {
-    editTitle.value = newTitle;
+  if (isTicketNote.value) {
+    return 'Back to Ticket';
+  } else if (!isIndexPage.value) {
+    return 'Back to Documentation';
+  } else {
+    return 'Back to Dashboard';
   }
 });
 
-onMounted(() => {
-  // Check if we're on a category page
-  if (route.name === 'documentation-category' && route.params.categoryId) {
-    fetchArticle('');  // The ID doesn't matter for categories, it's handled in the function
-  } else if (route.params.id) {
-    fetchArticle(route.params.id as string);
-  }
+// Filtered pages for search
+const filteredPages = computed(() => {
+  if (!searchQuery.value) return [];
   
-  // Ensure title and document are emitted on mount if we already have them
-  if (article.value && article.value.title) {
-    console.log('Emitting title on mount:', article.value.title);
-    emit('update:title', article.value.title);
-    setCustomTitle(article.value.title);
-    
-    // Initialize document icon if available
-    if (article.value.icon) {
-      documentIcon.value = article.value.icon;
-    }
-    
-    // Also emit the document object
-    if (document.value) {
-      console.log('Emitting document on mount:', document.value);
-      emit('update:document', document.value);
-    }
-  }
+  const query = searchQuery.value.toLowerCase();
+  const results: Array<{ id: string; title: string; description?: string; path?: string; icon?: string | undefined; isPage: boolean }> = [];
+  
+  // Helper function to recursively search through all pages and their children
+  const searchPagesRecursively = (pageList: Page[], parentPath = '') => {
+    pageList.forEach(page => {
+      // Check if this page matches
+      if (page.title.toLowerCase().includes(query)) {
+        results.push({
+          id: String(page.id),
+          title: page.title,
+          description: page.content?.substring(0, 100) || '',
+          icon: page.icon || undefined,
+          isPage: true
+        });
+      }
+      
+      // Recursively search children if they exist
+      if (page.children && page.children.length > 0) {
+        // Create the path for this level
+        const currentPath = parentPath ? `${parentPath}/${page.slug || page.id}` : `${page.slug || page.id}`;
+        
+        // Search each child
+        page.children.forEach(child => {
+          if (child.title.toLowerCase().includes(query)) {
+            results.push({
+              id: String(child.id),
+              title: child.title,
+              path: `/documentation/${child.id}`,
+              icon: child.icon || undefined,
+              isPage: false
+            });
+          }
+          
+          // If this child has its own children, search those too
+          if (child.children && child.children.length > 0) {
+            searchPagesRecursively([child as Page], currentPath);
+          }
+        });
+      }
+    });
+  };
+  
+  // Start recursive search with top-level pages
+  searchPagesRecursively(pages.value);
+  
+  return results;
 });
 
-// Save the document
-const saveDocument = async () => {
-  if (!editContent.value) {
-    return;
+// Handle search input
+const handleSearch = (query: string) => {
+  searchQuery.value = query;
+  searchDropdownVisible.value = query.length > 0;
+  // No longer updating URL parameters to avoid any page refreshes
+};
+
+// Close search dropdown when clicking outside
+const handleClickOutside = (event: MouseEvent) => {
+  if (searchRef.value && !searchRef.value.contains(event.target as Node)) {
+    searchDropdownVisible.value = false;
   }
-  
-  isSaving.value = true;
-  showSuccessMessage.value = false;
-  
+};
+
+// Create a new documentation page
+const createNewPage = async () => {
   try {
-    if (isCategory.value && category.value) {
-      // Save category content
-      const updatedCategory = await documentationService.saveCategoryContent(
-        category.value.id,
-        editContent.value,
-        category.value.author || 'System Admin'
-      );
+    console.log("Creating new documentation page...");
+    
+    // Set loading state
+    isSaving.value = true;
+    saveMessage.value = "Creating new page...";
+    showSuccessMessage.value = true;
+    
+    // Create a new page with all required fields matching the backend NewDocumentationPage struct
+    const newPageData = {
+      title: "New Documentation Page",
+      content: "# New Documentation Page\n\nStart writing your documentation here...",
+      author: "System Admin",
+      description: "Add a description here",
+      status: "draft",
+      icon: "📄",
+      slug: "new-documentation-page-" + Date.now(),
+      // Let the service handle the timestamps
+    };
+    
+    console.log("Sending page data:", newPageData);
+    
+    // Call the API
+    const newPage = await documentationService.createArticle(newPageData);
+    
+    // Navigate to the new page
+    if (newPage && newPage.id) {
+      console.log("New page created successfully, navigating to:", newPage);
       
-      if (updatedCategory) {
-        category.value = updatedCategory;
-        saveMessage.value = "Category documentation saved successfully";
-        showSuccessMessage.value = true;
-      }
-    } else if (isTicketNote.value && ticketId.value) {
-      // Save ticket note
-      // TODO: Replace with actual API call to save ticket note
-      console.log(`Saving ticket note for ticket #${ticketId.value}`);
+      // Emit an event that a new document was created
+      docsEmitter.emit('doc:created', { id: newPage.id });
       
-      // For now, just update the local article
-      if (article.value) {
-        article.value.content = editContent.value;
-        article.value.lastUpdated = new Date().toISOString();
-        saveMessage.value = "Ticket notes saved successfully";
-        showSuccessMessage.value = true;
-      }
-    } else if (article.value) {
-      // Save regular documentation article
-      const updatedArticle: Article = {
-        ...article.value,
-        title: editTitle.value,
-        content: editContent.value,
-        lastUpdated: new Date().toISOString(),
-        icon: documentIcon.value
-      };
+      // Update the sidebar via the documentation nav store
+      documentationNavStore.refreshPages();
       
-      const savedArticle = await documentationService.saveArticle(updatedArticle);
-      article.value = savedArticle;
-      saveMessage.value = "Document saved successfully";
+      // Navigate to the new page
+      router.push(`/documentation/${newPage.id}`);
+    } else {
+      console.error("Failed to create new page: newPage is null or missing ID");
+      // Show an error message to the user
+      saveMessage.value = "Error creating new page";
       showSuccessMessage.value = true;
+      setTimeout(() => {
+        showSuccessMessage.value = false;
+      }, 3000);
     }
   } catch (error) {
-    console.error("Error saving document:", error);
-    saveMessage.value = "Error saving document";
+    console.error("Error creating new page:", error);
+    // Show a more detailed error message
+    if (error instanceof Error) {
+      saveMessage.value = `Error: ${error.message}`;
+    } else {
+      saveMessage.value = "Error creating new page";
+    }
     showSuccessMessage.value = true;
-  } finally {
-    isSaving.value = false;
-    
-    // Show success message briefly
     setTimeout(() => {
       showSuccessMessage.value = false;
     }, 3000);
+  } finally {
+    // Reset loading state
+    isSaving.value = false;
   }
 };
+
+// Create a documentation page from a ticket
+const createFromTicket = async () => {
+  if (!selectedTicketId.value) {
+    return;
+  }
+  
+  try {
+    // Fetch the ticket to get its content
+    const ticket = await ticketService.getTicketById(selectedTicketId.value);
+    
+    if (ticket) {
+      // Create a new page with the ticket content
+      const newPage = await documentationService.createArticle({
+        title: `Documentation: ${ticket.title}`,
+        description: `Documentation created from ticket #${ticket.id}`,
+        content: ticket.article_content || '', // Use empty string if article_content is null
+        author: ticket.assignee || 'System Admin',
+        lastUpdated: new Date().toISOString(),
+        status: 'published',
+        icon: 'mdi-text-box-outline'
+      });
+      
+      // Navigate to the new page
+      if (newPage) {
+        router.push(`/documentation/${newPage.id}`);
+      }
+    } else {
+      console.error('Ticket not found');
+    }
+  } catch (error) {
+    console.error('Error creating documentation from ticket:', error);
+  }
+};
+
+// Modify the fetchContent method to load binary updates when appropriate
+const fetchContent = async () => {
+  isLoading.value = true;
+  // Reset state for the new page
+  isIndexPage.value = false;
+  isTicketNote.value = false;
+  page.value = null;
+  article.value = null;
+  isBinaryUpdate.value = false;
+  
+  // Check if we're creating from a ticket
+  if (route.query.createFromTicket === 'true') {
+    isCreateFromTicket.value = true;
+    isLoading.value = false;
+    return;
+  }
+  
+  // Check if this is a ticket note (moved this check before the path check)
+  if (route.query.ticketId) {
+    const ticketIdParam = route.query.ticketId as string;
+    console.log(`Loading ticket article for ticket ID: ${ticketIdParam}`);
+    
+    try {
+      const ticket = await ticketService.getTicketById(Number(ticketIdParam));
+      
+      if (ticket) {
+        article.value = {
+          id: `ticket-note-${ticketIdParam}`,
+          title: `Notes for Ticket #${ticket.id}`,
+          description: `Documentation for ticket ${ticket.title}`,
+          content: ticket.article_content || '', // Use empty string if article_content is null
+          author: ticket.assignee || 'System',
+          lastUpdated: ticket.modified,
+          status: 'published',
+          slug: '',  // Add missing required properties
+          parent_id: null,
+          icon: null
+        };
+        
+        isTicketNote.value = true;
+        ticketId.value = ticketIdParam;
+        editContent.value = article.value.content || '';
+        editTitle.value = article.value.title;
+        documentIcon.value = article.value?.icon || 'mdi-text-box-outline';
+        
+        emit('update:title', article.value.title);
+        // documentObj watcher will handle document updates
+        
+        isLoading.value = false;
+        return;
+      } else {
+        console.error(`Ticket ${ticketIdParam} not found`);
+      }
+    } catch (error) {
+      console.error(`Error loading ticket ${ticketIdParam}:`, error);
+    }
+  }
+  
+  // If we're on the main documentation route with no path, show the index page
+  if (!route.params.path || route.params.path === '') {
+    console.log('Loading main documentation index page');
+    await loadAllPages();
+    isLoading.value = false;
+    return;
+  }
+  
+  const path = route.params.path as string;
+  console.log(`Loading documentation page with path: ${path}`);
+  
+  try {
+    // Try to get the page by path
+    const result = await documentationService.getPageByPath(path);
+    
+    if (result) {
+      // If it's a Page with children (category)
+      if ('children' in result && Array.isArray(result.children)) {
+        page.value = result;
+        editContent.value = page.value.content || '';
+        editTitle.value = page.value.title;
+        documentIcon.value = page.value.icon || 'mdi-folder-outline';
+        
+        emit('update:title', page.value.title);
+        // documentObj watcher will handle document updates
+      } 
+      // If it's an Article or PageChild
+      else if ('id' in result && (typeof result.id === 'string' || typeof result.id === 'number')) {
+        // Fetch the full article content
+        const articleData = await documentationService.getArticleById(String(result.id));
+        
+        if (articleData) {
+          article.value = articleData;
+          editContent.value = article.value.content || '';
+          editTitle.value = article.value.title;
+          documentIcon.value = article.value?.icon || 'mdi-text-box-outline';
+          
+          emit('update:title', article.value.title);
+          // documentObj watcher will handle document updates
+        } else {
+          console.error(`Article with ID ${String(result.id)} not found`);
+          router.push('/documentation');
+          return;
+        }
+      } else {
+        console.error('Invalid result object:', result);
+        router.push('/documentation');
+        return;
+      }
+    } else {
+      console.error(`Page with path ${path} not found`);
+      // Instead of showing an error, redirect to the documentation index
+      router.push('/documentation');
+      return;
+    }
+  } catch (error) {
+    console.error('Error fetching content:', error);
+    // On error, redirect to the documentation index
+    router.push('/documentation');
+    return;
+  } finally {
+    // Before resolving the content fetch, try to get a binary update
+    if (docId.value && !isIndexPage.value) {
+      try {
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/collaboration/state/${docId.value}`, {
+          method: 'GET',
+          headers: { Accept: 'application/octet-stream' }
+        });
+        
+        if (response.ok) {
+          const binaryData = await response.arrayBuffer();
+          if (binaryData.byteLength > 0) {
+            // We have a binary update, convert to base64
+            const bytes = new Uint8Array(binaryData);
+            const binary = bytes.reduce((acc, byte) => acc + String.fromCharCode(byte), '');
+            const base64 = window.btoa(binary);
+            
+            editContent.value = base64;
+            isBinaryUpdate.value = true;
+            console.log('Loaded binary update for document:', docId.value);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching binary update:', error);
+      }
+    }
+    
+    isLoading.value = false;
+  }
+};
+
+// Watch for route changes to update content
+watch(() => route.params.path, () => {
+  fetchContent();
+}, { immediate: true });
+
+// Watch for search query in URL, but only on initial page load
+watch(() => route.query.search, (newSearch) => {
+  // Only update searchQuery from URL on initial load or navigation
+  // This prevents loops when the user types in the search box
+  if (newSearch && typeof newSearch === 'string' && searchQuery.value === '') {
+    searchQuery.value = newSearch;
+  } else if (!newSearch && route.path.startsWith('/documentation') && searchQuery.value !== '') {
+    // Only clear search if navigating to a documentation page without search
+    searchQuery.value = '';
+  }
+}, { immediate: true });
+
+// Watch for createFromTicket query parameter
+watch(() => route.query.createFromTicket, (newValue) => {
+  isCreateFromTicket.value = newValue === 'true';
+}, { immediate: true });
+
+// Emit the document object when it changes
+watch(documentObj, (newDocument) => {
+  emit('update:document', newDocument);
+}, { immediate: true });
+
+// Computed properties
+const flattenedPages = computed(() => {
+  const flattened: Array<Page & { level: number }> = [];
+  
+  function flattenPage(page: Page, level = 0) {
+    // Add the current page with its level
+    flattened.push({ ...page, level });
+    
+    // Recursively add children if they exist
+    if (page.children && Array.isArray(page.children)) {
+      page.children.forEach(child => {
+        if (child && typeof child === 'object' && 'id' in child) {
+          flattenPage(child as Page, level + 1);
+        }
+      });
+    }
+  }
+  
+  // Process each top-level page
+  pages.value.forEach(page => flattenPage(page));
+  
+  return flattened;
+});
+
+// Computed property for sorted pages
+const sortedPages = computed(() => {
+  // Create a flat array of all pages and their children
+  const allPages = pages.value.reduce((acc: Page[], page) => {
+    // Add the current page
+    acc.push(page);
+    // Add children if they exist
+    if (page.children && Array.isArray(page.children)) {
+      acc.push(...page.children.filter((child): child is Page => 
+        child && typeof child === 'object' && 'id' in child
+      ));
+    }
+    return acc;
+  }, []);
+
+  // Sort pages by lastUpdated date in descending order (most recent first)
+  return allPages.sort((a, b) => {
+    const dateA = new Date(a.lastUpdated || 0).getTime();
+    const dateB = new Date(b.lastUpdated || 0).getTime();
+    return dateB - dateA;
+  });
+});
+
+onMounted(() => {
+  // Check if we have a search query on mount
+  const flattened: any[] = [];
+  if (route.query.search === 'string') {
+    searchQuery.value = route.query.search;
+  }
+  
+  // Fetch content based on the route
+  fetchContent();
+});
+
+// Remove click outside listener on component unmount
+onUnmounted(() => {
+  window.document.removeEventListener('click', handleClickOutside);
+});
 </script>
 
 <template>
-  <div class="bg-slate-900 flex flex-col">
-    <!-- Main content area with a single scrollbar -->
-    <main class="flex-1 overflow-auto">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
-        <BackButton :fallbackRoute="fallbackRoute" :label="backButtonLabel" />
+  <div class="bg-slate-900 flex flex-col h-full">
+    <!-- Back button and metadata bar with subtle gradient background -->
+    <div class="bg-gradient-to-r from-slate-900 to-slate-800 border-b border-slate-700 w-full">
+      <!-- Using grid for 3-column layout with fr units for responsive design -->
+      <div class="grid grid-cols-[1fr_2fr_1fr] w-full items-center px-6 py-3">
+        <!-- Left column: Back button -->
+        <div class="flex justify-start">
+          <BackButton :fallbackRoute="fallbackRoute" :label="backButtonLabel" class="hover:scale-105 transition-transform duration-200" />
+        </div>
         
-        <div v-if="article" class="text-xs text-slate-400 flex items-center gap-4">
-          <span>{{ article.author }}</span>
-          <span>Updated {{ formatDate(article.lastUpdated) }}</span>
+        <!-- Center column: Search bar, using fr units for width -->
+        <div v-if="isMainDocumentationPage" class="flex justify-center items-center" ref="searchRef">
+          <div class="relative w-full max-w-3xl mx-auto">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <input 
+              v-model="searchQuery"
+              type="text"
+              placeholder="Search documentation..."
+              class="w-full pl-10 pr-4 py-2 bg-slate-800/80 text-white rounded-full placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-700 shadow-lg shadow-blue-900/5 transition-all duration-200 hover:border-blue-600/50 focus:border-blue-500"
+              @input="handleSearch(searchQuery)"
+              @focus="searchDropdownVisible = searchQuery.length > 0"
+            />
+            <div v-if="searchQuery" class="absolute inset-y-0 right-0 pr-3 flex items-center">
+              <button 
+                @click="searchQuery = ''; searchDropdownVisible = false" 
+                class="text-slate-400 hover:text-white p-1 rounded-full hover:bg-slate-700/50 transition-colors"
+                aria-label="Clear search"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          
+          <!-- Search Results as a dropdown -->
+          <div v-if="searchQuery && searchDropdownVisible" 
+               class="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-slate-800/90 border border-slate-700 rounded-lg shadow-xl z-50 max-h-96 overflow-y-auto w-full max-w-3xl backdrop-blur-sm"
+               style="backdrop-filter: blur(8px);">
+            <div class="p-3 border-b border-slate-700 flex justify-between items-center">
+              <h2 class="text-sm font-medium text-white flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                Search Results
+              </h2>
+              <button 
+                @click="searchDropdownVisible = false" 
+                class="text-slate-400 hover:text-white rounded-full p-1 hover:bg-slate-700/50"
+                aria-label="Close search results"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <!-- No results message -->
+            <div v-if="filteredPages.length === 0" class="p-6 text-center text-slate-400 text-sm">
+              <div class="flex flex-col items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-slate-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p>No pages found for "<span class="text-white">{{ searchQuery }}</span>"</p>
+                <span class="text-xs text-slate-500 mt-1">Try a different search term</span>
+              </div>
+            </div>
+            
+            <!-- Results list -->
+            <div v-else class="divide-y divide-slate-700">
+              <div v-for="item in filteredPages" :key="item.id" 
+                   class="hover:bg-slate-700 transition-colors">
+                <RouterLink 
+                  :to="item.path ? `/documentation/${item.path}` : `/documentation/${item.id}`" 
+                  class="flex items-start gap-3 p-4"
+                  @click="searchDropdownVisible = false"
+                >
+                  <div class="text-xl flex-shrink-0 bg-slate-700/50 p-1.5 rounded text-center" style="min-width: 2rem">
+                    {{ item.icon || '📄' }}
+                  </div>
+                  <div class="flex-1">
+                    <h3 class="text-white font-medium">{{ item.title }}</h3>
+                    <p v-if="item.description" class="text-slate-400 text-xs mt-1 line-clamp-2">
+                      {{ item.description }}
+                    </p>
+                    <div class="flex items-center gap-2 mt-2">
+                      <span class="text-xs text-blue-400 bg-blue-900/20 px-2 py-0.5 rounded">
+                        {{ item.isPage ? 'Page' : 'Topic' }}
+                      </span>
+                    </div>
+                  </div>
+                </RouterLink>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else></div> <!-- Empty placeholder when search isn't shown -->
+        
+        <!-- Right column: Metadata -->
+        <div v-if="article || page" class="text-xs text-slate-400 flex justify-end items-center gap-4">
+          <span class="hidden sm:inline">{{ article?.author || page?.author || 'System' }}</span>
+          <span>Updated {{ formatDate(article?.lastUpdated || page?.lastUpdated || new Date().toISOString()) }}</span>
           <span v-if="isSaving" class="text-blue-400 flex items-center gap-1">
             <svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -426,39 +874,189 @@ const saveDocument = async () => {
             Saving...
           </span>
         </div>
+        <div v-else class="flex justify-end">
+          <!-- Empty div for consistent grid layout when no metadata -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Main content area with a single scrollbar for the entire page -->
+    <div class="flex flex-col flex-1 items-center overflow-auto bg-gradient-to-b from-slate-900 to-slate-950">
+      <!-- Search Results - Removed from main content area -->
+
+      <!-- Index Page View -->
+      <div v-if="isIndexPage" class="flex flex-col max-w-5xl mx-auto w-full px-4 py-8 gap-8 animate-fadeIn">  
+        <!-- Documentation header and controls -->
+        <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+          <div class="flex flex-col gap-2">
+            <h1 class="text-3xl font-bold text-white flex items-center gap-3">
+              <span class="text-blue-400 text-4xl">📚</span>
+              Documentation
+            </h1>
+            <p class="text-slate-300 text-base max-w-2xl">
+              Browse and manage your documentation pages. Click on a page to view or edit it.
+            </p>
+          </div>
+          <button 
+            @click="createNewPage"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg flex items-center gap-2 text-sm font-medium shadow-lg transition-all duration-200 ease-in-out transform hover:scale-105"
+            :disabled="isSaving"
+          >
+            <span v-if="isSaving" class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+            <span v-else class="text-lg">+</span>
+            <span>{{ isSaving ? 'Creating...' : 'New Page' }}</span>
+          </button>
+        </div>
+
+        <!-- Recent Pages Section -->
+        <div class="flex flex-col gap-4">
+          <div class="flex items-center gap-2 pb-2 border-b border-slate-700">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+            </svg>
+            <h2 class="text-lg font-medium text-white">Recent Pages</h2>
+          </div>
+
+          <!-- List of pages -->
+          <div class="flex flex-col gap-2">
+            <RouterLink 
+              v-for="page in sortedPages" 
+              :key="page.id"
+              :to="`/documentation/${page.id}`"
+              class="bg-slate-800 rounded-lg overflow-hidden border border-slate-700/50 transition-all duration-200 hover:border-blue-500/30 hover:shadow-blue-900/20 hover:-translate-y-0.5 group focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            >
+              <div class="p-4">
+                <div class="flex items-center gap-3">
+                  <div class="text-2xl flex-shrink-0">{{ page.icon || '📄' }}</div>
+                  <div class="flex-1 min-w-0">
+                    <h3 class="text-white font-medium group-hover:text-blue-400 transition-colors">
+                      {{ page.title }}
+                    </h3>
+                    <p v-if="page.description" class="text-slate-400 text-sm mt-1 line-clamp-2">
+                      {{ page.description }}
+                    </p>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-slate-500">
+                      <span>{{ formatDate(page.lastUpdated || new Date().toISOString()) }}</span>
+                      <span>·</span>
+                      <span>{{ page.author || 'System' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </RouterLink>
+          </div>
+        </div>
+
+        <!-- Empty state for no pages -->
+        <div v-if="pages.length === 0" class="text-center p-10 bg-slate-800/70 rounded-xl shadow-lg border border-slate-700/50 mt-4">
+          <div class="flex flex-col items-center gap-4">
+            <div class="text-5xl mb-4">📝</div>
+            <h3 class="text-xl font-semibold text-white mb-2">No documentation yet</h3>
+            <p class="text-slate-400 mb-6 max-w-md mx-auto">
+              Create your first documentation page to start building a knowledge base.
+            </p>
+            <button 
+              @click="createNewPage"
+              class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg"
+            >
+              <span class="text-lg">+</span>
+              Create your first page
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div v-if="article" class="flex justify-center h-full p-4">
-        <MarkdownEditor
+      <!-- Document Content View -->
+      <div v-else-if="article || page" class="flex flex-1 max-w-4xl mx-auto w-full justify-center p-4 animate-fadeIn h-full">
+        <CollaborativeEditor
           v-model="editContent"
+          :doc-id="docId"
+          :is-binary-update="isBinaryUpdate"
+          placeholder="Enter documentation content here..."
           @update:modelValue="updateContent"
-          @save="saveArticle"
-          class="h-full max-w-7xl mx-auto"
+          class="w-full flex-1 flex flex-col"
         />
       </div>
 
+      <!-- Loading State -->
       <div
         v-else-if="isLoading"
         class="flex justify-center items-center h-full"
       >
-        <div
-          class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"
-        ></div>
+        <div class="flex flex-col items-center gap-4">
+          <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          <div class="text-blue-400 animate-pulse">Loading content...</div>
+        </div>
       </div>
 
-      <div v-else class="p-6 text-center text-slate-400">Article not found</div>
-    </main>
+      <!-- Create from ticket form -->
+      <div v-else-if="isCreateFromTicket" class="max-w-4xl mx-auto w-full p-6 bg-slate-800/70 rounded-lg shadow-lg mt-8 border border-slate-700/50 animate-fadeIn">
+        <h1 class="text-2xl font-bold text-white mb-6">Create Documentation from Ticket</h1>
+        
+        <div class="mb-6">
+          <label for="ticketId" class="block text-sm font-medium text-slate-300 mb-2">Ticket ID</label>
+          <input 
+            type="number" 
+            id="ticketId" 
+            v-model="selectedTicketId" 
+            class="w-full px-4 py-2 bg-slate-700 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 border border-slate-600"
+            placeholder="Enter ticket ID"
+          />
+        </div>
+        
+        <div class="flex justify-end">
+          <button 
+            @click="createFromTicket" 
+            class="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transform transition-all duration-200 hover:scale-105 shadow-lg flex items-center gap-2"
+            :disabled="!selectedTicketId"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 3a1 1 0 00-1 1v5H4a1 1 0 100 2h5v5a1 1 0 102 0v-5h5a1 1 0 100-2h-5V4a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+            Create Documentation
+          </button>
+        </div>
+      </div>
+
+      <!-- Not Found State -->
+      <div v-else class="p-8 text-center text-slate-400 flex flex-col items-center gap-4 animate-fadeIn">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-slate-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <h2 class="text-xl font-semibold text-white">Document not found</h2>
+        <p class="text-slate-400 max-w-md">The document you're looking for doesn't exist or has been moved.</p>
+        <RouterLink to="/documentation" class="mt-4 text-blue-400 hover:text-blue-300">
+          Go to Documentation Home
+        </RouterLink>
+      </div>
+    </div>
 
     <!-- Success message toast -->
     <div
       v-if="showSuccessMessage"
-      class="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-md shadow-lg"
+      class="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-md shadow-lg flex items-center gap-2 animate-fadeIn"
     >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+      </svg>
       {{ saveMessage }}
     </div>
   </div>
 </template>
 
 <style scoped>
-/* No additional styles needed */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
 </style>

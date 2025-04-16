@@ -1,12 +1,13 @@
 import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions'
 
 export interface Device {
-  id: string;
+  id: number;
   name: string;
   hostname: string;
-  serialNumber: string;
+  serial_number: string;
   model: string;
-  warrantyStatus: string;
+  warranty_status: string;
+  ticket_id?: number | null;
 }
 
 export interface Ticket {

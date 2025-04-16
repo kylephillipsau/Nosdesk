@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import UserAvatar from './UserAvatar.vue'
+import { computed } from 'vue'
+import userService from '@/services/userService'
 
 interface TicketDetails {
   title: string
@@ -12,14 +14,82 @@ interface TicketDetails {
 
 const props = defineProps<{
   text: string
-  details?: TicketDetails
+  details?: {
+    title?: string
+    status?: string
+    requester?: string
+    assignee?: string
+    created?: string
+  }
   position?: 'top' | 'bottom' | 'left' | 'right'
   delay?: number
   disabled?: boolean
+  fullWidth?: boolean
 }>()
 
 const container = ref<HTMLElement | null>(null)
 const tooltipTop = ref(0)
+const isHovering = ref(false)
+const users = ref<any[]>([])
+const loading = ref(false)
+const tooltipVisible = ref(false)
+const hoverTimer = ref<number | null>(null)
+const hideTimer = ref<number | null>(null)
+
+// Fetch users when component is mounted
+onMounted(async () => {
+  if (props.details?.requester || props.details?.assignee) {
+    await fetchUsers()
+  }
+})
+
+// Also fetch users when hovering starts (as a backup)
+watch(isHovering, async (newValue) => {
+  if (newValue && (props.details?.requester || props.details?.assignee)) {
+    await fetchUsers()
+  }
+})
+
+// Fetch users from the API - this is now just a backup
+// as UserAvatar will handle most of the loading
+const fetchUsers = async () => {
+  if (users.value.length > 0 || loading.value) return // Don't fetch if we already have users or are loading
+  
+  loading.value = true
+  try {
+    users.value = await userService.getUsers()
+  } catch (err) {
+    console.error('Error fetching users in QuickTooltip:', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Get user name from UUID
+const getUserName = (uuid: string | undefined) => {
+  if (!uuid) return 'Unassigned'
+  
+  // Check if it looks like a UUID
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidPattern.test(uuid)) return uuid // If not a UUID, return as is
+  
+  if (loading.value) return 'Loading...'
+  
+  const user = users.value.find(u => u.uuid === uuid)
+  return user ? user.name : uuid
+}
+
+// Computed properties for user names
+const requesterName = computed(() => getUserName(props.details?.requester))
+const assigneeName = computed(() => getUserName(props.details?.assignee))
+
+watch(isHovering, (newValue) => {
+  if (newValue) {
+    nextTick(() => {
+      updatePosition()
+    })
+  }
+})
 
 const updatePosition = () => {
   if (container.value) {
@@ -27,25 +97,69 @@ const updatePosition = () => {
     tooltipTop.value = rect.top + (rect.height / 2)
   }
 }
+
+const handleMouseEnter = () => {
+  isHovering.value = true
+  
+  // Clear any existing timers
+  if (hoverTimer.value !== null) {
+    window.clearTimeout(hoverTimer.value)
+    hoverTimer.value = null
+  }
+  
+  if (hideTimer.value !== null) {
+    window.clearTimeout(hideTimer.value)
+    hideTimer.value = null
+  }
+  
+  // Show tooltip immediately
+  tooltipVisible.value = true
+  nextTick(() => {
+    updatePosition()
+  })
+}
+
+const handleMouseLeave = () => {
+  isHovering.value = false
+  
+  // Clear any existing hover timer
+  if (hoverTimer.value !== null) {
+    window.clearTimeout(hoverTimer.value)
+    hoverTimer.value = null
+  }
+  
+  // Set a small delay before hiding to prevent flickering
+  // when moving between elements quickly
+  hideTimer.value = window.setTimeout(() => {
+    tooltipVisible.value = false
+  }, 50) // Small delay to prevent flickering
+}
+
+// Add a watch for tooltipVisible to ensure position is updated when tooltip becomes visible
+watch(tooltipVisible, (newValue) => {
+  if (newValue) {
+    nextTick(() => {
+      updatePosition()
+    })
+  }
+})
 </script>
 
 <template>
   <div 
-    class="relative flex-1 min-w-0" 
+    class="relative min-w-0" 
+    :class="{ 'flex-1': !fullWidth, 'w-full': fullWidth }"
     ref="container"
-    @mouseenter="updatePosition"
-    @mouseover="updatePosition"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
   >
     <slot />
     <div 
-      v-if="!disabled"
-      class="absolute invisible opacity-0 group-hover:visible group-hover:opacity-100
-             bg-gray-900 text-white text-xs px-3 py-2 rounded shadow-lg
-             pointer-events-none z-[9999] w-[240px]"
+      v-if="!disabled && tooltipVisible"
+      class="absolute bg-gray-900 text-white text-xs px-3 py-2 rounded shadow-lg
+             pointer-events-none z-[9999] w-[240px] transition-opacity duration-150"
+      :class="{ 'opacity-0': !tooltipVisible, 'opacity-100': tooltipVisible }"
       :style="{
-        transitionDelay: `${delay || 0}ms`,
-        transitionProperty: 'opacity',
-        transitionDuration: '50ms',
         position: 'fixed',
         left: 'calc(256px + 0.5rem)', // 256px is the navbar width (w-64 = 16rem = 256px)
         top: `${tooltipTop}px`,
@@ -70,11 +184,17 @@ const updatePosition = () => {
           <div v-if="details.requester || details.assignee" class="flex flex-col gap-1.5">
             <div v-if="details.requester" class="flex items-center gap-2">
               <UserAvatar :name="details.requester" :showName="false" size="xs" />
-              <span class="truncate">{{ details.requester }}</span>
+              <span class="flex flex-row gap-1 truncate">
+                <span class="text-gray-500">Requester:</span> 
+                <span :class="{ 'text-gray-500 italic': loading }">{{ requesterName }}</span>
+              </span>
             </div>
             <div v-if="details.assignee" class="flex items-center gap-2">
               <UserAvatar :name="details.assignee" :showName="false" size="xs" />
-              <span class="truncate">{{ details.assignee }}</span>
+              <span class="flex flex-row gap-1 truncate">
+                <span class="text-gray-500">Assignee:</span> 
+                <span :class="{ 'text-gray-500 italic': loading }">{{ assigneeName }}</span>
+              </span>
             </div>
           </div>
           <div v-if="details.created" class="text-[11px] text-gray-500">

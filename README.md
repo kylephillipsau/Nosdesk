@@ -1,8 +1,8 @@
-# nosDesk
+# Nosdesk
 
 **The Helpdesk Reimagined for Speed and Efficiency in Education**
 
-`NosDesk` is a helpdesk solution designed specifically for educational institutions. It streamlines ticket management, enhances communication between staff and students, and optimizes workflows to ensure rapid resolution of issues in a school or university setting. Built with Vue.js, Tailwind CSS and other modern web technologies, `NosDesk` prioritizes speed, scalability, and user experience.
+`Nosdesk` is a helpdesk solution designed specifically for educational institutions. It streamlines ticket management, enhances communication between staff and students, and optimizes workflows to ensure rapid resolution of issues in a school or university setting. Built with Vue.js, Rust and PostgreSQL, `Nosdesk` prioritizes speed, scalability, and user experience.
 
 ## Table of Contents
 - [Features](#features)
@@ -17,9 +17,9 @@
 - **Education-Focused**: Tailored for schools, colleges, and universities to manage IT, facilities, and administrative issues.
 - **Fast Ticket Resolution**: Intuitive interface and efficient workflows for quick issue tracking and resolution.
 - **User Roles**: Supports roles like students, teachers, IT staff, facilities management, and administrators with role-based access control.
-- **Real-Time Updates**: Live status updates for tickets and device management.
+- **Real-Time Updates**: Live status updates and collaborative tickets, documentation and device management.
 - **Customizable**: Easily configurable to fit the needs of different educational institutions.
-- **Responsive Design**: Works seamlessly on desktops, tablets, and mobile devices.
+- **Responsive Design**: Works seamlessly on all web connected devices, desktops, tablets, and mobile devices.
 
 ## Getting Started
 
@@ -31,8 +31,8 @@ Before you begin, ensure you have the following installed:
 ### Installation
 1. Clone the repository:
    ```sh
-   git clone https://github.com/your-username/nosDesk.git
-   cd nosDesk
+   git clone https://github.com/your-username/Nosdesk.git
+   cd Nosdesk
    ```
 2. Install dependencies:
    ```sh
@@ -48,7 +48,7 @@ npm run dev
 This launches the development server, typically accessible at `http://localhost:5173` (or the port specified by Vite).
 
 ## Type Support
-`nosDesk` uses TypeScript for robust type checking. By default, TypeScript does not handle type information for `.vue` imports. To enable full type support:
+`Nosdesk` uses TypeScript for robust type checking. By default, TypeScript does not handle type information for `.vue` imports. To enable full type support:
 - Use **[Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)** in your IDE for `.vue` type awareness.
 - Replace the standard `tsc` CLI with `vue-tsc` for type checking in your terminal:
   ```sh
@@ -56,7 +56,7 @@ This launches the development server, typically accessible at `http://localhost:
   ```
 
 ## License
-`nosDesk` is licensed under the [MIT License](LICENSE). See the `LICENSE` file for more details.
+`Nosdesk` is licensed under the [MIT License](LICENSE). See the `LICENSE` file for more details.
 
 ## Acknowledgements
 

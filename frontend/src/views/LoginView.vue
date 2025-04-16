@@ -2,14 +2,44 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import logo from '@/assets/logo.svg';
 
 const router = useRouter();
+const authStore = useAuthStore();
 const email = ref('');
 const password = ref('');
+const rememberMe = ref(false);
+const isLoading = ref(false);
+const errorMessage = ref('');
 
-const handleLogin = () => {
-  // API endpoint needed: POST /api/auth/login
+const handleLogin = async () => {
+  isLoading.value = true;
+  errorMessage.value = '';
+  
+  try {
+    const success = await authStore.login({
+      email: email.value,
+      password: password.value
+    });
+    
+    if (!success && authStore.error) {
+      errorMessage.value = authStore.error;
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    errorMessage.value = 'An unexpected error occurred. Please try again.';
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+const handleMicrosoftLogin = () => {
+  // Placeholder for Microsoft Entra integration
+  // This would redirect to Microsoft's authentication endpoint
+  console.log('Microsoft Entra login clicked');
+  // For actual implementation:
+  // window.location.href = 'https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?...'
 };
 </script>
 
@@ -18,8 +48,13 @@ const handleLogin = () => {
     <div class="flex flex-col gap-4 w-full max-w-md p-8">
       <!-- Logo/Brand -->
       <div class="flex flex-col gap-2 items-center">
-        <img :src="logo" alt="NosDesk Logo" class="px-8" />
+        <img :src="logo" alt="Nosdesk Logo" class="px-8" />
         <p class="text-slate-400 mt-2">Sign in to your account</p>
+      </div>
+
+      <!-- Error Message -->
+      <div v-if="errorMessage" class="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg text-sm">
+        {{ errorMessage }}
       </div>
 
       <!-- Login Form -->
@@ -49,9 +84,10 @@ const handleLogin = () => {
         </div>
 
         <div class="flex items-center justify-between">
-          <div class="flex items-center">
+          <div class="flex items-center gap-1.5">
             <input
               id="remember-me"
+              v-model="rememberMe"
               type="checkbox"
               class="h-4 w-4 rounded border-slate-700 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
             />
@@ -63,9 +99,31 @@ const handleLogin = () => {
 
         <button
           type="submit"
-          class="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-slate-900"
+          :disabled="isLoading"
+          class="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Sign in
+          <span v-if="isLoading">Signing in...</span>
+          <span v-else>Sign in</span>
+        </button>
+        
+        <div class="relative flex items-center justify-center">
+          <div class="border-t border-slate-700 flex-grow"></div>
+          <span class="mx-4 text-sm text-slate-500">or</span>
+          <div class="border-t border-slate-700 flex-grow"></div>
+        </div>
+        
+        <button
+          type="button"
+          @click="handleMicrosoftLogin"
+          class="w-full flex gap-1 justify-center items-center py-2 px-4 border border-slate-600 rounded-lg shadow-sm text-sm font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 focus:ring-offset-slate-900"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21" class="mr-2">
+            <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+            <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+            <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+          </svg>
+          Sign in with Microsoft Entra
         </button>
       </form>
     </div>

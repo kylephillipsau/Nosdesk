@@ -17,26 +17,29 @@ const isDragging = ref(false);
 const draggedPosition = ref(0);
 const rafId = ref<number | null>(null);
 const lastSeekTime = ref<number>(0);
-const SEEK_THROTTLE = 16; // About 60fps
+const SEEK_THROTTLE = 50; // Throttle for actual seek events
 
+// Use the draggedPosition directly for visual updates when dragging
 const indicatorPosition = computed(() => {
   return isDragging.value ? draggedPosition.value : (props.currentTime / props.duration) * 100 || 0;
 });
 
+// Disable logging for production, only enable for debugging
 const log = (event: string, details?: any) => {
-  console.log(`[ProgressBar] ${event}`, details || '');
+  // Uncomment for debugging
+  // console.log(`[ProgressBar] ${event}`, details || '');
 };
 
 const updateSeek = (newPosition: number) => {
   if (!props.duration) return;
   
+  // Always update visual position immediately for smooth UI
+  draggedPosition.value = newPosition;
+  
   const now = performance.now();
   const timeSinceLastSeek = now - lastSeekTime.value;
   
-  // Always update visual position immediately
-  draggedPosition.value = newPosition;
-  
-  // Throttle actual seek events
+  // Throttle actual seek events to reduce performance impact
   if (timeSinceLastSeek >= SEEK_THROTTLE) {
     const seekTime = (newPosition / 100) * props.duration;
     emit('seek', seekTime);
@@ -44,8 +47,10 @@ const updateSeek = (newPosition: number) => {
   } else if (!rafId.value) {
     // Schedule a future seek if we're throttling
     rafId.value = requestAnimationFrame(() => {
-      const seekTime = (draggedPosition.value / 100) * props.duration;
-      emit('seek', seekTime);
+      if (isDragging.value) { // Only emit if still dragging
+        const seekTime = (draggedPosition.value / 100) * props.duration;
+        emit('seek', seekTime);
+      }
       lastSeekTime.value = performance.now();
       rafId.value = null;
     });
@@ -70,19 +75,17 @@ const updatePositionFromTouch = (event: TouchEvent) => {
 };
 
 const handleMouseDown = (event: MouseEvent) => {
-  log('mousedown', { x: event.clientX, y: event.clientY });
   event.preventDefault();
   if (!props.duration || !progressBarRef.value) return;
   emit('dragstart');
   isDragging.value = true;
   updatePositionFromMouse(event);
-  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mousemove', handleMouseMove, { passive: true });
   document.addEventListener('mouseup', handleMouseUp);
 };
 
 const handleMouseMove = (event: MouseEvent) => {
   if (!isDragging.value) return;
-  log('mousemove', { x: event.clientX, y: event.clientY });
   updatePositionFromMouse(event);
 };
 
@@ -105,7 +108,6 @@ const handleMouseUp = () => {
 };
 
 const handleTouchStart = (event: TouchEvent) => {
-  log('touchstart');
   event.preventDefault();
   if (!props.duration || !progressBarRef.value) return;
   emit('dragstart');
@@ -156,7 +158,7 @@ onUnmounted(() => {
     @touchstart.stop="handleTouchStart"
   >
     <div
-      class="absolute inset-y-0 left-0 bg-blue-500 rounded-full transition-[width]"
+      class="absolute inset-y-0 left-0 bg-blue-500 rounded-full"
       :style="{ width: `${indicatorPosition}%` }"
     ></div>
     <div

@@ -4,88 +4,21 @@ import { RouterView, useRoute } from 'vue-router'
 import { computed, ref } from 'vue'
 import Navbar from './components/Navbar.vue'
 import PageHeader from './components/SiteHeader.vue'
-import { usePageTitle } from '@/composables/usePageTitle'
+import { useTitleManager } from '@/composables/useTitleManager'
 
 const route = useRoute()
 const isBlankLayout = computed(() => route.meta.layout === 'blank')
-const { setCustomTitle } = usePageTitle();
 
-// Add reactive ticket data
-const currentTicket = ref<{ id: number; title: string } | null>(null);
-const currentDocument = ref<{ id: string; title: string; icon: string } | null>(null);
-const documentationTitle = ref<string | null>(null);
-const isTransitioning = ref(false);
+// State for navbar collapse
+const navbarCollapsed = ref(false)
+const handleNavCollapse = (collapsed: boolean) => {
+  navbarCollapsed.value = collapsed
+}
 
-const handleTicketData = (ticketData: { id: number; title: string } | null) => {
-  currentTicket.value = ticketData;
-};
+// Use the centralized title manager
+const titleManager = useTitleManager();
 
-const handleDocumentData = (documentData: { id: string; title: string; icon: string } | null) => {
-  console.log('App received document data:', documentData);
-  currentDocument.value = documentData;
-  if (documentData) {
-    documentationTitle.value = documentData.title;
-    setCustomTitle(documentData.title);
-  }
-};
-
-const handleUpdateTicketTitle = (newTitle: string) => {
-  if (currentTicket.value) {
-    currentTicket.value.title = newTitle;
-    // Don't update page title here, as it's handled by the route
-  }
-};
-
-const handleUpdateDocumentTitle = (newTitle: string) => {
-  if (currentDocument.value) {
-    currentDocument.value.title = newTitle;
-    documentationTitle.value = newTitle;
-    setCustomTitle(newTitle);
-  }
-};
-
-const handleUpdateDocumentIcon = (newIcon: string) => {
-  if (currentDocument.value) {
-    currentDocument.value.icon = newIcon;
-    // No need to update page title for icon changes
-  }
-};
-
-// Handle direct title updates from documentation pages
-const handleUpdateTitle = (title: string) => {
-  console.log('App received title update:', title);
-  documentationTitle.value = title;
-  setCustomTitle(title);
-};
-
-const handleBeforeEnter = () => {
-  isTransitioning.value = true;
-};
-
-const handleAfterEnter = () => {
-  isTransitioning.value = false;
-};
-
-const handleBeforeLeave = () => {
-  isTransitioning.value = true;
-};
-
-const handleAfterLeave = () => {
-  // Only clear ticket data after the leave animation completes
-  if (route.name !== 'ticket') {
-    currentTicket.value = null;
-  }
-  
-  // Clear documentation title if leaving documentation page
-  if (route.name !== 'documentation-article') {
-    documentationTitle.value = null;
-    currentDocument.value = null;
-  }
-  
-  isTransitioning.value = false;
-};
-
-// Get ticket information from the route if we're in a ticket view
+// Handle route-based ticket information
 const ticketInfo = computed(() => {
   // Handle ticket routes
   if (route.name === 'ticket' && route.params.id) {
@@ -106,19 +39,6 @@ const isDocumentationPage = computed(() => {
   return route.name === 'documentation-article';
 });
 
-// Computed property for the current page title
-const currentPageTitle = computed(() => {
-  console.log('Computing currentPageTitle:', {
-    isDocumentationPage: isDocumentationPage.value,
-    documentationTitle: documentationTitle.value
-  });
-  
-  if (isDocumentationPage.value && documentationTitle.value) {
-    return documentationTitle.value;
-  }
-  return undefined;
-});
-
 // Computed property for the current page URL (for display purposes)
 const currentPageUrl = computed(() => {
   // Only show URL for certain pages
@@ -127,59 +47,83 @@ const currentPageUrl = computed(() => {
   }
   return undefined;
 });
+
+// Computed properties for responsive layout
+const contentPadding = computed(() => {
+  // Only apply left padding on large screens (lg)
+  if (navbarCollapsed.value) {
+    return 'lg:pl-16'; // 4rem when navbar is collapsed on desktop
+  } else {
+    return 'lg:pl-64'; // 16rem when navbar is expanded on desktop
+  }
+})
+
+const headerLeft = computed(() => {
+  // On desktop, position header relative to sidebar
+  // On mobile, position from edge of screen
+  if (navbarCollapsed.value) {
+    return 'lg:left-16 left-0'; // 4rem when navbar is collapsed on desktop
+  } else {
+    return 'lg:left-64 left-0'; // 16rem when navbar is expanded on desktop
+  }
+})
 </script>
 
 <template>
   <!-- Blank layout for login -->
   <RouterView v-if="isBlankLayout" />
 
-  <!-- Default layout with navbar and header -->
-  <div v-else class="flex w-full h-screen bg-slate-900">
-    <!-- Fixed navbar -->
-    <Navbar class="fixed left-0 top-0 h-screen w-64 z-20" />
+  <!-- Default layout with responsive navigation -->
+  <div v-else class="flex w-full h-screen bg-slate-900 overflow-hidden">
+    <!-- Navbar component (includes both desktop sidebar and mobile bottom nav) -->
+    <Navbar @update:collapsed="handleNavCollapse" />
     
-    <!-- Main content area -->
-    <div class="flex flex-col not-print:pl-64 w-full min-h-screen">
-      <!-- Fixed header -->
+    <!-- Main content area with responsive padding -->
+    <div class="flex flex-col w-full h-screen transition-all duration-300 ease-in-out" :class="contentPadding">
+      <!-- Fixed header that adjusts with navbar -->
       <PageHeader 
-        class="not-print:fixed top-0 right-0 left-64 print:left-0 h-16 z-10 border-b border-slate-600 bg-slate-800" 
+        class="not-print:fixed top-0 z-10 border-b border-slate-600 bg-slate-800 transition-all duration-300 ease-in-out right-0"
+        :class="[
+          { 'left-0': true },
+          { 'lg:left-16': navbarCollapsed },
+          { 'lg:left-64': !navbarCollapsed }
+        ]"
         :useRouteTitle="!isDocumentationPage"
-        :title="currentPageTitle"
+        :title="titleManager.pageTitle.value"
         :showCreateButton="true"
-        :ticket="currentTicket"
-        :document="currentDocument"
-        :is-transitioning="isTransitioning"
+        :ticket="titleManager.currentTicket.value"
+        :document="titleManager.currentDocument.value"
+        :is-transitioning="titleManager.isTransitioning.value"
         :pageUrl="currentPageUrl"
-        @update-ticket-title="handleUpdateTicketTitle"
-        @update-document-title="handleUpdateDocumentTitle"
-        @update-document-icon="handleUpdateDocumentIcon"
+        :navbarCollapsed="navbarCollapsed"
+        @update-ticket-title="titleManager.updateTicketTitle"
+        @preview-ticket-title="titleManager.previewTicketTitle"
+        @update-document-title="titleManager.updateDocumentTitle"
+        @preview-document-title="titleManager.previewDocumentTitle"
+        @update-document-icon="titleManager.updateDocumentIcon"
       />
       
-      <!-- Debug route info -->
-      <div v-if="false" class="hidden">
-        Current route: {{ route.name }}, 
-        isDocumentationPage: {{ isDocumentationPage }},
-        documentationTitle: {{ documentationTitle }},
-        currentDocument: {{ currentDocument }}
-      </div>
-      
-      <!-- Scrollable content -->
-      <main class="flex-1 not-print:pt-16">
+      <!-- Scrollable content with bottom padding for mobile nav -->
+      <main class="flex-1 not-print:pt-16 overflow-hidden pb-16 lg:pb-0">
         <RouterView 
           v-slot="{ Component }" 
-          @update:ticket="handleTicketData"
-          @update:document="handleDocumentData"
-          @update:title="handleUpdateTitle"
+          @update:ticket="titleManager.setTicket"
+          @update:document="titleManager.setDocument"
+          @update:title="titleManager.setCustomTitle"
         >
           <Transition 
             name="fade" 
             mode="out-in"
-            @before-enter="handleBeforeEnter"
-            @after-enter="handleAfterEnter"
-            @before-leave="handleBeforeLeave"
-            @after-leave="handleAfterLeave"
+            @before-enter="titleManager.startTransition"
+            @after-enter="titleManager.endTransition"
+            @before-leave="titleManager.startTransition"
+            @after-leave="() => {
+              if (route.name !== 'ticket') titleManager.clearTicket();
+              if (route.name !== 'documentation-article') titleManager.clearDocument();
+              titleManager.endTransition();
+            }"
           >
-            <component :is="Component" :key="$route.fullPath" />
+            <component :is="Component" :key="$route.fullPath" class="h-full overflow-auto" />
           </Transition>
         </RouterView>
       </main>
@@ -187,23 +131,12 @@ const currentPageUrl = computed(() => {
   </div>
 </template>
 
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.15s ease-in-out;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
-
 <style>
 /* Global styles */
 html, body {
   background-color: rgb(15 23 42); /* bg-slate-900 */
   min-height: 100vh;
+  overflow: hidden; /* Prevent double scrollbars */
 }
 
 /* Custom scrollbar styles */
@@ -244,5 +177,16 @@ html, body {
     width: 0.75rem;  /* 12px at default font size */
     height: 0.75rem;
   }
+}
+
+/* Fade transition for page changes */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

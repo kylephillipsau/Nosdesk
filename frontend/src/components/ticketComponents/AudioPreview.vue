@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import UserAvatar from "@/components/UserAvatar.vue";
 import AudioPlayer from "@/components/ticketComponents/AudioPlayer.vue";
+import { computed } from 'vue';
 
 interface Props {
   blob: Blob;
@@ -23,22 +24,37 @@ const emit = defineEmits<{
 
 const urlCreator = window.URL || window.webkitURL;
 
+// Generate a more user-friendly name for the voice note
+const voiceNoteName = computed(() => {
+  const now = new Date();
+  const formattedDate = now.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  return `Voice Note ${formattedDate}`;
+});
+
 const handleConfirm = () => {
   emit('submit', {
     blob: props.blob,
-    name: `Voice Note ${new Date().toLocaleTimeString()}.webm`
+    name: `${voiceNoteName.value}.webm`
   });
   emit('confirm');
 };
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-lg p-3">
+  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg p-3 w-full">
+    <!-- Header with filename and controls -->
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-2">
-        <UserAvatar :name="author" :showName="false" />
+        <svg class="w-5 h-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clip-rule="evenodd" />
+        </svg>
         <div class="flex flex-col">
-          <span class="text-sm text-slate-200">{{ author }}</span>
+          <span class="text-sm text-slate-200">{{ voiceNoteName }}</span>
           <span class="text-xs text-slate-400">{{ timestamp }}</span>
         </div>
       </div>
@@ -53,10 +69,14 @@ const handleConfirm = () => {
         </svg>
       </button>
     </div>
+    
+    <!-- Audio player -->
     <AudioPlayer
       :src="urlCreator.createObjectURL(blob)"
     />
-    <div class="flex justify-end gap-2 mt-3">
+    
+    <!-- Action buttons -->
+    <div class="flex justify-end gap-2 mt-2">
       <template v-if="showRecordingControls">
         <button
           type="button"
@@ -91,4 +111,4 @@ const handleConfirm = () => {
       </button>
     </div>
   </div>
-</template> 
+</template>

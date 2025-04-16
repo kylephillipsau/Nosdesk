@@ -9,9 +9,12 @@ interface Props {
   filename: string;
   author: string;
   timestamp: string;
+  showDelete?: boolean;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  showDelete: false
+});
 
 const emit = defineEmits<{
   (e: 'delete'): void;
@@ -24,6 +27,7 @@ const isLoadingThumbnail = ref(false);
 const isLoadingImage = ref(false);
 const thumbnailError = ref<string | null>(null);
 const showPreview = ref(false);
+const convertedImageSrc = ref<string | null>(null);
 
 const fileExtension = computed(() => {
   const ext = props.filename.split('.').pop()?.toLowerCase() || '';
@@ -38,8 +42,12 @@ const fileType = computed(() => {
   if (['ppt', 'pptx'].includes(ext)) return 'powerpoint';
   if (['txt', 'rtf', 'md'].includes(ext)) return 'text';
   if (['zip', 'rar', '7z'].includes(ext)) return 'archive';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'image';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic'].includes(ext)) return 'image';
   return 'generic';
+});
+
+const isHeicImage = computed(() => {
+  return fileExtension.value === 'heic';
 });
 
 const fileIcon = computed(() => {
@@ -141,15 +149,20 @@ const loadImagePreview = async () => {
     isLoadingImage.value = true;
     thumbnailError.value = null;
 
-    // Create a new image and wait for it to load
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = props.src;
-    });
+    // Check if it's a HEIC image that needs conversion
+    if (isHeicImage.value && !convertedImageSrc.value) {
+      await convertHeicImage();
+    } else {
+      // Create a new image and wait for it to load
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = convertedImageSrc.value || props.src;
+      });
 
-    imagePreview.value = img;
+      imagePreview.value = img;
+    }
   } catch (error) {
     console.error('Error loading image preview:', error);
     thumbnailError.value = 'Failed to load image';
@@ -158,11 +171,60 @@ const loadImagePreview = async () => {
   }
 };
 
+const convertHeicImage = async () => {
+  try {
+    // Dynamically import heic2any only when needed
+    const heic2any = await import('heic2any');
+    
+    // Fetch the HEIC file
+    const response = await fetch(props.src);
+    const blob = await response.blob();
+    
+    // Convert HEIC to JPEG
+    const jpegBlob = await heic2any.default({
+      blob,
+      toType: 'image/jpeg',
+      quality: 0.8
+    }) as Blob;
+    
+    // Create a URL for the converted image
+    convertedImageSrc.value = URL.createObjectURL(jpegBlob);
+    
+    // Create a new image and wait for it to load
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('Failed to load converted image'));
+      img.src = convertedImageSrc.value || '';
+    });
+    
+    imagePreview.value = img;
+  } catch (error) {
+    console.error('Error converting HEIC image:', error);
+    thumbnailError.value = 'Failed to convert HEIC image';
+    throw error;
+  }
+};
+
 const openPreview = () => {
   if (fileType.value === 'pdf' || fileType.value === 'image') {
     showPreview.value = true;
-    emit('preview', props.src);
+    // For HEIC images, emit the converted image source
+    if (isHeicImage.value && convertedImageSrc.value) {
+      emit('preview', convertedImageSrc.value);
+    } else {
+      emit('preview', props.src);
+    }
   }
+};
+
+// Add a method to handle downloading HEIC images
+const getDownloadFilename = () => {
+  if (isHeicImage.value) {
+    // Replace .heic extension with .jpg for the downloaded file
+    return props.filename.replace(/\.heic$/i, '.jpg');
+  }
+  return props.filename;
 };
 
 onMounted(async () => {
@@ -178,7 +240,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-lg p-3">
+  <div class="flex flex-col gap-2 bg-slate-800 rounded-lg p-3 max-w-[350px]">
     <div class="flex items-center justify-between mb-3">
       <div class="flex items-center gap-2">
         <UserAvatar :name="author" :showName="false" />
@@ -187,11 +249,24 @@ onMounted(async () => {
           <span class="text-xs text-slate-400">{{ timestamp }}</span>
         </div>
       </div>
+      
+      <!-- Delete button -->
+      <button
+        v-if="showDelete"
+        type="button"
+        @click.stop="emit('delete')"
+        class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+        title="Delete file"
+      >
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+        </svg>
+      </button>
     </div>
 
-    <div class="flex gap-3 bg-slate-900/50 rounded-lg p-3">
+    <div class="flex flex-col gap-3 bg-slate-900/50 rounded-lg p-3">
       <!-- File Preview/Thumbnail -->
-      <div class="flex-shrink-0 w-48 h-64 flex items-center justify-center rounded-lg overflow-hidden bg-slate-800 relative group">
+      <div class="flex-shrink-0 w-full h-40 flex items-center justify-center rounded-lg overflow-hidden bg-slate-800 relative group">
         <!-- Loading Spinner -->
         <div v-if="isLoadingThumbnail || isLoadingImage" class="flex items-center justify-center w-full h-full">
           <svg class="animate-spin h-6 w-6 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -211,7 +286,7 @@ onMounted(async () => {
         <img 
           v-if="fileType === 'image' && !isLoadingImage"
           ref="imagePreview"
-          :src="src" 
+          :src="isHeicImage && convertedImageSrc ? convertedImageSrc : src" 
           :alt="filename" 
           class="w-full h-full object-cover"
         >
@@ -234,18 +309,66 @@ onMounted(async () => {
             <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
           </svg>
         </div>
+        
+        <!-- Delete button for preview -->
+        <button
+          v-if="showDelete && showOverlay"
+          type="button"
+          @click.stop="emit('delete')"
+          class="absolute top-2 right-2 z-10 p-1.5 bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors opacity-0 group-hover:opacity-100"
+          title="Delete file"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+        </button>
       </div>
 
-      <div class="min-w-0 flex flex-col justify-between">
+      <div class="min-w-0 flex flex-col gap-1">
         <div class="flex items-start gap-2">
           <div class="flex-grow">
             <span class="text-sm text-slate-200 line-clamp-2">{{ filename }}</span>
-            <span class="text-xs text-slate-400 uppercase mt-1 block">{{ fileExtension }}</span>
+            <span class="text-xs text-slate-400 uppercase mt-1 block">
+              {{ isHeicImage ? 'HEIC (converted to JPEG)' : fileExtension }}
+            </span>
           </div>
         </div>
 
+        <!-- Download buttons -->
         <div class="flex items-center gap-2 justify-end mt-2">
+          <!-- For HEIC files, show both download options -->
+          <template v-if="isHeicImage">
+            <!-- Original HEIC download button -->
+            <a
+              :href="src"
+              target="_blank"
+              class="px-3 py-1.5 bg-slate-600 text-white text-sm rounded hover:bg-slate-700 transition-colors flex items-center gap-2"
+              :download="filename"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+              Download (HEIC)
+            </a>
+            
+            <!-- Converted JPEG download button -->
+            <a
+              v-if="convertedImageSrc"
+              :href="convertedImageSrc"
+              target="_blank"
+              class="px-3 py-1.5 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors flex items-center gap-2"
+              :download="getDownloadFilename()"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+              Download (JPEG)
+            </a>
+          </template>
+          
+          <!-- For non-HEIC files, show the standard download button -->
           <a
+            v-else
             :href="src"
             target="_blank"
             class="px-3 py-1.5 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors flex items-center gap-2"

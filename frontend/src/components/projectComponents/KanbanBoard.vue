@@ -1,13 +1,19 @@
 <!-- KanbanBoard.vue -->
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { projectService } from '@/services/projectService'
+import ticketService from '@/services/ticketService'
+import { STATUS_OPTIONS, type TicketStatus } from '@/constants/ticketOptions'
+import UserAvatar from '@/components/UserAvatar.vue'
+import AddTicketToProjectModal from './AddTicketToProjectModal.vue'
 
 interface KanbanTicket {
   id: number;
   title: string;
   assignee: string;
   priority: 'low' | 'medium' | 'high';
+  status: string;
 }
 
 interface KanbanColumn {
@@ -21,47 +27,110 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const isLoading = ref(true)
+const error = ref<string | null>(null)
 
-// Initialize columns with some mock data
+// Initialize columns with empty arrays
 const columns = ref<KanbanColumn[]>([
   {
-    id: 'todo',
-    title: 'To Do',
-    tickets: [
-      { id: 1, title: 'Design user interface', assignee: 'Alice Smith', priority: 'high' },
-      { id: 2, title: 'Set up CI/CD pipeline', assignee: 'Bob Johnson', priority: 'medium' }
-    ]
+    id: 'open',
+    title: 'Open',
+    tickets: []
   },
   {
     id: 'in-progress',
     title: 'In Progress',
-    tickets: [
-      { id: 3, title: 'Implement authentication', assignee: 'Charlie Brown', priority: 'high' }
-    ]
+    tickets: []
   },
   {
-    id: 'review',
-    title: 'Review',
-    tickets: [
-      { id: 4, title: 'Code review: API endpoints', assignee: 'Diana Ross', priority: 'medium' }
-    ]
-  },
-  {
-    id: 'done',
-    title: 'Done',
-    tickets: [
-      { id: 5, title: 'Project setup', assignee: 'Ethan Hunt', priority: 'low' }
-    ]
+    id: 'closed',
+    title: 'Closed',
+    tickets: []
   }
 ])
 
 const draggingTicket = ref<{ columnId: string; ticketId: number } | null>(null)
+const showAddTicketModal = ref(false)
+const currentColumnId = ref<string | null>(null)
+const projectTicketIds = ref<number[]>([])
+
+// Fetch project tickets
+const fetchProjectTickets = async () => {
+  if (!props.projectId) return
+  
+  try {
+    isLoading.value = true
+    error.value = null
+    
+    // Fetch tickets for the project
+    const tickets = await projectService.getProjectTickets(props.projectId)
+    
+    // Store all ticket IDs for the project to avoid duplicates
+    projectTicketIds.value = tickets.map(ticket => ticket.id)
+    
+    // Reset all columns
+    columns.value.forEach(column => {
+      column.tickets = []
+    })
+    
+    // Distribute tickets to appropriate columns based on status
+    tickets.forEach(ticket => {
+      const kanbanTicket: KanbanTicket = {
+        id: ticket.id,
+        title: ticket.title,
+        assignee: ticket.assignee || 'Unassigned',
+        priority: ticket.priority as 'low' | 'medium' | 'high',
+        status: ticket.status
+      }
+      
+      // Map ticket status to column
+      let columnId: string
+      switch (ticket.status) {
+        case 'in-progress':
+          columnId = 'in-progress'
+          break
+        case 'closed':
+          columnId = 'closed'
+          break
+        case 'open':
+        default:
+          columnId = 'open'
+          break
+      }
+      
+      // Find the column and add the ticket
+      const column = columns.value.find(col => col.id === columnId)
+      if (column) {
+        column.tickets.push(kanbanTicket)
+      }
+    })
+  } catch (err) {
+    console.error('Failed to fetch project tickets:', err)
+    error.value = 'Failed to load tickets. Please try again later.'
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// Watch for changes to projectId
+watch(() => props.projectId, (newProjectId) => {
+  if (newProjectId) {
+    fetchProjectTickets()
+  }
+}, { immediate: true })
+
+// Fetch tickets on component mount
+onMounted(() => {
+  if (props.projectId) {
+    fetchProjectTickets()
+  }
+})
 
 const startDrag = (columnId: string, ticket: KanbanTicket) => {
   draggingTicket.value = { columnId, ticketId: ticket.id }
 }
 
-const onDrop = (targetColumnId: string) => {
+const onDrop = async (targetColumnId: string) => {
   if (!draggingTicket.value) return
 
   const sourceColumn = columns.value.find(col => col.id === draggingTicket.value?.columnId)
@@ -75,8 +144,34 @@ const onDrop = (targetColumnId: string) => {
   const [ticket] = sourceColumn.tickets.splice(ticketIndex, 1)
   targetColumn.tickets.push(ticket)
 
-  // TODO: Update ticket status in backend
-  console.log(`Moved ticket ${ticket.id} from ${sourceColumn.id} to ${targetColumn.id}`)
+  // Map column ID to ticket status
+  let newStatus: TicketStatus
+  switch (targetColumnId) {
+    case 'in-progress':
+      newStatus = 'in-progress'
+      break
+    case 'closed':
+      newStatus = 'closed'
+      break
+    case 'open':
+    default:
+      newStatus = 'open'
+      break
+  }
+  
+  // Update ticket status in backend
+  try {
+    await ticketService.updateTicket(ticket.id, { 
+      status: newStatus,
+      modified: new Date().toISOString()
+    })
+    console.log(`Updated ticket ${ticket.id} status to ${newStatus}`)
+  } catch (err) {
+    console.error(`Failed to update ticket status:`, err)
+    // Revert the UI change if the API call fails
+    // This would require refetching the tickets
+    await fetchProjectTickets()
+  }
   
   draggingTicket.value = null
 }
@@ -89,9 +184,14 @@ const openTicket = (ticketId: number) => {
   router.push(`/tickets/${ticketId}`)
 }
 
-const createTicket = (columnId: string) => {
-  // TODO: Implement ticket creation
-  console.log('Creating new ticket in column:', columnId)
+const createTicket = async (columnId: string) => {
+  currentColumnId.value = columnId
+  showAddTicketModal.value = true
+}
+
+const handleAddTicket = (ticketId: number) => {
+  console.log(`Ticket ${ticketId} added to project ${props.projectId}`)
+  fetchProjectTickets()
 }
 
 const getPriorityColor = (priority: string) => {
@@ -110,7 +210,17 @@ const getPriorityColor = (priority: string) => {
 
 <template>
   <div class="h-full flex flex-col relative">
-    <div class="flex-1 overflow-x-auto">
+    <!-- Error message -->
+    <div v-if="error" class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg mb-4">
+      {{ error }}
+    </div>
+    
+    <!-- Loading state -->
+    <div v-if="isLoading" class="flex justify-center items-center py-8">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+    </div>
+    
+    <div v-else class="flex-1 overflow-x-auto">
       <div class="flex gap-4 p-4 min-w-max h-full">
         <div
           v-for="column in columns"
@@ -143,11 +253,20 @@ const getPriorityColor = (priority: string) => {
               >
                 <div class="flex flex-col gap-2">
                   <h4 class="text-sm font-medium text-slate-200">{{ ticket.title }}</h4>
-                  <div class="flex items-center justify-between">
-                    <span class="text-xs text-slate-400">{{ ticket.assignee }}</span>
-                    <span :class="[getPriorityColor(ticket.priority), 'text-xs px-2 py-0.5 rounded']">
-                      {{ ticket.priority }}
-                    </span>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                      <UserAvatar 
+                        v-if="ticket.assignee && ticket.assignee !== 'Unassigned'" 
+                        :name="ticket.assignee" 
+                        size="xs" 
+                        :showName="true"
+                        :clickable="false"
+                      />
+                      <span v-else class="text-xs text-slate-400">Unassigned</span>
+                      <span :class="[getPriorityColor(ticket.priority), 'text-xs px-2 py-0.5 rounded']">
+                        {{ ticket.priority }}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -164,6 +283,16 @@ const getPriorityColor = (priority: string) => {
         </div>
       </div>
     </div>
+    
+    <!-- Add Ticket Modal -->
+    <AddTicketToProjectModal 
+      :show="showAddTicketModal"
+      :project-id="props.projectId"
+      :existing-tickets="projectTicketIds"
+      @close="showAddTicketModal = false"
+      @add-ticket="handleAddTicket"
+      @refresh="fetchProjectTickets"
+    />
   </div>
 </template>
 

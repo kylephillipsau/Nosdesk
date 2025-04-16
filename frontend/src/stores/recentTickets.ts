@@ -8,6 +8,7 @@ interface Ticket {
   requester?: string;
   assignee?: string;
   created?: string;
+  modified?: string;
   isDraft?: boolean;
 }
 
@@ -31,6 +32,8 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
       return
     }
 
+    console.log(`Adding/updating ticket #${ticket.id} with title: "${ticket.title}" to recent tickets store`)
+
     // Add isDraft flag if specified
     const ticketWithDraftStatus = {
       ...ticket,
@@ -41,10 +44,24 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
     const existingIndex = recentTickets.value.findIndex(t => t.id === ticket.id)
     
     if (existingIndex !== -1) {
+      console.log(`Ticket #${ticket.id} already exists in recent tickets store with title: "${recentTickets.value[existingIndex].title}"`)
+      
+      // Preserve the existing title unless explicitly changing it
+      // This ensures manual title changes aren't overwritten during refreshes
+      if (ticket.title !== 'New Ticket') {
+        const existingTitle = recentTickets.value[existingIndex].title
+        // Only preserve the title if it's been manually changed (not the default or same as incoming)
+        if (existingTitle !== 'New Ticket' && existingTitle !== ticket.title) {
+          console.log(`Preserving existing title: "${existingTitle}" instead of using: "${ticket.title}"`)
+          ticketWithDraftStatus.title = existingTitle
+        }
+      }
+      
       // Update existing ticket but preserve isDraft status if not explicitly changing it
       if (isDraft === false && recentTickets.value[existingIndex].isDraft === true) {
         ticketWithDraftStatus.isDraft = recentTickets.value[existingIndex].isDraft
       }
+      
       // Remove from current position
       recentTickets.value.splice(existingIndex, 1)
     }
@@ -56,6 +73,9 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
     if (recentTickets.value.length > MAX_RECENT_TICKETS) {
       recentTickets.value = recentTickets.value.slice(0, MAX_RECENT_TICKETS)
     }
+    
+    // Force reactivity update
+    recentTickets.value = [...recentTickets.value]
   }
 
   const removeRecentTicket = (ticketId: number) => {
@@ -69,10 +89,39 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
     }
   }
 
+  // Enhanced method to update ticket data when it's modified in TicketView
+  const updateTicketData = (ticketId: number, updatedData: Partial<Ticket>) => {
+    console.log(`Attempting to update ticket #${ticketId} with data:`, updatedData)
+    
+    const ticketIndex = recentTickets.value.findIndex(t => t.id === ticketId)
+    console.log(`Found ticket at index: ${ticketIndex}`)
+    
+    if (ticketIndex !== -1) {
+      const oldData = { ...recentTickets.value[ticketIndex] }
+      
+      // Update only the provided fields, preserving other data
+      recentTickets.value[ticketIndex] = {
+        ...recentTickets.value[ticketIndex],
+        ...updatedData
+      }
+      
+      console.log(`Updated ticket #${ticketId} in recent tickets store:`)
+      console.log(`- Before:`, oldData)
+      console.log(`- After:`, recentTickets.value[ticketIndex])
+      console.log(`- Changes:`, updatedData)
+      
+      // Force reactivity update by creating a new array
+      recentTickets.value = [...recentTickets.value]
+    } else {
+      console.warn(`Ticket #${ticketId} not found in recent tickets store`)
+    }
+  }
+
   return {
     recentTickets,
     addRecentTicket,
     removeRecentTicket,
-    updateDraftStatus
+    updateDraftStatus,
+    updateTicketData
   }
 })
