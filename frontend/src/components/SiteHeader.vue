@@ -267,7 +267,7 @@ onUnmounted(() => {
 
       <!-- Right side -->
       <div class="flex items-center gap-2 md:gap-4 flex-shrink-0">
-        <!-- Create Ticket Button - Hide text on mobile -->
+        <!-- Create Ticket Button -->
         <button
           v-if="props.showCreateButton"
           @click="navigateToCreateTicket"
@@ -281,8 +281,7 @@ onUnmounted(() => {
             <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
           </svg>
           
-          <!-- Only show text on larger screens -->
-          <span class="hidden md:inline">{{ isCreatingTicket ? 'Creating...' : 'Create Ticket' }}</span>
+          <span class="inline">{{ isCreatingTicket ? 'Creating...' : 'Create Ticket' }}</span>
         </button>
 
         <!-- User Profile Menu -->
