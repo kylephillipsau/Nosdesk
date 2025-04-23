@@ -530,21 +530,16 @@ watch(() => docNavStore.needsRefresh, (needsRefresh) => {
 </script>
 
 <template>
-    <h3
-    class="px-4 text-sm font-medium text-gray-400 uppercase mb-2 flex-shrink-0"
-  >
-    Documentation
-  </h3>
   <div class="documentation-nav relative">
-    <div v-if="isLoading" class="p-4 text-center">
+    <div v-if="isLoading" class="p-2 text-center">
       <div class="animate-pulse">
-        <div class="h-4 bg-slate-700 rounded w-3/4 mx-auto mb-2"></div>
-        <div class="h-4 bg-slate-700 rounded w-1/2 mx-auto mb-2"></div>
-        <div class="h-4 bg-slate-700 rounded w-2/3 mx-auto"></div>
+        <div class="h-3 bg-slate-700 rounded w-3/4 mx-auto mb-1"></div>
+        <div class="h-3 bg-slate-700 rounded w-1/2 mx-auto mb-1"></div>
+        <div class="h-3 bg-slate-700 rounded w-2/3 mx-auto"></div>
       </div>
     </div>
     <div v-else class="relative">
-      <ul class="space-y-2 p-2 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-600 scrollbar-thumb-rounded">
+      <ul class="space-y-1 p-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-600 scrollbar-thumb-rounded">
         <DocumentationNavItem
           v-for="page in pages"
           :key="page.id"

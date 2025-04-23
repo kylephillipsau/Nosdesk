@@ -237,7 +237,7 @@ const getPriorityColor = (priority: string) => {
 
           <!-- Column Content -->
           <div
-            class="flex-1 p-2 overflow-y-auto hide-vertical-scrollbar"
+            class="flex-1 p-2 overflow-y-auto hide-vertical-scrollbar gap-2"
             @dragover="allowDrop"
             @drop="onDrop(column.id)"
           >
