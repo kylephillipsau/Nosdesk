@@ -299,45 +299,93 @@ const handlePageSizeChange = (size: number) => {
     @update:current-page="handlePageChange"
     @update:page-size="handlePageSizeChange"
   >
-    <!-- Tickets display -->
-    <div class="min-w-[960px]">
-      <div
-        v-for="ticket in tickets"
-        :key="ticket.id"
-        class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
-        @click="openTicket(ticket.id)"
-      >
-        <div class="flex items-center p-3 w-10 flex-shrink-0">
-          <input
-            type="checkbox"
-            class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-            :checked="selectedTickets.includes(ticket.id)"
-            @click.stop="(event) => toggleSelection(event, ticket.id.toString())"
-          />
-        </div>
-        <div class="flex items-center p-3 w-20 flex-shrink-0">
-          #{{ ticket.id }}
-        </div>
-        <div class="flex items-center p-3 flex-1 min-w-0">
-          <div class="truncate">{{ ticket.title }}</div>
-        </div>
-        <div class="flex items-center w-24 flex-shrink-0 whitespace-nowrap">
-          <StatusBadge type="status" :value="ticket.status" :short="true" />
-        </div>
-        <div class="flex items-center p-2 w-24 flex-shrink-0">
-          <StatusBadge type="priority" :value="ticket.priority" :short="true" />
-        </div>
-        <div class="flex items-center p-3 w-32 flex-shrink-0">
-          {{ formatDate(ticket.created) }}
-        </div>
-        <div class="flex items-center p-1 w-32 flex-shrink-0">
-          <UserAvatar :name="ticket.requester" size="sm" />
-        </div>
-        <div class="flex items-center p-1 w-32 flex-shrink-0">
-          <UserAvatar :name="ticket.assignee" size="sm" />
+    <!-- Desktop Table View -->
+    <template #default>
+      <div class="min-w-[960px]">
+        <div
+          v-for="ticket in tickets"
+          :key="ticket.id"
+          class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+          @click="openTicket(ticket.id)"
+        >
+          <div class="flex items-center p-3 w-10 flex-shrink-0">
+            <input
+              type="checkbox"
+              class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+              :checked="selectedTickets.includes(ticket.id)"
+              @click.stop="(event) => toggleSelection(event, ticket.id.toString())"
+            />
+          </div>
+          <div class="flex items-center p-3 w-20 flex-shrink-0">
+            #{{ ticket.id }}
+          </div>
+          <div class="flex items-center p-3 flex-1 min-w-0">
+            <div class="truncate">{{ ticket.title }}</div>
+          </div>
+          <div class="flex items-center w-24 flex-shrink-0 whitespace-nowrap">
+            <StatusBadge type="status" :value="ticket.status" :short="true" />
+          </div>
+          <div class="flex items-center p-2 w-24 flex-shrink-0">
+            <StatusBadge type="priority" :value="ticket.priority" :short="true" />
+          </div>
+          <div class="flex items-center p-3 w-32 flex-shrink-0">
+            {{ formatDate(ticket.created) }}
+          </div>
+          <div class="flex items-center p-1 w-32 flex-shrink-0">
+            <UserAvatar :name="ticket.requester" size="sm" />
+          </div>
+          <div class="flex items-center p-1 w-32 flex-shrink-0">
+            <UserAvatar :name="ticket.assignee" size="sm" />
+          </div>
         </div>
       </div>
-    </div>
+    </template>
+
+    <!-- Mobile Card View -->
+    <template #mobile-view>
+      <div class="space-y-2 p-2">
+        <div
+          v-for="ticket in tickets"
+          :key="ticket.id"
+          @click="openTicket(ticket.id)"
+          class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
+        >
+          <div class="flex items-start gap-3">
+            <div class="flex-shrink-0">
+              <input
+                type="checkbox"
+                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                :checked="selectedTickets.includes(ticket.id)"
+                @click.stop="(event) => toggleSelection(event, ticket.id.toString())"
+              />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <div class="font-medium truncate">{{ ticket.title }}</div>
+                <div class="text-xs text-gray-400 ml-2">#{{ ticket.id }}</div>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                <StatusBadge type="status" :value="ticket.status" :short="true" />
+                <StatusBadge type="priority" :value="ticket.priority" :short="true" />
+              </div>
+              <div class="mt-2 flex items-center gap-2 text-xs">
+                <div class="flex items-center gap-1">
+                  <UserAvatar :name="ticket.requester" size="xs" />
+                  <span class="text-gray-400">Requester</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <UserAvatar :name="ticket.assignee" size="xs" />
+                  <span class="text-gray-400">Assignee</span>
+                </div>
+              </div>
+              <div class="mt-2 text-xs text-gray-400">
+                Created: {{ formatDate(ticket.created) }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </BaseListView>
 </template>
 

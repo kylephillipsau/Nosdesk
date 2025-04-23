@@ -316,74 +316,128 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
 </script>
 
 <template>
-  <BaseListView
-    title="Devices"
-    :search-query="searchQuery"
-    :is-loading="loading"
-    :is-empty="sortedDevices.length === 0"
-    :error="error"
-    :filters="filterOptions"
-    :results-count="sortedDevices.length"
-    :selected-items="selectedDevices.map(id => id.toString())"
-    :visible-items="sortedDevices"
-    :item-id-field="'id'"
-    :enable-selection="true"
-    :sort-field="sortField"
-    :sort-direction="sortDirection"
-    :columns="columns"
-    @update:search-query="value => searchQuery = value"
-    @update:filter="handleFilterUpdate"
-    @update:sort="handleSortUpdate"
-    @toggle-selection="(event, id) => toggleSelection(event, parseInt(id, 10))"
-    @toggle-all="toggleAllDevices"
-    @reset-filters="resetFilters"
-    @add="handleAddDevice"
-    @retry="fetchDevices"
-  >
-    <!-- Devices display -->
-    <div class="min-w-[960px]">
-      <div
-        v-for="device in sortedDevices"
-        :key="device.id"
-        class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
-        @click="navigateToDevice(device.id)"
-      >
-        <div class="flex items-center p-3 w-10 flex-shrink-0">
-          <input
-            type="checkbox"
-            class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-            :checked="selectedDevices.includes(device.id)"
-            @click.stop="(event) => toggleSelection(event, device.id)"
-          />
-        </div>
-        <div class="flex items-center p-3 w-20 flex-shrink-0">
-          #{{ device.id }}
-        </div>
-        <div class="flex items-center p-3 flex-1 min-w-0">
-          <div class="truncate">{{ device.name }}</div>
-        </div>
-        <div class="flex items-center p-3 w-32 flex-shrink-0">
-          {{ device.type || 'N/A' }}
-        </div>
-        <div class="flex items-center p-3 w-32 flex-shrink-0">
-          {{ device.model }}
-        </div>
-        <div class="flex items-center p-3 w-32 flex-shrink-0">
-          <span 
-            :class="{
-              'text-green-400': device.warranty_status === 'active',
-              'text-yellow-400': device.warranty_status === 'expiring',
-              'text-red-400': device.warranty_status === 'expired'
-            }"
+  <div>
+    <BaseListView
+      title="Devices"
+      :search-query="searchQuery"
+      :is-loading="loading"
+      :is-empty="sortedDevices.length === 0"
+      :error="error"
+      :filters="filterOptions"
+      :results-count="sortedDevices.length"
+      :selected-items="selectedDevices.map(id => id.toString())"
+      :visible-items="sortedDevices"
+      :item-id-field="'id'"
+      :enable-selection="true"
+      :sort-field="sortField"
+      :sort-direction="sortDirection"
+      :columns="columns"
+      @update:search-query="value => searchQuery = value"
+      @update:filter="handleFilterUpdate"
+      @update:sort="handleSortUpdate"
+      @toggle-selection="(event, id) => toggleSelection(event, parseInt(id, 10))"
+      @toggle-all="toggleAllDevices"
+      @reset-filters="resetFilters"
+      @add="handleAddDevice"
+      @retry="fetchDevices"
+    >
+      <!-- Desktop Table View -->
+      <template #default>
+        <div class="min-w-[960px]">
+          <div
+            v-for="device in sortedDevices"
+            :key="device.id"
+            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+            @click="navigateToDevice(device.id)"
           >
-            {{ device.warranty_status }}
-          </span>
+            <div class="flex items-center p-3 w-10 flex-shrink-0">
+              <input
+                type="checkbox"
+                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                :checked="selectedDevices.includes(device.id)"
+                @click.stop="(event) => toggleSelection(event, device.id)"
+              />
+            </div>
+            <div class="flex items-center p-3 w-20 flex-shrink-0">
+              #{{ device.id }}
+            </div>
+            <div class="flex items-center p-3 flex-1 min-w-0">
+              <div class="truncate">{{ device.name }}</div>
+            </div>
+            <div class="flex items-center p-3 w-32 flex-shrink-0">
+              {{ device.type || 'N/A' }}
+            </div>
+            <div class="flex items-center p-3 w-32 flex-shrink-0">
+              {{ device.model }}
+            </div>
+            <div class="flex items-center p-3 w-32 flex-shrink-0">
+              <span 
+                :class="{
+                  'text-green-400': device.warranty_status === 'active',
+                  'text-yellow-400': device.warranty_status === 'expiring',
+                  'text-red-400': device.warranty_status === 'expired'
+                }"
+              >
+                {{ device.warranty_status }}
+              </span>
+            </div>
+            <div class="flex items-center p-3 w-40 flex-shrink-0">
+              {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+            </div>
+          </div>
         </div>
-        <div class="flex items-center p-3 w-40 flex-shrink-0">
-          {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+      </template>
+
+      <!-- Mobile Card View -->
+      <template #mobile-view>
+        <div class="space-y-2 p-2">
+          <div
+            v-for="device in sortedDevices"
+            :key="device.id"
+            @click="navigateToDevice(device.id)"
+            class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
+          >
+            <div class="flex items-start gap-3">
+              <div class="flex-shrink-0">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                  :checked="selectedDevices.includes(device.id)"
+                  @click.stop="(event) => toggleSelection(event, device.id)"
+                />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between">
+                  <div class="font-medium truncate">{{ device.name }}</div>
+                  <div class="text-xs text-gray-400 ml-2">#{{ device.id }}</div>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                  <div class="bg-slate-700/50 px-2 py-1 rounded">
+                    {{ device.type || 'N/A' }}
+                  </div>
+                  <div class="bg-slate-700/50 px-2 py-1 rounded">
+                    {{ device.model }}
+                  </div>
+                  <div 
+                    class="px-2 py-1 rounded"
+                    :class="{
+                      'bg-green-900/30 text-green-400': device.warranty_status === 'active',
+                      'bg-yellow-900/30 text-yellow-400': device.warranty_status === 'expiring',
+                      'bg-red-900/30 text-red-400': device.warranty_status === 'expired'
+                    }"
+                  >
+                    {{ device.warranty_status }}
+                  </div>
+                </div>
+                <div class="mt-2 text-xs text-gray-400">
+                  Last seen: {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </template>
+    </BaseListView>
 
     <!-- Add Device Modal -->
     <Modal
@@ -404,7 +458,7 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
         <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     </Modal>
-  </BaseListView>
+  </div>
 </template>
 
 <style scoped>

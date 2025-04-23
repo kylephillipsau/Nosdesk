@@ -10,6 +10,7 @@ import ProjectDetailView from '../views/ProjectDetailView.vue'
 import UserProfileView from '../views/UserProfileView.vue'
 import DocumentationPageView from '@/views/DocumentationPageView.vue'
 import ProfileSettingsView from '@/views/ProfileSettingsView.vue'
+import PDFViewerView from '@/views/PDFViewerView.vue'
 import TestEditor from '../components/TestEditor.vue'
 
 declare module 'vue-router' {
@@ -244,6 +245,15 @@ const router = createRouter({
         requiresAuth: true,
         title: 'Authentication Providers',
         adminRequired: true
+      }
+    },
+    {
+      path: '/pdf-viewer',
+      name: 'pdf-viewer',
+      component: PDFViewerView,
+      meta: {
+        requiresAuth: true,
+        title: 'PDF Viewer'
       }
     },
     {

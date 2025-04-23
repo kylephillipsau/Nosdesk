@@ -1328,8 +1328,8 @@ onBeforeUnmount(() => {
   position: relative;
   margin-left: -1px;
   margin-right: -1px;
-  border-left: 2px solid orange;
-  border-right: 2px solid orange;
+  border-left: 1px solid orange;
+  border-right: 1px solid orange;
   border-color: orange;
   word-break: normal;
   pointer-events: none;
@@ -1396,8 +1396,8 @@ onBeforeUnmount(() => {
   position: relative;
   margin-left: -1px;
   margin-right: -1px;
-  border-left: 2px solid;
-  border-right: 2px solid;
+  border-left: 1px solid;
+  border-right: 1px solid;
   height: 1.2em;
   word-break: normal;
   pointer-events: none;
