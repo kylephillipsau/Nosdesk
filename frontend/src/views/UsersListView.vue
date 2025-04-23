@@ -282,70 +282,123 @@ onMounted(() => {
 </script>
 
 <template>
-  <BaseListView
-    title="Users"
-    :search-query="searchQuery"
-    :is-loading="loading"
-    :is-empty="filteredUsers.length === 0"
-    :error="error"
-    :filters="filterOptions"
-    :results-count="filteredUsers.length"
-    :sort-field="sortField"
-    :sort-direction="sortDirection"
-    :columns="columns"
-    :selected-items="selectedUsers"
-    :visible-items="filteredUsers"
-    :item-id-field="'uuid'"
-    :enable-selection="true"
-    @update:search-query="value => searchQuery = value"
-    @update:filter="handleFilterUpdate"
-    @update:sort="handleSortUpdate"
-    @toggle-selection="toggleSelection"
-    @toggle-all="toggleAllUsers"
-    @reset-filters="resetFilters"
-    @add="showAddUserModal = true"
-    @retry="fetchUsers"
-  >
-    <div class="min-w-[800px]">
-      <div
-        v-for="user in filteredUsers"
-        :key="user.uuid"
-        @click="navigateToUser(user.uuid)"
-        class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
-      >
-        <div class="flex items-center p-3 w-10 flex-shrink-0">
-          <input
-            type="checkbox"
-            class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-            :checked="selectedUsers.includes(user.uuid)"
-            @click.stop="(event) => toggleSelection(event, user.uuid)"
-          />
-        </div>
-        <div class="flex items-center p-3 w-20 flex-shrink-0">
-          #{{ user.id }}
-        </div>
-        <div class="p-3 flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <UserAvatar
-              :name="user.uuid"
-              size="sm"
-              :clickable="false"
-              :show-name="false"
-            />
-            <div>
-              <div class="font-medium">{{ user.name }}</div>
-              <div class="text-xs text-gray-400">{{ user.email }}</div>
+  <div>
+    <BaseListView
+      title="Users"
+      :search-query="searchQuery"
+      :is-loading="loading"
+      :is-empty="filteredUsers.length === 0"
+      :error="error"
+      :filters="filterOptions"
+      :results-count="filteredUsers.length"
+      :sort-field="sortField"
+      :sort-direction="sortDirection"
+      :columns="columns"
+      :selected-items="selectedUsers"
+      :visible-items="filteredUsers"
+      :item-id-field="'uuid'"
+      :enable-selection="true"
+      @update:search-query="value => searchQuery = value"
+      @update:filter="handleFilterUpdate"
+      @update:sort="handleSortUpdate"
+      @toggle-selection="toggleSelection"
+      @toggle-all="toggleAllUsers"
+      @reset-filters="resetFilters"
+      @add="showAddUserModal = true"
+      @retry="fetchUsers"
+    >
+      <!-- Desktop Table View -->
+      <template #default>
+        <div class="min-w-[800px]">
+          <div
+            v-for="user in filteredUsers"
+            :key="user.uuid"
+            @click="navigateToUser(user.uuid)"
+            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+          >
+            <div class="flex items-center p-3 w-10 flex-shrink-0">
+              <input
+                type="checkbox"
+                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                :checked="selectedUsers.includes(user.uuid)"
+                @click.stop="(event) => toggleSelection(event, user.uuid)"
+              />
+            </div>
+            <div class="flex items-center p-3 w-20 flex-shrink-0">
+              #{{ user.id }}
+            </div>
+            <div class="p-3 flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <UserAvatar
+                  :name="user.uuid"
+                  size="sm"
+                  :clickable="false"
+                  :show-name="false"
+                />
+                <div>
+                  <div class="font-medium">{{ user.name }}</div>
+                  <div class="text-xs text-gray-400">{{ user.email }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="p-3 w-32 flex-shrink-0">
+              {{ user.role }}
+            </div>
+            <div class="p-3 w-32 flex-shrink-0">
+              {{ user.department || 'N/A' }}
             </div>
           </div>
         </div>
-        <div class="p-3 w-32 flex-shrink-0">
-          {{ user.role }}
+      </template>
+
+      <!-- Mobile Card View -->
+      <template #mobile-view>
+        <div class="space-y-2 p-2">
+          <div
+            v-for="user in filteredUsers"
+            :key="user.uuid"
+            @click="navigateToUser(user.uuid)"
+            class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
+          >
+            <div class="flex items-start gap-3">
+              <div class="flex-shrink-0">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+                  :checked="selectedUsers.includes(user.uuid)"
+                  @click.stop="(event) => toggleSelection(event, user.uuid)"
+                />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <UserAvatar
+                    :name="user.uuid"
+                    size="sm"
+                    :clickable="false"
+                    :show-name="false"
+                  />
+                  <div class="flex-1 min-w-0">
+                    <div class="font-medium truncate">{{ user.name }}</div>
+                    <div class="text-xs text-gray-400 truncate">{{ user.email }}</div>
+                  </div>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                  <div class="bg-slate-700/50 px-2 py-1 rounded">
+                    {{ user.role }}
+                  </div>
+                  <div class="bg-slate-700/50 px-2 py-1 rounded">
+                    {{ user.department || 'N/A' }}
+                  </div>
+                  <div class="text-gray-400">
+                    #{{ user.id }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="p-3 w-32 flex-shrink-0">
-          {{ user.department || 'N/A' }}
-        </div>
-      </div>
-    </div>
+      </template>
+    </BaseListView>
 
     <!-- Add User Modal -->
     <Modal
@@ -366,7 +419,7 @@ onMounted(() => {
         <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
       </div>
     </Modal>
-  </BaseListView>
+  </div>
 </template>
 
 <style scoped>

@@ -78,35 +78,35 @@ watch(() => props.name, async (newName) => {
 
 // Check if the name is a UUID and get the actual name if it is
 const displayName = computed(() => {
-  console.log(`UserAvatar: Processing name prop: "${props.name}" (type: ${typeof props.name})`);
+  // console.log(`UserAvatar: Processing name prop: "${props.name}" (type: ${typeof props.name})`);
   
   // Check if the name looks like a UUID
   if (isUuid(props.name)) {
     if (loading.value) return 'Loading...';
     const user = users.value.find(u => u.uuid === props.name);
-    console.log(`UserAvatar: UUID match found:`, user || 'No match');
+    // console.log(`UserAvatar: UUID match found:`, user || 'No match');
     return user ? user.name : props.name;
   }
   return props.name;
 })
 
 const getInitials = (name: string) => {
-  console.log(`UserAvatar.getInitials: Input name: "${name}" (type: ${typeof name})`);
+  // console.log(`UserAvatar.getInitials: Input name: "${name}" (type: ${typeof name})`);
   
   if (!name) {
-    console.log('UserAvatar.getInitials: Empty name, returning "?"');
+    // console.log('UserAvatar.getInitials: Empty name, returning "?"');
     return '?';
   }
   
   // If we're loading a UUID, just return a placeholder
   if (loading.value && isUuid(props.name)) {
-    console.log('UserAvatar.getInitials: Loading UUID, returning empty string');
+    // console.log('UserAvatar.getInitials: Loading UUID, returning empty string');
     return '';
   }
   
   // Split by space or hyphen to better handle formats like "User-123"
   const parts = name.split(/[\s-]+/);
-  console.log(`UserAvatar.getInitials: Name parts:`, parts);
+  // console.log(`UserAvatar.getInitials: Name parts:`, parts);
   
   const initials = parts
     .filter(part => part.length > 0)
@@ -115,7 +115,7 @@ const getInitials = (name: string) => {
     .toUpperCase()
     .slice(0, 2);
     
-  console.log(`UserAvatar.getInitials: Calculated initials: "${initials}"`);
+  // console.log(`UserAvatar.getInitials: Calculated initials: "${initials}"`);
   return initials;
 }
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { computed, ref, shallowRef, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import AudioPlayer from "@/components/ticketComponents/AudioPlayer.vue";
 import VideoPlayer from "@/components/ticketComponents/VideoPlayer.vue";
 import FilePreview from "@/components/ticketComponents/FilePreview.vue";
+import PDFViewer from "@/components/ticketComponents/PDFViewer.vue";
 import Modal from "@/components/Modal.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
 
@@ -77,10 +78,20 @@ const isAudioFile = (filename: string): boolean => {
 
 const isImageFile = (filename: string): boolean => {
   try {
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.heic'];
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.apng', '.webp', '.svg', '.heic', '.avif', '.jxl'];
     return imageExtensions.some(ext => filename.toLowerCase().endsWith(ext));
   } catch (error) {
     console.error('Error checking if file is an image:', error);
+    return false;
+  }
+};
+
+const isPdfFile = (filename: string): boolean => {
+  try {
+    if (!filename) return false;
+    return filename.toLowerCase().endsWith('.pdf');
+  } catch (error) {
+    console.error('Error checking if file is PDF:', error);
     return false;
   }
 };
@@ -95,6 +106,18 @@ const isHeicFile = (filename: string): boolean => {
   }
 };
 
+// Check if file is an animated image format
+const isAnimatedImage = (filename: string): boolean => {
+  try {
+    if (!filename) return false;
+    const animatedExtensions = ['.gif', '.apng'];
+    return animatedExtensions.some(ext => filename.toLowerCase().endsWith(ext));
+  } catch (error) {
+    console.error('Error checking if file is an animated image:', error);
+    return false;
+  }
+};
+
 const attachmentType = computed(() => {
   // Safety check for null/undefined attachment name
   if (!props.attachment?.name) {
@@ -104,6 +127,7 @@ const attachmentType = computed(() => {
   if (isAudioFile(props.attachment.name)) return 'audio';
   if (isVideoFile(props.attachment.name)) return 'video';
   if (isImageFile(props.attachment.name)) return 'image';
+  if (isPdfFile(props.attachment.name)) return 'pdf';
   return 'file';
 });
 
@@ -112,6 +136,14 @@ const openImagePreview = async (src: string, retryCount = 0) => {
   if (previewImageSrc.value && previewImageSrc.value !== props.attachment.url) {
     showPreviewModal.value = true;
     emit('preview', previewImageSrc.value);
+    return;
+  }
+  
+  // For PDF files, just open the preview modal with the original source
+  if (isPdfFile(props.attachment.name)) {
+    previewImageSrc.value = src;
+    showPreviewModal.value = true;
+    emit('preview', src);
     return;
   }
   
@@ -173,6 +205,7 @@ const openImagePreview = async (src: string, retryCount = 0) => {
       previewImageSrc.value = src;
     }
   } else {
+    // For all other image formats, use the original source
     previewImageSrc.value = src;
   }
   
@@ -215,6 +248,9 @@ onMounted(() => {
       console.error('Failed to convert HEIC thumbnail:', err);
       isLoadingThumbnail.value = false;
     });
+  } else if (isPdfFile(props.attachment.name)) {
+    // Generate PDF thumbnail
+    generatePdfThumbnail(props.attachment.url);
   }
 });
 
@@ -305,6 +341,135 @@ const convertHeicThumbnail = async (retryCount = 0) => {
     showPlaceholder.value = !convertedThumbnailSrc.value;
   }
 };
+
+// Add a function to check if the browser supports a specific image format
+const checkBrowserSupport = () => {
+  const supportedFormats = {
+    avif: false,
+    jxl: false
+  };
+  
+  // Create test images to check format support
+  const testAvif = new Image();
+  testAvif.onload = () => { supportedFormats.avif = true; };
+  testAvif.onerror = () => { supportedFormats.avif = false; };
+  testAvif.src = 'data:image/avif;base64,AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAADybWV0YQAAAAAAAAAoaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAeaWxvYwAAAABEAAABAAEAAAABAAABGgAAAB0AAAAoaWluZgAAAAAAAQAAABppbmZlAgAAAAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAIAAAACAAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgQ0MAAAAABNjb2xybmNseAACAAIAAYAAAAAXaXBtYQAAAAAAAAABAAEEAQKDBAAAACVtZGF0EgAKCBgANogQEAwgMg8f8D///8WfhwB8+ErK42A=';
+  
+  const testJxl = new Image();
+  testJxl.onload = () => { supportedFormats.jxl = true; };
+  testJxl.onerror = () => { supportedFormats.jxl = false; };
+  testJxl.src = 'data:image/jxl;base64,/woIELASCAgQAFwASxLFgkWAHL0xqnCBCV0qDp901Te/5QM=';
+  
+  return supportedFormats;
+};
+
+// Store browser format support results
+const browserSupport = ref(checkBrowserSupport());
+
+// Add a function to detect formats that may need conversion based on browser support
+const needsConversion = (filename: string): boolean => {
+  if (!filename) return false;
+  
+  // Always convert HEIC files
+  if (filename.toLowerCase().endsWith('.heic')) return true;
+  
+  // Check if browser supports AVIF
+  if (filename.toLowerCase().endsWith('.avif') && !browserSupport.value.avif) return true;
+  
+  // Check if browser supports JXL
+  if (filename.toLowerCase().endsWith('.jxl') && !browserSupport.value.jxl) return true;
+  
+  return false;
+};
+
+// Add a function to generate friendly display names for files
+const getDisplayName = (filename: string): string => {
+  if (!filename) return 'File';
+  
+  // Check if the filename is a UUID pattern followed by an extension
+  // Example: 550e8400-e29b-41d4-a716-446655440000.pdf
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+  
+  if (uuidPattern.test(filename)) {
+    // If it's a UUID, return a friendly name based on the file type
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    
+    if (isPdfFile(filename)) return `PDF Document.${ext}`;
+    if (isVideoFile(filename)) return `Video.${ext}`;
+    if (isAudioFile(filename)) return `Audio.${ext}`;
+    if (isImageFile(filename)) return `Image.${ext}`;
+    return `File.${ext}`;
+  }
+  
+  // Otherwise, return the original filename
+  return filename;
+};
+
+const pdfThumbnailCanvas = ref<HTMLCanvasElement | null>(null);
+const isPdfThumbnailLoading = ref<boolean>(false);
+
+// Function to generate PDF thumbnails for the grid view
+const generatePdfThumbnail = async (src: string, retryCount = 0) => {
+  if (!isPdfFile(props.attachment.name)) return;
+  
+  try {
+    isPdfThumbnailLoading.value = true;
+    
+    // Wait for the canvas to be available
+    await nextTick();
+    
+    if (!pdfThumbnailCanvas.value) {
+      // Retry up to 3 times with increasing delays
+      if (retryCount < 3) {
+        await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1)));
+        return generatePdfThumbnail(src, retryCount + 1);
+      }
+      throw new Error('Canvas element not found');
+    }
+    
+    // Dynamically import PDF.js
+    const pdfjsLib = await import('pdfjs-dist');
+    // Configure worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
+    
+    // Load the PDF
+    try {
+      const loadingTask = pdfjsLib.getDocument(src);
+      const pdf = await loadingTask.promise;
+      
+      // Get the first page
+      const page = await pdf.getPage(1);
+      
+      // Set appropriate scale for the thumbnail
+      const viewport = page.getViewport({ scale: 0.5 });
+      const canvas = pdfThumbnailCanvas.value;
+      const context = canvas.getContext('2d');
+      
+      if (!context) {
+        throw new Error('Could not get canvas context');
+      }
+      
+      // Set dimensions
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      
+      // Render the page
+      await page.render({
+        canvasContext: context,
+        viewport: viewport
+      }).promise;
+      
+      log('PDF thumbnail generated successfully');
+    } catch (error) {
+      console.error('Error in PDF generation process:', error);
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error generating PDF thumbnail:', error);
+  } finally {
+    isPdfThumbnailLoading.value = false;
+  }
+};
 </script>
 
 <template>
@@ -312,7 +477,8 @@ const convertHeicThumbnail = async (retryCount = 0) => {
     'flex flex-col gap-2',
     attachmentType === 'audio' ? 'w-full' : '',
     attachmentType === 'video' ? 'bg-slate-800 rounded-lg p-3 w-full' : '',
-    attachmentType === 'image' ? 'max-w-[250px]' : ''
+    attachmentType === 'image' ? 'max-w-[250px]' : '',
+    attachmentType === 'pdf' ? 'max-w-[250px]' : ''
   ]">
     <!-- Audio/Video header -->
     <template v-if="attachmentType === 'audio' || attachmentType === 'video'">
@@ -405,10 +571,12 @@ const convertHeicThumbnail = async (retryCount = 0) => {
           v-if="isHeicConverting"
           class="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 z-20"
         >
-          <!-- Blue overlay with "CONVERTING" text -->
+          <!-- Blue overlay with conversion text -->
           <div class="absolute p-1 inset-0 flex items-center justify-center">
             <div class="bg-blue-600 px-2 py-2 text-center rounded-md shadow-lg">
-              <span class="text-sm text-white font-black tracking-wider">Converting HEIC to JPEG...</span>
+              <span class="text-sm text-white font-black tracking-wider">
+                Converting HEIC to JPEG...
+              </span>
             </div>
           </div>
           
@@ -432,13 +600,31 @@ const convertHeicThumbnail = async (retryCount = 0) => {
           mode="out-in"
           appear
         >
-          <img 
-            v-if="isImageReady"
-            key="image"
-            :src="isHeicFile(attachment.name) && convertedThumbnailSrc ? convertedThumbnailSrc : attachment.url" 
-            :alt="attachment.name" 
-            class="w-full h-full object-contain bg-slate-900/50 z-5 heic-image"
-          >
+          <template v-if="isImageReady">
+            <!-- Fallback for unsupported formats -->
+            <div 
+              v-if="needsConversion(attachment.name) && !convertedThumbnailSrc"
+              class="w-full h-full flex items-center justify-center bg-slate-800 p-4"
+            >
+              <div class="flex flex-col items-center text-center gap-2">
+                <svg class="w-12 h-12 mx-auto text-slate-500 mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <p class="text-sm text-slate-300">This image format is not supported by your browser</p>
+                </div>
+            </div>
+            <!-- Regular image display -->
+            <img 
+              v-else
+              key="image"
+              :src="isHeicFile(attachment.name) && convertedThumbnailSrc ? convertedThumbnailSrc : attachment.url" 
+              :alt="attachment.name" 
+              class="w-full h-full object-contain bg-slate-900/50 z-5 heic-image"
+              :class="{
+                'animated-preview': isAnimatedImage(attachment.name)
+              }"
+            >
+          </template>
         </transition>
 
         <!-- Preview hover overlay - only show when image is ready -->
@@ -460,11 +646,19 @@ const convertHeicThumbnail = async (retryCount = 0) => {
             <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
             <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
           </svg>
+          
+          <!-- Animation indicator for GIF and APNG -->
+          <div 
+            v-if="isAnimatedImage(attachment.name)" 
+            class="absolute top-2 left-2 bg-indigo-700/80 px-2 py-1 rounded text-xs text-white font-medium animate-pulse"
+          >
+            ANIMATED
+          </div>
         </div>
         <div 
           class="absolute top-0 left-0 p-2 bg-gradient-to-b from-slate-900/80 to-transparent w-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-25"
         >
-          <span class="text-sm text-white font-medium truncate block">{{ attachment.name }}</span>
+          <span class="text-sm text-white font-medium truncate block">{{ getDisplayName(attachment.name) }}</span>
         </div>
         <!-- Download button for images -->
         <div 
@@ -505,6 +699,91 @@ const convertHeicThumbnail = async (retryCount = 0) => {
         </div>
       </div>
     </template>
+    <template v-else-if="attachmentType === 'pdf'">
+      <div class="relative group w-full min-w-42 h-58 rounded-lg overflow-hidden bg-slate-800">
+        <!-- Delete button -->
+        <button
+          v-if="showDelete"
+          type="button"
+          @click.stop="emit('delete')"
+          class="absolute top-2 right-2 z-30 p-1.5 bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+          title="Delete PDF"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+        </button>
+        
+        <!-- PDF Loading state -->
+        <div 
+          v-if="isPdfThumbnailLoading"
+          class="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 z-20"
+        >
+          <svg class="animate-spin h-8 w-8 text-red-500 mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span class="text-sm text-white font-medium">Loading PDF</span>
+        </div>
+        
+        <!-- PDF Thumbnail canvas -->
+        <canvas 
+          ref="pdfThumbnailCanvas" 
+          class="w-full h-full object-contain"
+        ></canvas>
+        
+        <!-- PDF overlay with icon -->
+        <div 
+          class="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-slate-900/90 to-transparent"
+        >
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-sm text-white font-medium truncate">{{ getDisplayName(attachment.name) }}</span>
+          </div>
+        </div>
+
+        <!-- Preview hover overlay -->
+        <div 
+          class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center cursor-pointer z-25"
+          @click.stop="() => {
+            try {
+              openImagePreview(attachment.url, 0);
+            } catch (error) {
+              console.error('Error opening PDF preview:', error);
+              // Fallback to just showing the modal with the original PDF
+              previewImageSrc = attachment.url;
+              showPreviewModal = true;
+            }
+          }"
+        >
+          <svg class="w-12 h-12 text-white" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+            <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        
+        <!-- Download button for PDF -->
+        <div 
+          class="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-25"
+        >
+          <a
+            :href="attachment.url"
+            target="_blank"
+            :download="attachment.name"
+            class="flex items-center gap-1 p-2 bg-red-600/90 text-white hover:bg-red-700 rounded transition-colors"
+            title="Download PDF"
+            @click.stop
+          >
+            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-xs font-medium">PDF</span>
+          </a>
+        </div>
+      </div>
+    </template>
     <template v-else>
       <FilePreview
         :src="attachment.url"
@@ -538,24 +817,56 @@ const convertHeicThumbnail = async (retryCount = 0) => {
     <!-- Image Preview Modal -->
     <Modal 
       :show="showPreviewModal" 
-      title="Image Preview" 
+      :title="
+        isPdfFile(attachment.name) ? 'PDF Document' : 
+        isAnimatedImage(attachment.name) ? 'Animated Image Preview' : 
+        'Image Preview'
+      "
+      :contentClass="isPdfFile(attachment.name) ? 'modal-content-pdf-fullscreen' : ''"
+      :headerClass="isPdfFile(attachment.name) ? 'pdf-modal-header' : ''"
+      :removePadding="isPdfFile(attachment.name)"
       @close="closeImagePreview"
     >
-      <div class="flex flex-col items-center gap-1">
-        <!-- Image preview with transition -->
+      <div class="flex flex-col items-center gap-1" :class="{ 'h-full': isPdfFile(attachment.name) }">
+        <!-- Content preview with transition -->
         <transition name="fade" mode="out-in" appear>
-          <img 
+          <!-- PDF Viewer Component -->
+          <PDFViewer 
+            v-if="isPdfFile(attachment.name)" 
             :src="previewImageSrc" 
-            :alt="attachment.name" 
-            class="max-w-full max-h-[70vh] object-contain"
+            :filename="attachment.name"
+            :initialPage="1"
+            class="w-full h-full"
+            @error="(error) => console.error('PDF Viewer error:', error)"
           />
+          
+          <!-- Image Preview (Non-PDF) -->
+          <div v-else class="relative">
+            <img 
+              :src="previewImageSrc" 
+              :alt="attachment.name" 
+              class="max-w-full max-h-[70vh] object-contain"
+              :class="{
+                'animated-preview-modal': isAnimatedImage(attachment.name)
+              }"
+            />
+            
+            <!-- Animation indicator for GIF/APNG -->
+            <div 
+              v-if="isAnimatedImage(attachment.name)"
+              class="absolute top-2 right-2 bg-indigo-700 px-3 py-1 rounded-full text-xs text-white font-medium animate-pulse"
+            >
+              ANIMATED
+            </div>
+          </div>
         </transition>
         
-        <div class="mt-4 text-center text-sm text-slate-300">
-          {{ attachment.name }}
+        <div v-if="!isPdfFile(attachment.name)" class="mt-4 text-center text-sm text-slate-300">
+          {{ getDisplayName(attachment.name) }}
         </div>
         
-        <div class="mt-4 flex gap-3">
+        <!-- Show download buttons only for non-PDF files since PDFViewer has its own -->
+        <div v-if="!isPdfFile(attachment.name)" class="mt-4 flex gap-3">
           <!-- For HEIC files, show both download options -->
           <template v-if="isHeicFile(attachment.name) && previewImageSrc !== attachment.url">
             <!-- Original HEIC download button -->
@@ -585,7 +896,22 @@ const convertHeicThumbnail = async (retryCount = 0) => {
             </a>
           </template>
           
-          <!-- For non-HEIC files, show the standard download button -->
+          <!-- For animated images, add a special title -->
+          <template v-else-if="isAnimatedImage(attachment.name)">
+            <a
+              :href="previewImageSrc"
+              target="_blank"
+              :download="attachment.name"
+              class="px-4 py-2 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 transition-colors flex items-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+              </svg>
+              Download animated image
+            </a>
+          </template>
+          
+          <!-- For non-HEIC, non-animated files, show the standard download button -->
           <a
             v-else
             :href="previewImageSrc"
@@ -697,8 +1023,101 @@ const convertHeicThumbnail = async (retryCount = 0) => {
   }
 }
 
+/* Add styles for animated images (GIF, APNG) */
+.animated-image {
+  border: 2px solid transparent;
+  animation: pulse-border 2s ease-in-out infinite;
+  border-color: rgba(99, 102, 241, 0.5); /* Indigo color to indicate animation */
+}
+
+/* Animation indicator animation */
+@keyframes flash {
+  0%, 100% {
+    background-color: rgba(99, 102, 241, 0.7);
+  }
+  50% {
+    background-color: rgba(79, 70, 229, 0.9);
+  }
+}
+
 /* Ensure z-index layering works correctly */
 .heic-image {
   z-index: 5 !important;
+}
+
+/* Remove the old animated-image class and replace with new styles */
+.animated-preview {
+  background: rgba(15, 23, 42, 0.8); /* slate-900/80 */
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.animated-preview-modal {
+  background: rgba(15, 23, 42, 0.8); /* slate-900/80 */
+  padding: 4px;
+  border-radius: 6px;
+}
+
+/* Remove the pulse-border animation since we're using a cleaner approach */
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(59, 130, 246, 0.8);
+  }
+  50% {
+    border-color: rgba(96, 165, 250, 0.4);
+  }
+}
+
+/* Update the animation indicator style */
+.animation-indicator {
+  background: linear-gradient(45deg, #4f46e5, #6366f1);
+  box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2);
+}
+
+/* Clean up unused animations */
+@keyframes flash {
+  0%, 100% {
+    background-color: rgba(99, 102, 241, 0.7);
+  }
+  50% {
+    background-color: rgba(79, 70, 229, 0.9);
+  }
+}
+
+/* PDF container and canvas styles */
+.pdf-container {
+  max-height: 70vh;
+  border: 1px solid rgba(30, 41, 59, 0.5);
+}
+
+.pdf-canvas-wrapper {
+  min-height: 500px;
+}
+
+/* Make the modal content wider and taller for PDFs */
+:deep(.modal-content-pdf-fullscreen) {
+  max-width: 95vw;
+  width: 95vw;
+  height: 90vh;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.modal-content-pdf-fullscreen > div) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.modal-content-pdf-fullscreen .pdf-container) {
+  min-height: calc(90vh - 140px);
+  max-height: calc(90vh - 140px);
+}
+
+:deep(.pdf-modal-header) {
+  padding: 0.75rem 1rem;
+  background-color: rgba(15, 23, 42, 0.8);
+  border-bottom-color: rgba(51, 65, 85, 0.5);
 }
 </style>

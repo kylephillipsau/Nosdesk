@@ -54,10 +54,8 @@ const handleDrop = () => {
 
 <template>
   <div class="h-full flex flex-col">
-    <h3 class="px-4 text-sm font-medium text-gray-400 uppercase mb-2 flex-shrink-0">Recent Tickets</h3>
-
     <div class="flex-1 min-h-0 overflow-y-auto">
-      <div class="space-y-1 pt-2 pb-4 px-2">
+      <div class="space-y-0.5 pt-1 pb-1 px-1">
         <!-- Wrap each ticket item with QuickTooltip -->
         <div v-for="ticket in recentTicketsStore.recentTickets" :key="ticket.id" class="block">
           <QuickTooltip 
@@ -82,47 +80,53 @@ const handleDrop = () => {
               @dragend="handleDragEnd"
               @dragover="(dragEvent: DragEvent) => handleDragOver(ticket.id, dragEvent)"
               @drop="handleDrop"
-              class="group block px-2 py-1.5 rounded-lg hover:bg-slate-700 relative cursor-move transition-all duration-200"
+              class="group block px-2 py-1 rounded-md hover:bg-slate-700/70 relative cursor-move transition-all duration-200 border border-transparent"
               :class="{
-                'opacity-50': draggedTicketId === ticket.id,
-                'bg-blue-900/20 border border-blue-500/30': ticket.isDraft,
-                'hover:bg-blue-900/30': ticket.isDraft
+                'opacity-60': draggedTicketId === ticket.id,
+                'shadow-sm border-blue-500/20 bg-blue-900/10 hover:bg-blue-900/20': ticket.isDraft,
+                'hover:shadow-sm': !ticket.isDraft
               }"
             >
-              <div class="flex items-center gap-2 w-full">
+              <!-- Compact layout with status badge, ID, and title in a single row -->
+              <div class="flex items-center w-full pr-6 gap-1">
+                <!-- Status Badge -->
                 <StatusBadge 
                   type="status" 
                   :value="ticket.status"
-                  custom-classes="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  custom-classes="w-1.5 h-1.5 rounded-full flex-shrink-0 mr-1.5"
                 />
                 
-                <div class="flex items-center min-w-0 flex-1 gap-1">
-                  <div class="min-w-0 flex-1">
-                    <span class="text-sm text-white truncate block">
-                      {{ ticket.title }}
-                      <span v-if="ticket.isDraft" class="ml-1 text-xs text-blue-400">(Draft)</span>
-                    </span>
-                  </div>
-
-                  <div class="flex items-center gap-2 flex-shrink-0 ml-2">
-                    <span class="text-xs text-gray-400 whitespace-nowrap">#{{ ticket.id }}</span>
-                    <button 
-                      @click.prevent="recentTicketsStore.removeRecentTicket(ticket.id)"
-                      class="w-5 h-5 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-slate-600 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
+                <!-- Ticket ID -->
+                <span class="text-xs font-mono text-slate-400 whitespace-nowrap mr-2">{{ ticket.id }}</span>
+                
+                <!-- Ticket Title -->
+                <span class="text-xs text-white truncate block min-w-0 flex-1">
+                  {{ ticket.title }}
+                  <span v-if="ticket.isDraft" class="ml-1 text-xs text-blue-400 font-medium">(Draft)</span>
+                </span>
+              </div>
+              
+              <!-- Action Controls Container - Right Side -->
+              <div class="absolute right-1 inset-y-0 flex items-center">
+                <!-- Remove button - Only show on hover -->
+                <button 
+                  @click.prevent="recentTicketsStore.removeRecentTicket(ticket.id)"
+                  class="w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-500 hover:text-white hover:bg-slate-600 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                  title="Remove from recent tickets"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
             </RouterLink>
           </QuickTooltip>
         </div>
 
-        <!-- Empty state -->
+        <!-- Empty state - More compact -->
         <div 
           v-if="recentTicketsStore.recentTickets.length === 0" 
-          class="px-4 py-2 text-sm text-gray-400"
+          class="px-2 py-1.5 text-xs text-slate-400 bg-slate-800/40 rounded border border-slate-700/50 mt-1 text-center"
         >
           No recent tickets
         </div>
@@ -134,5 +138,29 @@ const handleDrop = () => {
 <style scoped>
 .transform {
   will-change: transform;
+}
+
+/* Add subtle grip pattern to draggable items */
+[draggable="true"] {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    transparent
+  );
+  background-position: right center;
+  background-repeat: no-repeat;
+  background-size: 8px 100%;
+}
+
+[draggable="true"]:hover {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    transparent
+  );
+}
+
+[draggable="true"]:active {
+  cursor: grabbing;
 }
 </style>

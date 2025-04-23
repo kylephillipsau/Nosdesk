@@ -1108,7 +1108,7 @@ const navigateToDeviceView = (deviceId: number) => {
     grid-template-columns: repeat(2, 1fr);
     grid-template-areas:
       "details article"
-      "comments article";
+      "details comments";
   }
 
   @media (min-width: 1536px) {
