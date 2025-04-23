@@ -2,8 +2,8 @@
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import DocumentationNav from '@/components/documentationComponents/DocumentationNav.vue'
 import RecentTickets from '@/components/RecentTickets.vue'
-import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { useResizableSidebar } from '@/composables/useResizableSidebar'
+import ResizablePane from '@/components/ResizablePane.vue'
+import { ref, computed, onMounted } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,22 +17,8 @@ const isSmallScreen = ref(false)
 const isDocsCollapsed = ref(false)
 const isTicketsCollapsed = ref(false)
 
-// Refs for DOM elements - These will be passed to the composable
+// Reference to the navbar container
 const navbarRef = ref<HTMLElement | null>(null)
-const ticketsSectionRef = ref<HTMLElement | null>(null)
-const docsSectionRef = ref<HTMLElement | null>(null)
-const resizerRef = ref<HTMLElement | null>(null)
-
-// Define locally for check in onMounted, or expose from composable if preferred
-const MIN_SECTION_HEIGHT = 60; 
-
-// Use the composable for resizing logic
-const { 
-  ticketsHeight, // The reactive height value from the composable
-  isResizing, // The reactive resizing status from the composable
-  startResize, // The function to start resizing, attach to resizer handle
-  equalizeHeights // Utility function to equalize heights
-} = useResizableSidebar(navbarRef, ticketsSectionRef, docsSectionRef, resizerRef)
 
 // Provide/inject for sharing with App.vue
 const emit = defineEmits(['update:collapsed'])
@@ -90,7 +76,6 @@ onMounted(() => {
   const storedPref = localStorage.getItem('navbarCollapsed')
   const storedDocsCollapsed = localStorage.getItem('docsCollapsed')
   const storedTicketsCollapsed = localStorage.getItem('ticketsCollapsed')
-  // ticketsHeight is now handled by the composable
 
   // Check screen size first
   isSmallScreen.value = window.innerWidth < 1024
@@ -113,21 +98,6 @@ onMounted(() => {
   
   // Add resize listener for screen size changes
   window.addEventListener('resize', checkScreenSize)
-
-  // Set initial sizes after mount
-  nextTick(() => {
-    if (!ticketsHeight.value || ticketsHeight.value < MIN_SECTION_HEIGHT) { // Use local constant
-      if (!isCollapsed.value && !isTicketsCollapsed.value && !isDocsCollapsed.value) {
-         equalizeHeights();
-      }
-    }
-  })
-})
-
-// Clean up on unmount
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', checkScreenSize)
-  // Global listeners for resizing are handled by the composable's onBeforeUnmount
 })
 
 // Computed property to check if we're on a documentation page
@@ -200,8 +170,8 @@ const isRouteActive = (path: string, exact = false) => {
     class="h-screen bg-slate-800 border-r border-black flex flex-col flex-shrink-0 print:hidden transition-all duration-300 ease-in-out overflow-hidden lg:fixed lg:left-0 lg:top-0 lg:z-20 lg:flex"
     :class="[isCollapsed ? 'lg:w-16' : 'lg:w-64', isSmallScreen ? 'hidden' : '']"
   >
-    <div class="flex flex-col pt-2 px-2 flex-shrink-0 gap-1">
-      <!-- Show logo only when navbar is expanded -->
+    <div class="flex flex-col p-2 flex-shrink-0 gap-1">
+      <!-- Logo and Navigation links -->
       <RouterLink 
         v-if="!isCollapsed"
         to="/" 
@@ -214,7 +184,6 @@ const isRouteActive = (path: string, exact = false) => {
         />
       </RouterLink>
       
-      <!-- When collapsed, add a smaller top spacing -->
       <RouterLink 
         v-else
         to="/"
@@ -253,104 +222,108 @@ const isRouteActive = (path: string, exact = false) => {
           <span v-if="!isCollapsed" class="text-sm whitespace-nowrap">{{ link.text }}</span>
         </RouterLink>
       </div>
-    </div>
 
-    <!-- Separator -->
-    <div class="border-t border-slate-700/50 my-1"></div>
+      <!-- Separator -->
+      <div class="border-t border-slate-700/50 my-1"></div>
+    </div>
 
     <!-- Only show sections when navbar is expanded -->
     <div 
       class="flex-1 min-h-0 flex flex-col overflow-hidden" 
       v-if="!isCollapsed"
     >
-      <!-- Recent Tickets section with collapsible header -->
-      <div 
-        ref="ticketsSectionRef"
-        class="tickets-section flex-shrink-0 overflow-hidden flex flex-col transition-all duration-200"
-        :style="{ maxHeight: isTicketsCollapsed ? '32px' : `${ticketsHeight}px` }"
-        :class="[isTicketsCollapsed ? 'opacity-90 hover:opacity-100' : '']"
+      <!-- Using the new ResizablePane component -->
+      <ResizablePane 
+        direction="ns" 
+        storageKey="ticketsHeight" 
+        :initialHeight="200"
+        :minHeight="60"
+        :minOtherHeight="60"
       >
-        <div 
-          class="flex items-center justify-between py-1.5 px-3 cursor-pointer transition-colors duration-200 group"
-          :class="isTicketsCollapsed ? 'hover:bg-slate-700/30' : 'bg-slate-700/20'"
-          @click="toggleTickets"
-        >
-          <h3 class="text-xs font-medium text-slate-300 uppercase tracking-wider flex items-center gap-1">
-            <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
-            Recent Tickets
-          </h3>
-          <button 
-            class="text-slate-400 group-hover:text-white transition-colors duration-200 bg-slate-700/30 rounded p-0.5"
-            :title="isTicketsCollapsed ? 'Expand section' : 'Collapse section'"
+        <!-- Tickets section content -->
+        <template #pane-content>
+          <div 
+            class="h-full flex flex-col"
+            :class="[isTicketsCollapsed ? 'max-h-8' : '']"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path 
-                stroke-linecap="round" 
-                stroke-linejoin="round" 
-                stroke-width="2" 
-                :d="isTicketsCollapsed ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7'" 
-              />
-            </svg>
-          </button>
-        </div>
+            <!-- Tickets header -->
+            <div 
+              class="flex items-center justify-between py-1.5 px-3 cursor-pointer transition-colors duration-200 group"
+              :class="isTicketsCollapsed ? 'hover:bg-slate-700/30' : 'bg-slate-700/20'"
+              @click="toggleTickets"
+            >
+              <h3 class="text-xs font-medium text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
+                Recent Tickets
+              </h3>
+              <button 
+                class="text-slate-400 group-hover:text-white transition-colors duration-200 bg-slate-700/30 rounded p-0.5"
+                :title="isTicketsCollapsed ? 'Expand section' : 'Collapse section'"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path 
+                    stroke-linecap="round" 
+                    stroke-linejoin="round" 
+                    stroke-width="2" 
+                    :d="isTicketsCollapsed ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7'" 
+                  />
+                </svg>
+              </button>
+            </div>
+            
+            <!-- Tickets content -->
+            <div 
+              class="overflow-y-auto bg-slate-800/60 flex-1"
+              :class="isTicketsCollapsed ? 'opacity-0 h-0' : 'opacity-100'" 
+            >
+              <RecentTickets v-if="!isTicketsCollapsed" />
+            </div>
+          </div>
+        </template>
         
-        <div 
-          class="overflow-y-auto bg-slate-800/60"
-          :class="isTicketsCollapsed ? 'opacity-0 h-0' : 'opacity-100 flex-1'" 
-        >
-          <RecentTickets v-if="!isTicketsCollapsed" />
-        </div>
-      </div>
-      
-      <!-- Resizer between sections -->
-      <div 
-        ref="resizerRef"
-        class="resizer-handle group relative mx-1 flex items-center justify-center select-none"
-        @mousedown="startResize"
-        @touchstart.prevent="startResize" 
-        :class="{ 'active': isResizing }"
-      >
-        <!-- Equalize button removed -->
-        <!-- Drag indicator lines removed -->
-      </div>
-      
-      <!-- Documentation section with collapsible header -->
-      <div 
-        ref="docsSectionRef" 
-        class="docs-section flex-1 min-h-0 overflow-hidden flex flex-col transition-all duration-200 -mt-px" 
-        :class="[isDocsCollapsed ? 'opacity-90 hover:opacity-100' : '']"
-      >
-        <div 
-          class="flex items-center justify-between py-1.5 px-3 cursor-pointer transition-colors duration-200 group"
-          :class="isDocsCollapsed ? 'hover:bg-slate-700/30' : 'bg-slate-700/20'"
-          @click="toggleDocs"
-        >
-          <h3 class="text-xs font-medium text-slate-300 uppercase tracking-wider flex items-center gap-1">
-            <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
-            Documentation
-          </h3>
-          <button 
-            class="text-slate-400 group-hover:text-white transition-colors duration-200 bg-slate-700/30 rounded p-0.5"
-            :title="isDocsCollapsed ? 'Expand section' : 'Collapse section'"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path 
-                stroke-linecap="round" 
-                stroke-linejoin="round" 
-                stroke-width="2" 
-                :d="isDocsCollapsed ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7'" 
-              />
-            </svg>
-          </button>
-        </div>
+        <!-- Optional custom resizer (the component provides a default) -->
+        <template #resizer>
+          <!-- The resizer is customizable -->
+        </template>
         
-        <div 
-          class="overflow-y-auto flex-1 bg-slate-800/60"
-          :class="isDocsCollapsed ? 'opacity-0 h-0' : 'opacity-100'"
-        >
-          <DocumentationNav v-if="!isDocsCollapsed" @search="handleDocSearch" />
-        </div>
-      </div>
+        <!-- Documentation section content -->
+        <template #after-content>
+          <div class="h-full flex flex-col">
+            <!-- Docs header -->
+            <div 
+              class="flex items-center justify-between py-1.5 px-3 cursor-pointer transition-colors duration-200 group"
+              :class="isDocsCollapsed ? 'hover:bg-slate-700/30' : 'bg-slate-700/20'"
+              @click="toggleDocs"
+            >
+              <h3 class="text-xs font-medium text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                Documentation
+              </h3>
+              <button 
+                class="text-slate-400 group-hover:text-white transition-colors duration-200 bg-slate-700/30 rounded p-0.5"
+                :title="isDocsCollapsed ? 'Expand section' : 'Collapse section'"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path 
+                    stroke-linecap="round" 
+                    stroke-linejoin="round" 
+                    stroke-width="2" 
+                    :d="isDocsCollapsed ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7'" 
+                  />
+                </svg>
+              </button>
+            </div>
+            
+            <!-- Docs content -->
+            <div 
+              class="overflow-y-auto flex-1 bg-slate-800/60"
+              :class="isDocsCollapsed ? 'opacity-0 h-0' : 'opacity-100'"
+            >
+              <DocumentationNav v-if="!isDocsCollapsed" @search="handleDocSearch" />
+            </div>
+          </div>
+        </template>
+      </ResizablePane>
     </div>
     
     <!-- Toggle button at the bottom of sidebar -->
@@ -361,7 +334,6 @@ const isRouteActive = (path: string, exact = false) => {
         :class="isCollapsed ? 'justify-center' : 'justify-between'"
         aria-label="Toggle sidebar"
       >
-        <!-- Left side with icon and text -->
         <div class="flex items-center">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 group-hover:text-[#FDBD10] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path v-if="isCollapsed" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
@@ -370,7 +342,6 @@ const isRouteActive = (path: string, exact = false) => {
           <span v-if="!isCollapsed" class="ml-2 text-xs">Collapse Sidebar</span>
         </div>
         
-        <!-- Keyboard shortcut (only shown when expanded) -->
         <kbd v-if="!isCollapsed" class="hidden md:inline-flex text-[10px] px-1.5 py-0.5 bg-slate-700 rounded text-slate-400 items-center">
           ⌘ K
         </kbd>
@@ -388,7 +359,6 @@ const isRouteActive = (path: string, exact = false) => {
         class="flex flex-col items-center justify-center px-2 py-1 rounded-lg transition-colors duration-200 hover:bg-slate-700/50 flex-1 relative"
         :class="isRouteActive(link.to, link.exact) ? 'text-[#FDBD10]' : 'text-slate-300'"
       >
-        <!-- Active indicator dot for mobile -->
         <div 
           v-if="isRouteActive(link.to, link.exact)"
           class="absolute top-0 w-1.5 h-1.5 rounded-full bg-[#FDBD10]"
@@ -407,89 +377,4 @@ const isRouteActive = (path: string, exact = false) => {
     class="fixed inset-0 bg-black bg-opacity-50 z-10 lg:hidden"
     @click="toggleNav"
   ></div>
-</template>
-
-<style scoped>
-/* Optimize resizable sections with hardware acceleration hints */
-.tickets-section, .docs-section {
-  will-change: max-height;
-  transform: translateZ(0); /* Force GPU acceleration */
-  backface-visibility: hidden;
-  perspective: 1000px;
-  transition: max-height 0.2s cubic-bezier(0.25, 1, 0.5, 1); /* Optimized easing function */
-}
-
-/* Remove transition during active resizing to prevent lag */
-:global(.resize-active) .tickets-section,
-:global(.resize-active) .docs-section {
-  transition: none !important;
-}
-
-/* Styles for resizer handle, active state, etc. */
-.resizer-handle {
-  touch-action: none;
-  position: relative;
-  z-index: 1;
-  height: 4px;
-  margin: 0;
-  cursor: ns-resize;
-  background-color: rgba(51, 65, 85, 0.25);
-  border-top: 1px solid rgba(71, 85, 105, 0.3);
-  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
-}
-
-.resizer-handle:hover {
-  background-color: rgba(51, 65, 85, 0.4);
-}
-
-.resizer-handle:active,
-.resizer-handle.active {
-  background-color: rgba(96, 165, 250, 0.3);
-}
-
-/* Keep the blue line indicator on hover/active, but make it more subtle */
-.resizer-handle:hover::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 0.5px; /* Thinner line on hover */
-  background-color: rgba(96, 165, 250, 0.3); /* Much more transparent blue */
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0.5; /* Lower opacity */
-  z-index: 5;
-  pointer-events: none;
-}
-
-/* Slightly more visible but still subtle when actively resizing */
-.resizer-handle.active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 0.5px;
-  background-color: rgba(96, 165, 250, 0.5); /* More visible when active */
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0.6;
-  z-index: 5;
-  pointer-events: none;
-}
-
-/* Visual feedback for resize cursor position */
-:global(.resize-active) {
-  cursor: ns-resize !important;
-  user-select: none !important;
-}
-
-:global(.resize-active *) {
-  user-select: none !important;
-  pointer-events: none !important;
-}
-
-/* Ensure the resizer itself remains interactive during resize */
-:global(.resize-active .resizer-handle) {
-  pointer-events: auto !important;
-}
-</style>
+</template> 

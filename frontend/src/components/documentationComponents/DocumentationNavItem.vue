@@ -160,10 +160,10 @@ const hasChildren = computed(() => {
 </script>
 
 <template>
-  <li class="space-y-1 relative nav-item">
+  <li class="space-y-0.5 relative nav-item">
     <!-- Main Page Item -->
     <div
-      class="flex gap-1 text-sm font-medium px-2 py-1.5 hover:text-white hover:bg-slate-700 rounded transition-colors items-center relative"
+      class="flex gap-1 text-xs font-medium px-2 py-1 hover:text-white hover:bg-slate-700/70 rounded transition-colors items-center relative"
       :class="pageItemClasses"
       @click.stop="handlePageClick(page.id)"
       draggable="true"
@@ -177,33 +177,43 @@ const hasChildren = computed(() => {
       <!-- Expand/Collapse Arrow (only if has children) -->
       <span 
         v-if="hasChildren" 
-        class="text-slate-400 transition-transform duration-200 cursor-pointer flex-shrink-0 flex items-center justify-center" 
+        class="text-slate-400 transition-transform duration-200 cursor-pointer flex-shrink-0 flex items-center justify-center hover:text-white" 
         :class="{ 'rotate-90': docNavStore.expandedPages[page.id] }"
         @click.stop="handleToggleExpand(page.id, $event)"
         aria-label="Toggle children"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
         </svg>
       </span>
       
       <!-- Page Icon and Title -->
-      <div class="flex items-center flex-grow max-w-full gap-1" :class="{ 'ml-3': !hasChildren }">
+      <div class="flex items-center flex-grow max-w-full gap-1" :class="{ 'ml-2.5': !hasChildren }">
         <!-- Page Icon -->
-        <span class="mr-2 flex-shrink-0 w-4 h-4 flex items-center justify-center">
-          <span v-if="page.icon && !isIconSvg(page.icon)" class="text-sm">{{ page.icon }}</span>
-          <span v-else-if="page.icon && isIconSvg(page.icon)" v-html="page.icon" class="w-4 h-4"></span>
-          <span v-else class="text-sm">📄</span>
+        <span class="mr-1 flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center text-slate-400">
+          <span v-if="page.icon && !isIconSvg(page.icon)" class="text-xs">{{ page.icon }}</span>
+          <span v-else-if="page.icon && isIconSvg(page.icon)" v-html="page.icon" class="w-3.5 h-3.5"></span>
+          <span v-else class="text-xs">📄</span>
         </span>
         
         <!-- Page Title -->
-        <span class="truncate max-w-[calc(100%-2rem)]">{{ page.title }}</span>
+        <span class="truncate max-w-[calc(100%-2.5rem)]">{{ page.title }}</span>
+      </div>
+      
+      <!-- Drag handle indicator that shows on hover -->
+      <div class="opacity-0 group-hover:opacity-50 transition-opacity duration-200 ml-auto">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+        </svg>
       </div>
     </div>
     
     <!-- Child Pages (only shown when expanded) -->
-    <div v-if="docNavStore.expandedPages[page.id] && hasChildren" class="pl-2">
-      <ul class="space-y-1 border-l border-slate-700 pl-1">
+    <div v-if="docNavStore.expandedPages[page.id] && hasChildren" class="pl-1.5">
+      <ul class="space-y-0.5 border-l border-slate-700 pl-1 relative">
+        <!-- Show a subtle expanding line animation when first expanded -->
+        <div class="absolute left-0 top-0 bottom-0 w-px bg-slate-600 expand-line"></div>
+        
         <DocumentationNavItem
           v-for="child in page.children"
           :key="child.id"
@@ -276,5 +286,22 @@ const hasChildren = computed(() => {
 [draggable="true"].opacity-50 {
   transform: scale(0.98);
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+/* Animation for the expanding line when children are shown */
+.expand-line {
+  animation: expandLineAnimation 0.3s ease-out forwards;
+  transform-origin: top;
+}
+
+@keyframes expandLineAnimation {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 </style> 
