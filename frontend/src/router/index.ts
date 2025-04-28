@@ -248,6 +248,16 @@ const router = createRouter({
       }
     },
     {
+      path: '/auth/microsoft/callback',
+      name: 'microsoft-callback',
+      component: () => import('../views/auth/MicrosoftCallbackView.vue'),
+      meta: {
+        layout: 'blank',
+        requiresAuth: false,
+        title: 'Authenticating...'
+      }
+    },
+    {
       path: '/pdf-viewer',
       name: 'pdf-viewer',
       component: PDFViewerView,
@@ -289,7 +299,11 @@ router.beforeResolve((to, from, next) => {
 });
 
 // Authentication guard
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
+  // Import auth store inside the guard to avoid circular dependencies
+  const { useAuthStore } = await import('@/stores/auth');
+  const authStore = useAuthStore();
+
   // Check for unsaved changes
   // @ts-ignore
   if (window.hasUnsavedChanges && !window.confirm('You have unsaved changes. Are you sure you want to leave?')) {
@@ -301,12 +315,24 @@ router.beforeEach((to, from, next) => {
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth);
   const requiresAdmin = to.matched.some(record => record.meta.adminRequired);
   
-  // Get auth status from localStorage
-  const isAuthenticated = !!localStorage.getItem('token');
+  // Use auth store to check authentication and admin status
+  const isAuthenticated = authStore.isAuthenticated;
   
-  // Check admin status from auth store (using a simple approach for now)
-  const userDataStr = localStorage.getItem('user');
-  const isAdmin = userDataStr ? JSON.parse(userDataStr)?.role === 'admin' : false;
+  // Fetch user data if authenticated but no user data loaded yet
+  if (isAuthenticated && !authStore.user) {
+    try {
+      await authStore.fetchUserData();
+    } catch (error) {
+      console.error('Failed to fetch user data during navigation:', error);
+      // If we can't fetch user data, log out and redirect to login
+      authStore.logout();
+      next({ name: 'login', query: { redirect: to.fullPath } });
+      return;
+    }
+  }
+  
+  // Use auth store to check admin status
+  const isAdmin = authStore.isAdmin;
   
   if (requiresAuth && !isAuthenticated) {
     // Redirect to login page if not authenticated

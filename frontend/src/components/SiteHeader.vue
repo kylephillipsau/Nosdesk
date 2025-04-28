@@ -102,7 +102,7 @@ const user = computed(() => {
     return {
       name: authStore.user.name,
       email: authStore.user.email,
-      avatar: null // Auth user doesn't have avatar property, so we set it to null
+      avatar: authStore.user.avatar_url // Use the avatar_url from the auth store
     };
   }
   return {
@@ -218,6 +218,25 @@ onUnmounted(() => {
   // Remove resize listener
   window.removeEventListener('resize', updateMobileStatus);
 });
+
+// Add a ref for the header avatar component
+interface AvatarComponentType {
+  refreshUser: (uuid?: string) => Promise<void>;
+}
+
+const headerAvatarRef = ref<AvatarComponentType | null>(null);
+
+// Method to refresh avatar data - can be called from outside
+const refreshAvatar = () => {
+  if (headerAvatarRef.value && headerAvatarRef.value.refreshUser && authStore.user) {
+    headerAvatarRef.value.refreshUser(authStore.user.uuid);
+  }
+};
+
+// Expose the refresh method
+defineExpose({
+  refreshAvatar
+});
 </script>
 
 <template>
@@ -299,6 +318,7 @@ onUnmounted(() => {
               :avatar="user.avatar"
               size="md" 
               :clickable="false"
+              ref="headerAvatarRef"
             />
           </button>
 
@@ -312,11 +332,21 @@ onUnmounted(() => {
           >
             <!-- User Info -->
             <div
-              class="px-4 py-2 border-b border-slate-700 hover:bg-slate-700 cursor-pointer"
+              class="px-4 py-3 border-b border-slate-700 hover:bg-slate-700 cursor-pointer flex items-center gap-3"
               @click="authStore.user ? router.push(`/users/${authStore.user.uuid}`) : {}"
             >
-              <div class="text-sm font-medium text-white">{{ user.name }}</div>
-              <div class="text-xs text-slate-400">{{ user.email }}</div>
+              <UserAvatar
+                :name="user.name"
+                :avatar="user.avatar"
+                size="md" 
+                :showName="false"
+                :clickable="false"
+              />
+              <div>
+                <div class="text-sm font-medium text-white">{{ user.name }}</div>
+                <div class="text-xs text-slate-400">{{ user.email }}</div>
+                <div class="text-xs text-blue-400 mt-1">View Profile</div>
+              </div>
             </div>
 
             <!-- Menu Items -->

@@ -126,7 +126,7 @@ const handleDrop = () => {
         <!-- Empty state - More compact -->
         <div 
           v-if="recentTicketsStore.recentTickets.length === 0" 
-          class="px-2 py-1.5 text-xs text-slate-400 bg-slate-800/40 rounded border border-slate-700/50 mt-1 text-center"
+          class="px-2 py-1.5 text-xs text-slate-400 bg-slate-800/40 text-center"
         >
           No recent tickets
         </div>

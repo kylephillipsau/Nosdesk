@@ -2,8 +2,15 @@
 import { ref } from 'vue';
 import SettingsCard from '@/components/settings/SettingsCard.vue';
 import SettingsToggle from '@/components/settings/SettingsToggle.vue';
+import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import axios from 'axios';
 
 const activeTab = ref('appearance');
+const authStore = useAuthStore();
+const router = useRouter();
+const isDeleting = ref(false);
+const deleteError = ref('');
 
 // Add refs for toggle states
 const darkMode = ref(true); // Default to dark mode enabled
@@ -41,6 +48,39 @@ const applyTheme = (themeId: string) => {
   selectedTheme.value = themeId;
   // TODO: Implement actual theme application logic
   console.log(`Theme changed to: ${themeId}`);
+};
+
+const confirmDeleteAccount = async () => {
+  if (!window.confirm('Are you sure you want to permanently delete your account? This action cannot be undone.')) {
+    return;
+  }
+  
+  // Check if user exists
+  if (!authStore.user) {
+    deleteError.value = 'User information not available. Please try logging out and in again.';
+    return;
+  }
+  
+  isDeleting.value = true;
+  deleteError.value = '';
+  
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || '/api';
+    
+    // Delete the user account using UUID
+    await axios.delete(`${API_URL}/users/${authStore.user.uuid}`);
+    
+    // Log the user out after successful deletion
+    await authStore.logout();
+    
+    // Redirect to login page
+    router.push('/login');
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    deleteError.value = 'Failed to delete account. Please try again or contact support.';
+  } finally {
+    isDeleting.value = false;
+  }
 };
 </script>
 
@@ -151,19 +191,34 @@ const applyTheme = (themeId: string) => {
             <div v-if="activeTab === 'account'" class="flex flex-col gap-6">
               <SettingsCard title="Account Settings">
                 <div class="bg-slate-700/50 rounded-md p-4">
-                  <div class="mb-4">
-                    <label class="block text-sm font-medium text-white mb-2">Name</label>
-                    <input type="text" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-                  </div>
-                  <div>
-                    <label class="block text-sm font-medium text-white mb-2">Email</label>
-                    <input type="email" class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md shadow-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-                  </div>
+                  <h3 class="text-sm font-medium text-white mb-3">Profile Settings</h3>
+                  <p class="text-sm text-slate-400 mb-4">Manage your profile information, avatar, and login methods</p>
+                  <router-link to="/profile/settings" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors inline-block">
+                    Edit Profile
+                  </router-link>
                 </div>
                 
-                <div class="flex justify-end">
-                  <button class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
-                    Save Changes
+                <div class="bg-slate-700/50 rounded-md p-4 mt-4">
+                  <h3 class="text-sm font-medium text-white mb-3">Delete Account</h3>
+                  <p class="text-sm text-slate-400 mb-4">Permanently delete your account and all your data</p>
+                  
+                  <!-- Error message -->
+                  <div v-if="deleteError" class="mb-4 p-3 bg-red-900/50 text-red-400 rounded-md">
+                    {{ deleteError }}
+                  </div>
+                  
+                  <button 
+                    @click="confirmDeleteAccount" 
+                    :disabled="isDeleting"
+                    class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:bg-red-800 flex items-center gap-2"
+                  >
+                    <span v-if="isDeleting" class="animate-spin h-4 w-4">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </span>
+                    {{ isDeleting ? 'Deleting...' : 'Delete Account' }}
                   </button>
                 </div>
               </SettingsCard>
@@ -175,9 +230,9 @@ const applyTheme = (themeId: string) => {
                 <div class="bg-slate-700/50 rounded-md p-4">
                   <h3 class="text-sm font-medium text-white mb-3">Password</h3>
                   <p class="text-sm text-slate-400 mb-4">Change your password or reset it if you've forgotten it</p>
-                  <button class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 transition-colors">
-                    Change Password
-                  </button>
+                  <router-link to="/profile/settings" class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 transition-colors inline-block">
+                    Manage in Profile Settings
+                  </router-link>
                 </div>
                 
                 <SettingsToggle

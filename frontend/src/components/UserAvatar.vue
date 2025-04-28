@@ -1,6 +1,6 @@
 <!-- # src/components/UserAvatar.vue -->
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch, defineExpose } from 'vue'
 import { useRouter } from 'vue-router'
 import userService from '@/services/userService'
 
@@ -10,7 +10,36 @@ const sharedUsers = {
   data: ref<any[]>([]),
   loading: ref(false),
   error: ref<string | null>(null),
-  initialized: ref(false)
+  initialized: ref(false),
+  
+  // Method to refresh a specific user's data or all users
+  refreshUser: async (userUuid?: string) => {
+    try {
+      if (userUuid) {
+        // Refresh just one user
+        const userData = await userService.getUserByUuid(userUuid);
+        if (userData) {
+          // Find and update the user in the existing array
+          const index = sharedUsers.data.value.findIndex(u => u.uuid === userUuid);
+          if (index !== -1) {
+            // Update existing user
+            sharedUsers.data.value[index] = userData;
+          } else {
+            // Add the user if not found
+            sharedUsers.data.value.push(userData);
+          }
+        }
+      } else {
+        // Refresh all users
+        const allUsers = await userService.getUsers();
+        if (Array.isArray(allUsers)) {
+          sharedUsers.data.value = allUsers;
+        }
+      }
+    } catch (err) {
+      console.error('Error refreshing user data:', err);
+    }
+  }
 }
 
 interface Props {
@@ -52,11 +81,24 @@ const fetchUsers = async () => {
   sharedUsers.error.value = null
   
   try {
-    sharedUsers.data.value = await userService.getUsers()
+    // Initialize as an empty array first to ensure it's always an array
+    sharedUsers.data.value = []
+    const userData = await userService.getUsers()
+    
+    // Ensure userData is an array
+    if (Array.isArray(userData)) {
+      sharedUsers.data.value = userData
+    } else {
+      console.error('User data is not an array:', userData)
+      sharedUsers.data.value = []
+    }
+    
     sharedUsers.initialized.value = true
   } catch (err) {
     console.error('Error fetching users in UserAvatar:', err)
     sharedUsers.error.value = 'Failed to load user data'
+    // Ensure users is an array even after errors
+    sharedUsers.data.value = []
   } finally {
     sharedUsers.loading.value = false
   }
@@ -83,11 +125,36 @@ const displayName = computed(() => {
   // Check if the name looks like a UUID
   if (isUuid(props.name)) {
     if (loading.value) return 'Loading...';
-    const user = users.value.find(u => u.uuid === props.name);
+    
+    // Make sure users.value is an array before using find
+    const userList = Array.isArray(users.value) ? users.value : [];
+    const user = userList.find(u => u.uuid === props.name);
+    
     // console.log(`UserAvatar: UUID match found:`, user || 'No match');
     return user ? user.name : props.name;
   }
   return props.name;
+})
+
+// Get the avatar URL either from props or from the user data if loaded by UUID
+const effectiveAvatarUrl = computed(() => {
+  // If an avatar was directly provided as a prop, use it
+  if (props.avatar) {
+    return props.avatar;
+  }
+  
+  // If name is a UUID, try to find user's avatar from user data
+  if (isUuid(props.name) && !loading.value) {
+    const userList = Array.isArray(users.value) ? users.value : [];
+    const user = userList.find(u => u.uuid === props.name);
+    
+    if (user && user.avatar_url) {
+      return user.avatar_url;
+    }
+  }
+  
+  // Otherwise, return null (no avatar)
+  return null;
 })
 
 const getInitials = (name: string) => {
@@ -201,6 +268,11 @@ const navigateToProfile = () => {
     }
   }
 }
+
+// Export the refreshUser method for external components to use
+defineExpose({
+  refreshUser: sharedUsers.refreshUser
+})
 </script>
 
 <template>
@@ -222,8 +294,8 @@ const navigateToProfile = () => {
       :style="{ backgroundColor: getBackgroundColor(displayName) }"
     >
       <img 
-        v-if="avatar" 
-        :src="avatar" 
+        v-if="effectiveAvatarUrl" 
+        :src="effectiveAvatarUrl" 
         :alt="displayName"
         class="w-full h-full rounded-full object-cover transition-opacity duration-300"
         :class="{ 'opacity-0': loading && isUuid(props.name) }"
