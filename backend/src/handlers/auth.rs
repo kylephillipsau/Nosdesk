@@ -10,14 +10,16 @@ use uuid::Uuid;
 use crate::db::DbConnection;
 use crate::models::{
     Claims, LoginRequest, LoginResponse, NewUser, PasswordChangeRequest,
-    UserRegistration, UserResponse, UserRole, UserUpdate
+    UserRegistration, UserResponse, UserRole
 };
 use crate::repository;
+use diesel::prelude::*;
+use crate::schema::user_auth_identities;
 
 // JWT secret key
 lazy_static::lazy_static! {
-    static ref JWT_SECRET: String = 
-        std::env::var("JWT_SECRET").unwrap_or_else(|_| "nosdesk_secret_key".to_string());
+    pub static ref JWT_SECRET: String = 
+        std::env::var("JWT_SECRET").expect("JWT_SECRET environment variable must be set");
 }
 
 // Admin password reset request
@@ -52,12 +54,47 @@ pub async fn login(
         }
     };
 
-    // Print debug information
-    eprintln!("User found: {:?}", user);
-    eprintln!("Password from request: {}", login_data.password);
+    // Get local auth identity for this user
+    let auth_identities = match repository::user_auth_identities::get_user_identities(user.id, &mut conn) {
+        Ok(identities) => identities,
+        Err(e) => {
+            eprintln!("Error fetching auth identities: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error processing credentials"
+            }));
+        }
+    };
+
+    // Find local identity with password hash
+    let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
     
+    // Check if local identity exists
+    let local_identity = match local_identity {
+        Some(identity) => identity,
+        None => {
+            eprintln!("No local auth identity found for user: {}", user.id);
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+    
+    // Check if password hash exists
+    let password_hash = match &local_identity.password_hash {
+        Some(hash) => hash,
+        None => {
+            eprintln!("No password hash found for local auth identity: {}", local_identity.id);
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
     // Convert bytea to string for verification
-    let hash_str = match std::str::from_utf8(&user.password_hash) {
+    let hash_str = match std::str::from_utf8(password_hash) {
         Ok(s) => s.to_string(),
         Err(_) => {
             eprintln!("Error converting hash to string");
@@ -67,8 +104,6 @@ pub async fn login(
             }));
         }
     };
-    
-    eprintln!("Password hash from database: {}", hash_str);
     
     // Verify password
     let password_matches = match verify(&login_data.password, &hash_str) {
@@ -104,11 +139,10 @@ pub async fn login(
         iat: now,
     };
 
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "nosdesk_secret_key".to_string());
     let token = match encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(JWT_SECRET.as_bytes()),
     ) {
         Ok(token) => token,
         Err(_) => return HttpResponse::InternalServerError().json(json!({
@@ -156,18 +190,43 @@ pub async fn register(
     // Generate a UUID if not provided
     let uuid = Uuid::new_v4().to_string();
 
-    // Create new user with hashed password
+    // Create new user without password hash
     let new_user = NewUser {
-        uuid,
+        uuid: uuid.clone(),
         name: user_data.name.clone(),
         email: user_data.email.clone(),
         role: user_data.role.clone(),
-        password_hash,
+        pronouns: user_data.pronouns.clone(),
+        avatar_url: user_data.avatar_url.clone(),
+        banner_url: user_data.banner_url.clone(),
     };
 
     // Save user to database
     match repository::create_user(new_user, &mut conn) {
-        Ok(created_user) => HttpResponse::Created().json(UserResponse::from(created_user)),
+        Ok(created_user) => {
+            // Create local auth identity for the user
+            use crate::models::NewUserAuthIdentity;
+            let new_identity = NewUserAuthIdentity {
+                user_id: created_user.id,
+                auth_provider_id: 1, // Assuming 1 is the ID for local provider
+                provider_user_id: uuid.clone(), // Using UUID as the provider user ID for local auth
+                email: Some(created_user.email.clone()),
+                identity_data: None,
+                password_hash: Some(password_hash),
+            };
+            
+            match repository::user_auth_identities::create_identity(new_identity, &mut conn) {
+                Ok(_) => HttpResponse::Created().json(UserResponse::from(created_user)),
+                Err(_) => {
+                    // If identity creation fails, attempt to delete the user
+                    let _ = repository::delete_user(created_user.id, &mut conn);
+                    HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error creating user identity"
+                    }))
+                },
+            }
+        },
         Err(_) => HttpResponse::InternalServerError().json(json!({
             "status": "error",
             "message": "Error creating user"
@@ -178,12 +237,11 @@ pub async fn register(
 // Middleware for validating JWT tokens
 pub async fn validate_token(auth: BearerAuth, db_pool: web::Data<crate::db::Pool>) -> Result<UserResponse, actix_web::Error> {
     let token = auth.token();
-    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "nosdesk_secret_key".to_string());
     
     // Decode and validate token
     let token_data = match decode::<Claims>(
         token,
-        &DecodingKey::from_secret(secret.as_bytes()),
+        &DecodingKey::from_secret(JWT_SECRET.as_bytes()),
         &Validation::new(Algorithm::HS256),
     ) {
         Ok(data) => data,
@@ -238,8 +296,47 @@ pub async fn change_password(
         })),
     };
 
+    // Get local auth identity for this user
+    let auth_identities = match repository::user_auth_identities::get_user_identities(user.id, &mut conn) {
+        Ok(identities) => identities,
+        Err(e) => {
+            eprintln!("Error fetching auth identities: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error processing credentials"
+            }));
+        }
+    };
+
+    // Find local identity with password hash
+    let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
+    
+    // Check if local identity exists
+    let local_identity = match local_identity {
+        Some(identity) => identity,
+        None => {
+            eprintln!("No local auth identity found for user: {}", user.id);
+            return HttpResponse::BadRequest().json(json!({
+                "status": "error",
+                "message": "No local password found for this user"
+            }));
+        }
+    };
+    
+    // Check if password hash exists
+    let password_hash = match &local_identity.password_hash {
+        Some(hash) => hash,
+        None => {
+            eprintln!("No password hash found for local auth identity: {}", local_identity.id);
+            return HttpResponse::BadRequest().json(json!({
+                "status": "error",
+                "message": "No password is set for this account"
+            }));
+        }
+    };
+
     // Convert bytea to string for verification
-    let hash_str = match std::str::from_utf8(&user.password_hash) {
+    let hash_str = match std::str::from_utf8(password_hash) {
         Ok(s) => s.to_string(),
         Err(_) => {
             eprintln!("Error converting hash to string");
@@ -278,23 +375,47 @@ pub async fn change_password(
         })),
     };
 
-    // Update the user's password
-    let user_update = UserUpdate {
-        name: None,
-        email: None,
-        role: None,
+    // Update the auth identity directly
+    let mut updated_identity = local_identity.clone();
+    updated_identity.password_hash = Some(new_password_hash.clone());
+    
+    // Delete and re-insert the identity (simplified approach)
+    match diesel::delete(
+        user_auth_identities::table.filter(user_auth_identities::id.eq(local_identity.id))
+    ).execute(&mut conn) {
+        Ok(_) => {},
+        Err(e) => {
+            eprintln!("Error deleting auth identity: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error updating password"
+            }));
+        }
+    }
+    
+    // Create new identity with updated password
+    use crate::models::NewUserAuthIdentity;
+    let new_auth_identity = NewUserAuthIdentity {
+        user_id: user.id,
+        auth_provider_id: local_identity.auth_provider_id,
+        provider_user_id: local_identity.provider_user_id.clone(),
+        email: local_identity.email.clone(),
+        identity_data: local_identity.identity_data.clone(),
         password_hash: Some(new_password_hash),
     };
-
-    match repository::update_user(user.id, user_update, &mut conn) {
+    
+    match repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
         Ok(_) => HttpResponse::Ok().json(json!({
             "status": "success",
             "message": "Password changed successfully"
         })),
-        Err(_) => HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Error updating password"
-        })),
+        Err(e) => {
+            eprintln!("Error creating updated auth identity: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error updating password"
+            }))
+        }
     }
 }
 
@@ -375,22 +496,106 @@ pub async fn admin_reset_password(
         })),
     };
 
-    // Update the user's password
-    let user_update = UserUpdate {
-        name: None,
-        email: None,
-        role: None,
-        password_hash: Some(new_password_hash),
+    // Get local auth identity for this user
+    let auth_identities = match repository::user_auth_identities::get_user_identities(user.id, &mut conn) {
+        Ok(identities) => identities,
+        Err(e) => {
+            eprintln!("Error fetching auth identities: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error processing user identities"
+            }));
+        }
     };
 
-    match repository::update_user(user.id, user_update, &mut conn) {
-        Ok(_) => HttpResponse::Ok().json(json!({
-            "status": "success",
-            "message": "Password reset successfully"
-        })),
-        Err(_) => HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Error resetting password"
-        })),
+    // Find local identity
+    let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
+    
+    match local_identity {
+        Some(identity) => {
+            // Update existing local identity
+            // Delete the old identity 
+            match diesel::delete(
+                user_auth_identities::table.filter(user_auth_identities::id.eq(identity.id))
+            ).execute(&mut conn) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("Error deleting auth identity: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error updating password"
+                    }));
+                }
+            }
+            
+            // Create new identity with updated password
+            use crate::models::NewUserAuthIdentity;
+            let new_auth_identity = NewUserAuthIdentity {
+                user_id: user.id,
+                auth_provider_id: identity.auth_provider_id,
+                provider_user_id: identity.provider_user_id.clone(),
+                email: identity.email.clone(),
+                identity_data: identity.identity_data.clone(),
+                password_hash: Some(new_password_hash),
+            };
+            
+            match repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
+                Ok(_) => HttpResponse::Ok().json(json!({
+                    "status": "success",
+                    "message": "Password reset successfully"
+                })),
+                Err(e) => {
+                    eprintln!("Error creating updated auth identity: {:?}", e);
+                    HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error updating password"
+                    }))
+                }
+            }
+        },
+        None => {
+            // Create new local identity if none exists
+            use crate::models::NewUserAuthIdentity;
+            let new_auth_identity = NewUserAuthIdentity {
+                user_id: user.id,
+                auth_provider_id: 1, // Local provider
+                provider_user_id: user.uuid.clone(), // Use UUID as provider user ID for local auth
+                email: Some(user.email.clone()),
+                identity_data: None,
+                password_hash: Some(new_password_hash),
+            };
+            
+            match repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
+                Ok(_) => HttpResponse::Ok().json(json!({
+                    "status": "success",
+                    "message": "Password reset successfully"
+                })),
+                Err(e) => {
+                    eprintln!("Error creating auth identity: {:?}", e);
+                    HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error setting password"
+                    }))
+                }
+            }
+        }
+    }
+}
+
+// Handler to get current authenticated user
+pub async fn get_current_user(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+) -> impl Responder {
+    // Validate token and get user info
+    match validate_token(auth, db_pool).await {
+        Ok(user) => HttpResponse::Ok().json(user),
+        Err(_) => {
+            // Simply return a 401 Unauthorized for any token validation errors
+            HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid or expired token"
+            }))
+        }
     }
 } 

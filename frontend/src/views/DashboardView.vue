@@ -1,4 +1,3 @@
-// views/Dashboard.vue
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import TicketHeatmap from '@/components/TicketHeatmap.vue'
@@ -10,15 +9,58 @@ import { useAuthStore } from '@/stores/auth'
 // Initialize auth store
 const authStore = useAuthStore()
 
-// Get current time for greeting
+// Get current time-based greeting with helpdesk-themed messages
 const getGreeting = () => {
-  const hour = new Date().getHours()
-  if (hour < 12) return 'Good morning'
-  if (hour < 18) return 'Good afternoon'
-  return 'Good evening'
-}
+  const hour = new Date().getHours();
+  const greetings = {
+    morning: [
+      { message: "Good morning, {0}.", weight: 1 },
+      { message: "Morning, {0}.", weight: 1 },
+      { message: "Hello {0}, hope you have a nice day.", weight: 1 }
+    ],
+    afternoon: [
+      { message: "Good afternoon, {0}.", weight: 1 },
+      { message: "Hi {0}, nice to see you.", weight: 1 },
+      { message: "Afternoon, {0}.", weight: 1 }
+    ],
+    evening: [
+      { message: "Good evening, {0}.", weight: 1 },
+      { message: "Evening, {0}.", weight: 1 },
+      { message: "Hi {0}, hope your day went well.", weight: 1 }
+    ],
+    lateNight: [
+      { message: "Good night, {0}.", weight: 1 },
+      { message: "Hello {0}, it's getting late.", weight: 1 },
+      { message: "Evening, {0}. Remember to rest.", weight: 1 }
+    ]
+  };
 
-const greeting = ref(getGreeting())
+  // Determine time period
+  let period;
+  if (hour < 12) period = 'morning';
+  else if (hour < 18) period = 'afternoon';
+  else if (hour < 22) period = 'evening';
+  else period = 'lateNight';
+
+  // Select a random greeting from the period's pool
+  const periodGreetings = greetings[period as keyof typeof greetings];
+  const totalWeight = periodGreetings.reduce((sum, g) => sum + g.weight, 0);
+  let random = Math.random() * totalWeight;
+  for (const greeting of periodGreetings) {
+    random -= greeting.weight;
+    if (random <= 0) {
+      return greeting.message;
+    }
+  }
+  return periodGreetings[0].message; // Fallback
+};
+
+// Compute the formatted greeting with username
+const formattedGreeting = computed(() => {
+  const greetingTemplate = getGreeting();
+  const userName = username.value;
+  return greetingTemplate.replace('{0}', userName);
+});
 
 // Get username from auth store
 const username = computed(() => {
@@ -27,7 +69,7 @@ const username = computed(() => {
   // Split the full name and take the first part as the first name
   const firstName = authStore.user.name.split(' ')[0];
   return firstName;
-})
+});
 
 // Initialize ticket stats with zeros
 const ticketStats = ref({
@@ -35,12 +77,12 @@ const ticketStats = ref({
   open: 0,
   inProgress: 0,
   closed: 0
-})
+});
 
 // Fetch tickets and update stats
 const fetchTicketStats = async () => {
   try {
-    const tickets = await getTickets()
+    const tickets = await getTickets();
     
     // Calculate stats
     ticketStats.value = {
@@ -48,16 +90,16 @@ const fetchTicketStats = async () => {
       open: tickets.filter(ticket => ticket.status === 'open').length,
       inProgress: tickets.filter(ticket => ticket.status === 'in-progress').length,
       closed: tickets.filter(ticket => ticket.status === 'closed').length
-    }
+    };
   } catch (error) {
-    console.error('Error fetching ticket stats:', error)
+    console.error('Error fetching ticket stats:', error);
   }
-}
+};
 
 // Fetch data when component mounts
 onMounted(() => {
-  fetchTicketStats()
-})
+  fetchTicketStats();
+});
 </script>
 
 <template>
@@ -67,7 +109,7 @@ onMounted(() => {
       <!-- Greeting Card -->
       <div class="mb-2">
         <h2 class="text-3xl font-medium text-white">
-          {{ greeting }}, {{ username }}!
+          {{ formattedGreeting }}
         </h2>
         <p class="text-gray-400 mt-2">
           Welcome to your Nosdesk dashboard

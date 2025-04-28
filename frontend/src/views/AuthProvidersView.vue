@@ -1,127 +1,129 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import axios from 'axios';
+
+// Define types for our data structures
+interface ProviderConfig {
+  key: string;
+  value: string;
+  is_secret: boolean;
+}
+
+interface Provider {
+  id: string;
+  name: string;
+  provider_type: string;
+  enabled: boolean;
+  is_default: boolean;
+  configs?: ProviderConfig[];
+}
 
 const router = useRouter();
 
 // State for providers
 const isLoading = ref(false);
 const errorMessage = ref('');
-const providers = ref([
-  {
-    id: 'local',
-    name: 'Local Authentication',
-    description: 'Username and password authentication',
-    enabled: true,
-    isDefault: true,
-    icon: 'user',
-    configurable: false,
-    requiresExternal: false
-  },
-  {
-    id: 'microsoft',
-    name: 'Microsoft Entra ID',
-    description: 'Single sign-on with Microsoft Entra ID (formerly Azure AD)',
-    enabled: false,
-    isDefault: false,
-    icon: 'microsoft',
-    configurable: true,
-    requiresExternal: true,
-    config: {
-      clientId: '',
-      tenantId: '',
-      redirectUri: `${window.location.origin}/auth/microsoft/callback`
-    }
-  },
-  {
-    id: 'google',
-    name: 'Google Workspace',
-    description: 'Single sign-on with Google Workspace accounts',
-    enabled: false,
-    isDefault: false,
-    icon: 'google',
-    configurable: true,
-    requiresExternal: true
-  },
-  {
-    id: 'saml',
-    name: 'SAML 2.0',
-    description: 'Enterprise SSO via SAML protocol',
-    enabled: false,
-    isDefault: false,
-    icon: 'key',
-    configurable: true,
-    requiresExternal: true
-  }
-]);
+const providers = ref<Provider[]>([]);
+const successMessage = ref('');
 
 // Selected provider for configuration
-const selectedProvider = ref<any>(null);
+const selectedProvider = ref<Provider | null>(null);
 const showConfigModal = ref(false);
+const showAddProviderModal = ref(false);
+const newProviderType = ref('microsoft');
 
 // Client ID and Tenant ID for Microsoft Entra
 const clientId = ref('');
 const tenantId = ref('');
 const clientSecret = ref('');
-const redirectUri = ref(`${window.location.origin}/auth/microsoft/callback`);
+const redirectUri = ref('');
 
-// Mock function to load providers from API
+// Load providers from API
 const loadProviders = async () => {
   isLoading.value = true;
   errorMessage.value = '';
   
   try {
-    // In a real implementation, this would fetch from your backend
-    // const response = await fetch('/api/auth/providers');
-    // providers.value = await response.json();
-    
-    // For now, we're using mock data initialized above
-    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
-  } catch (error) {
+    const response = await axios.get('/api/auth/providers');
+    providers.value = response.data;
+  } catch (error: any) {
     console.error('Failed to load auth providers:', error);
-    errorMessage.value = 'Failed to load authentication providers';
+    errorMessage.value = error.response?.data?.message || 'Failed to load authentication providers';
   } finally {
     isLoading.value = false;
   }
 };
 
 // Toggle provider enabled state
-const toggleProvider = async (provider: any) => {
-  const updatedProvider = { ...provider, enabled: !provider.enabled };
+const toggleProvider = async (provider: Provider) => {
+  const updatedProvider = { 
+    name: provider.name,
+    enabled: !provider.enabled,
+    is_default: provider.is_default
+  };
   
   try {
-    // In a real implementation, you would call your API
-    // await fetch(`/api/auth/providers/${provider.id}`, {
-    //   method: 'PATCH',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ enabled: updatedProvider.enabled })
-    // });
+    await axios.put(`/api/auth/providers/${provider.id}`, updatedProvider);
     
-    // Update the provider in the local state
-    const index = providers.value.findIndex(p => p.id === provider.id);
-    if (index !== -1) {
-      providers.value[index] = updatedProvider;
-    }
-  } catch (error) {
+    // Reload providers to get updated data
+    await loadProviders();
+    
+    successMessage.value = `${provider.name} ${updatedProvider.enabled ? 'enabled' : 'disabled'} successfully`;
+    setTimeout(() => { successMessage.value = ''; }, 3000);
+  } catch (error: any) {
     console.error(`Failed to update ${provider.name}:`, error);
-    // Revert the local state change on error
-    const index = providers.value.findIndex(p => p.id === provider.id);
-    if (index !== -1) {
-      providers.value[index] = provider;
-    }
+    errorMessage.value = error.response?.data?.message || `Failed to update ${provider.name}`;
+    setTimeout(() => { errorMessage.value = ''; }, 3000);
+  }
+};
+
+// Create a new provider
+const createProvider = async () => {
+  isLoading.value = true;
+  errorMessage.value = '';
+  
+  try {
+    const newProvider = {
+      name: newProviderType.value === 'microsoft' ? 'Microsoft Entra' : 'New Provider',
+      provider_type: newProviderType.value,
+      enabled: false,
+      is_default: false
+    };
+    
+    const response = await axios.post('/api/auth/providers', newProvider);
+    
+    // Close the modal and reload providers
+    showAddProviderModal.value = false;
+    await loadProviders();
+    
+    // Open configuration modal for the new provider
+    const createdProvider = response.data;
+    configureProvider(createdProvider);
+    
+    successMessage.value = `${newProvider.name} provider created successfully`;
+    setTimeout(() => { successMessage.value = ''; }, 3000);
+  } catch (error: any) {
+    console.error('Failed to create provider:', error);
+    errorMessage.value = error.response?.data?.message || 'Failed to create provider';
+  } finally {
+    isLoading.value = false;
   }
 };
 
 // Open configuration modal for a provider
-const configureProvider = (provider: any) => {
+const configureProvider = (provider: Provider) => {
   selectedProvider.value = provider;
   
   // Initialize form values from provider config
-  if (provider.id === 'microsoft' && provider.config) {
-    clientId.value = provider.config.clientId || '';
-    tenantId.value = provider.config.tenantId || '';
+  if (provider.provider_type === 'microsoft') {
+    const configs = provider.configs || [];
+    
+    clientId.value = configs.find((c) => c.key === 'client_id')?.value || '';
+    tenantId.value = configs.find((c) => c.key === 'tenant_id')?.value || '';
     clientSecret.value = ''; // We don't store or display secrets
-    redirectUri.value = provider.config.redirectUri || `${window.location.origin}/auth/microsoft/callback`;
+    redirectUri.value = configs.find((c) => c.key === 'redirect_uri')?.value || 
+      `${window.location.origin}/auth/microsoft/callback`;
   }
   
   showConfigModal.value = true;
@@ -131,62 +133,67 @@ const configureProvider = (provider: any) => {
 const saveProviderConfig = async () => {
   if (!selectedProvider.value) return;
   
+  isLoading.value = true;
+  errorMessage.value = '';
+  
   try {
-    // Update local config
-    if (selectedProvider.value.id === 'microsoft') {
-      selectedProvider.value.config = {
-        clientId: clientId.value,
-        tenantId: tenantId.value,
-        redirectUri: redirectUri.value
-      };
+    // Create config request based on provider type
+    const configRequest: {
+      provider_id: string;
+      configs: ProviderConfig[];
+    } = {
+      provider_id: selectedProvider.value.id,
+      configs: []
+    };
+    
+    if (selectedProvider.value.provider_type === 'microsoft') {
+      configRequest.configs = [
+        { key: 'client_id', value: clientId.value, is_secret: false },
+        { key: 'tenant_id', value: tenantId.value, is_secret: false },
+        { key: 'redirect_uri', value: redirectUri.value, is_secret: false }
+      ];
       
-      // In a real implementation, you would call your API
-      // await fetch(`/api/auth/providers/${selectedProvider.value.id}/config`, {
-      //   method: 'PUT',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({
-      //     clientId: clientId.value,
-      //     tenantId: tenantId.value,
-      //     clientSecret: clientSecret.value || undefined,
-      //     redirectUri: redirectUri.value
-      //   })
-      // });
-      
-      // Enable the provider if it's being configured for the first time
-      if (!selectedProvider.value.enabled) {
-        selectedProvider.value.enabled = true;
-      }
-      
-      // Update the provider in the local state
-      const index = providers.value.findIndex(p => p.id === selectedProvider.value.id);
-      if (index !== -1) {
-        providers.value[index] = selectedProvider.value;
+      // Only include client secret if it's provided
+      if (clientSecret.value.trim()) {
+        configRequest.configs.push({
+          key: 'client_secret',
+          value: clientSecret.value,
+          is_secret: true
+        });
       }
     }
     
-    // Close the modal
+    // Send configuration to backend
+    await axios.post(`/api/auth/providers/config`, configRequest);
+    
+    // Close the modal and reload providers
     showConfigModal.value = false;
-  } catch (error) {
+    await loadProviders();
+    
+    successMessage.value = `${selectedProvider.value.name} configuration updated successfully`;
+    setTimeout(() => { successMessage.value = ''; }, 3000);
+  } catch (error: any) {
     console.error(`Failed to save ${selectedProvider.value.name} configuration:`, error);
+    errorMessage.value = error.response?.data?.message || `Failed to save ${selectedProvider.value.name} configuration`;
+  } finally {
+    isLoading.value = false;
   }
 };
 
 // Set a provider as default
-const setAsDefault = async (provider: any) => {
+const setAsDefault = async (provider: Provider) => {
   try {
-    // In a real implementation, you would call your API
-    // await fetch(`/api/auth/providers/default`, {
-    //   method: 'PUT',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ providerId: provider.id })
-    // });
+    await axios.post(`/api/auth/providers/default`, { provider_id: provider.id });
     
-    // Update local state
-    providers.value.forEach(p => {
-      p.isDefault = p.id === provider.id;
-    });
-  } catch (error) {
+    // Update the UI
+    await loadProviders();
+    
+    successMessage.value = `${provider.name} set as default authentication method`;
+    setTimeout(() => { successMessage.value = ''; }, 3000);
+  } catch (error: any) {
     console.error(`Failed to set ${provider.name} as default:`, error);
+    errorMessage.value = error.response?.data?.message || `Failed to set ${provider.name} as default`;
+    setTimeout(() => { errorMessage.value = ''; }, 3000);
   }
 };
 
@@ -237,192 +244,285 @@ const getProviderIcon = (iconName: string) => {
   }
 };
 
+// Function to test auth provider
+const testAuthProvider = async (provider: Provider) => {
+  if (provider.provider_type === 'microsoft') {
+    try {
+      // Store the current URL to redirect back after authentication
+      sessionStorage.setItem('authRedirect', router.currentRoute.value.fullPath);
+      
+      // Get authorization URL from backend
+      const response = await axios.post('/api/auth/oauth/authorize', {
+        provider_type: 'microsoft',
+        redirect_uri: `${window.location.origin}/auth/microsoft/callback` 
+      });
+      
+      // Redirect to Microsoft login
+      window.location.href = response.data.auth_url;
+    } catch (error: any) {
+      console.error('Error initiating Microsoft authentication:', error);
+      errorMessage.value = error.response?.data?.message || 'Failed to initiate Microsoft authentication';
+      setTimeout(() => { errorMessage.value = ''; }, 3000);
+    }
+  }
+};
+
 onMounted(() => {
   loadProviders();
 });
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-7xl mx-auto">
-    <div class="flex items-center mb-6">
+  <div class="auth-providers-view p-4">
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-2xl font-bold text-white">Authentication Providers</h1>
       <button 
         @click="goBack" 
-        class="mr-4 text-slate-400 hover:text-white"
-        aria-label="Go back"
+        class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 transition-colors"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-        </svg>
+        Back to Settings
       </button>
-      <div>
-        <h1 class="text-2xl font-bold text-white">Authentication Providers</h1>
-        <p class="text-slate-400 mt-1">
-          Configure how users sign in to your application
-        </p>
-      </div>
     </div>
-
+    
+    <!-- Success message -->
+    <div 
+      v-if="successMessage" 
+      class="mb-4 p-3 bg-green-900/50 border border-green-700 text-green-200 rounded-md flex items-center"
+    >
+      <span class="mr-2">✅</span>
+      {{ successMessage }}
+    </div>
+    
+    <!-- Error message -->
+    <div 
+      v-if="errorMessage" 
+      class="mb-4 p-3 bg-red-900/50 border border-red-700 text-red-200 rounded-md flex items-center"
+    >
+      <span class="mr-2">❌</span>
+      {{ errorMessage }}
+    </div>
+    
+    <!-- Add Provider Button -->
+    <div class="mb-4">
+      <button 
+        @click="showAddProviderModal = true"
+        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center gap-2"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        Add Authentication Provider
+      </button>
+    </div>
+    
     <!-- Loading state -->
-    <div v-if="isLoading" class="flex justify-center items-center py-12">
+    <div v-if="isLoading" class="flex justify-center my-8">
       <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
     </div>
-
-    <!-- Error message -->
-    <div v-else-if="errorMessage" class="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg">
-      {{ errorMessage }}
-      <button 
-        @click="loadProviders" 
-        class="ml-2 underline hover:text-white"
-      >
-        Retry
-      </button>
-    </div>
-
-    <!-- Providers list -->
+    
+    <!-- Provider list -->
     <div v-else class="space-y-4">
-      <div
-        v-for="provider in providers"
-        :key="provider.id"
-        class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden"
-      >
-        <div class="p-5">
-          <div class="flex items-start justify-between">
-            <div class="flex items-start">
-              <div class="flex-shrink-0 h-10 w-10 rounded-md bg-blue-600/20 flex items-center justify-center text-blue-400 mr-4">
-                <div v-html="getProviderIcon(provider.icon)"></div>
-              </div>
-              <div>
-                <div class="flex items-center">
-                  <h3 class="text-white font-medium">{{ provider.name }}</h3>
-                  <span v-if="provider.isDefault" class="ml-2 px-2 py-0.5 text-xs rounded-full bg-green-900/50 text-green-400">Default</span>
-                </div>
-                <p class="mt-1 text-sm text-slate-400">{{ provider.description }}</p>
-              </div>
+      <div v-for="provider in providers" :key="provider.id" 
+           class="bg-slate-800 p-4 rounded-lg shadow border border-slate-700 flex flex-col md:flex-row md:items-center md:justify-between">
+        
+        <div class="flex items-center mb-3 md:mb-0">
+          <!-- Provider icon -->
+          <div class="mr-3 text-slate-300" v-html="getProviderIcon(provider.provider_type)"></div>
+          
+          <!-- Provider name and status -->
+          <div>
+            <div class="flex items-center">
+              <span class="font-medium text-lg text-white">{{ provider.name }}</span>
+              <span v-if="provider.is_default" 
+                    class="ml-2 px-2 py-0.5 text-xs bg-blue-900/50 text-blue-200 rounded-full border border-blue-700">
+                Default
+              </span>
             </div>
-            <div class="flex items-center space-x-3">
-              <button
-                v-if="provider.configurable && provider.enabled"
-                @click="setAsDefault(provider)"
-                :disabled="provider.isDefault"
-                class="px-3 py-1.5 text-xs rounded-lg border border-slate-600 bg-slate-700 text-white hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Set as Default
-              </button>
-              <button
-                v-if="provider.configurable"
-                @click="configureProvider(provider)"
-                class="px-3 py-1.5 text-xs rounded-lg border border-slate-600 bg-slate-700 text-white hover:bg-slate-600"
-              >
-                Configure
-              </button>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  :checked="provider.enabled"
-                  @change="toggleProvider(provider)"
-                  class="sr-only peer"
-                >
-                <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 peer-checked:after:bg-white"></div>
-              </label>
+            <div class="text-sm text-slate-400">
+              {{ provider.enabled ? 'Enabled' : 'Disabled' }}
             </div>
           </div>
+        </div>
+        
+        <!-- Provider actions -->
+        <div class="flex flex-wrap gap-2">
+          <button 
+            @click="toggleProvider(provider)"
+            class="px-3 py-1 rounded-md text-sm"
+            :class="provider.enabled ? 'bg-red-900/50 text-red-200 hover:bg-red-800/50 border border-red-700' : 'bg-green-900/50 text-green-200 hover:bg-green-800/50 border border-green-700'"
+          >
+            {{ provider.enabled ? 'Disable' : 'Enable' }}
+          </button>
+          
+          <button 
+            @click="configureProvider(provider)"
+            class="px-3 py-1 bg-slate-700 text-slate-200 rounded-md text-sm hover:bg-slate-600 border border-slate-600"
+          >
+            Configure
+          </button>
+          
+          <button 
+            v-if="provider.enabled && !provider.is_default"
+            @click="setAsDefault(provider)"
+            class="px-3 py-1 bg-blue-900/50 text-blue-200 rounded-md text-sm hover:bg-blue-800/50 border border-blue-700"
+          >
+            Set as Default
+          </button>
+          
+          <button 
+            v-if="provider.enabled"
+            @click="testAuthProvider(provider)"
+            class="px-3 py-1 bg-purple-900/50 text-purple-200 rounded-md text-sm hover:bg-purple-800/50 border border-purple-700"
+          >
+            Test
+          </button>
         </div>
       </div>
+      
+      <div v-if="providers.length === 0 && !isLoading" class="text-center py-8 text-slate-400">
+        No authentication providers found
+      </div>
     </div>
-
-    <!-- Configuration Modal -->
-    <div v-if="showConfigModal" class="fixed inset-0 bg-slate-900/80 flex items-center justify-center z-50 p-4">
-      <div class="bg-slate-800 rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <div class="p-5 border-b border-slate-700">
-          <h3 class="text-xl font-semibold text-white">
-            Configure {{ selectedProvider?.name }}
-          </h3>
+    
+    <!-- Add Provider Modal -->
+    <div v-if="showAddProviderModal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+      <div class="bg-slate-800 rounded-lg shadow-lg p-6 w-full max-w-lg border border-slate-700">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold text-white">
+            Add Authentication Provider
+          </h2>
+          <button @click="showAddProviderModal = false" class="text-slate-400 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
         
-        <div class="p-5">
-          <!-- Microsoft Entra ID Configuration Form -->
-          <form v-if="selectedProvider?.id === 'microsoft'" @submit.prevent="saveProviderConfig" class="space-y-4">
-            <div>
-              <label for="clientId" class="block text-sm font-medium text-slate-300 mb-1">Application (client) ID</label>
-              <input
-                id="clientId"
-                v-model="clientId"
-                type="text"
-                required
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                placeholder="Enter your Application ID from Microsoft Entra"
-              />
-            </div>
-            
-            <div>
-              <label for="tenantId" class="block text-sm font-medium text-slate-300 mb-1">Directory (tenant) ID</label>
-              <input
-                id="tenantId"
-                v-model="tenantId"
-                type="text"
-                required
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                placeholder="Enter your Tenant ID from Microsoft Entra"
-              />
-            </div>
-            
-            <div>
-              <label for="clientSecret" class="block text-sm font-medium text-slate-300 mb-1">Client Secret</label>
-              <input
-                id="clientSecret"
-                v-model="clientSecret"
-                type="password"
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-                placeholder="Enter client secret (only needed if changing)"
-              />
-              <p class="mt-1 text-xs text-slate-400">
-                Leave blank to keep existing secret unchanged
-              </p>
-            </div>
-            
-            <div>
-              <label for="redirectUri" class="block text-sm font-medium text-slate-300 mb-1">Redirect URI</label>
-              <input
-                id="redirectUri"
-                v-model="redirectUri"
-                type="text"
-                required
-                class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
-              />
-              <p class="mt-1 text-xs text-slate-400">
-                Add this URL to the Redirect URIs in your Microsoft Entra app registration
-              </p>
-            </div>
-            
-            <div class="mt-6 bg-blue-900/30 border border-blue-800 rounded-lg p-3 text-sm text-blue-200">
-              <p>
-                <strong>Note:</strong> You need to register an app in the Microsoft Entra admin center
-                and add the redirect URI shown above to your app registration.
-              </p>
-            </div>
-          </form>
-          
-          <!-- Other provider configurations would go here -->
-          <div v-else class="text-center py-8 text-slate-400">
-            Configuration for {{ selectedProvider?.name }} is not yet implemented
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1">
+              Provider Type
+            </label>
+            <select 
+              v-model="newProviderType"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="microsoft">Microsoft Entra</option>
+              <!-- Add more provider types as needed -->
+            </select>
           </div>
         </div>
         
-        <div class="p-5 border-t border-slate-700 flex justify-end space-x-3">
-          <button
-            @click="showConfigModal = false"
-            class="px-4 py-2 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700"
+        <div class="flex justify-end gap-3 mt-6">
+          <button 
+            @click="showAddProviderModal = false"
+            class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
           >
             Cancel
           </button>
-          <button
-            @click="saveProviderConfig"
-            class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+          <button 
+            @click="createProvider"
+            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            :disabled="isLoading"
           >
-            Save Configuration
+            <span v-if="isLoading">Creating...</span>
+            <span v-else>Create Provider</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Configuration Modal -->
+    <div v-if="showConfigModal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+      <div class="bg-slate-800 rounded-lg shadow-lg p-6 w-full max-w-lg border border-slate-700">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold text-white">
+            Configure {{ selectedProvider?.name }}
+          </h2>
+          <button @click="showConfigModal = false" class="text-slate-400 hover:text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        
+        <div v-if="selectedProvider?.provider_type === 'microsoft'" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1">
+              Client ID
+            </label>
+            <input 
+              v-model="clientId"
+              type="text"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              placeholder="Enter client ID"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1">
+              Tenant ID
+            </label>
+            <input 
+              v-model="tenantId"
+              type="text"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              placeholder="Enter tenant ID"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1">
+              Client Secret
+            </label>
+            <input 
+              v-model="clientSecret"
+              type="password"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              placeholder="Enter new client secret (leave empty to keep existing)"
+            />
+            <p class="text-xs text-slate-400 mt-1">
+              Only enter a value if you want to change the existing secret
+            </p>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-slate-300 mb-1">
+              Redirect URI
+            </label>
+            <input 
+              v-model="redirectUri"
+              type="text"
+              class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              placeholder="Callback URL for authentication"
+            />
+          </div>
+        </div>
+        
+        <div class="flex justify-end gap-3 mt-6">
+          <button 
+            @click="showConfigModal = false"
+            class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
+          >
+            Cancel
+          </button>
+          <button 
+            @click="saveProviderConfig"
+            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            :disabled="isLoading"
+          >
+            <span v-if="isLoading">Saving...</span>
+            <span v-else>Save Configuration</span>
           </button>
         </div>
       </div>
     </div>
   </div>
-</template> 
+</template>
+
+<style scoped>
+.auth-providers-view {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+</style> 

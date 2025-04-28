@@ -332,10 +332,12 @@ const handlePageSizeChange = (size: number) => {
             {{ formatDate(ticket.created) }}
           </div>
           <div class="flex items-center p-1 w-32 flex-shrink-0">
-            <UserAvatar :name="ticket.requester" size="sm" />
+            <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="sm" />
+            <span v-else class="text-xs text-gray-500">Unassigned</span>
           </div>
           <div class="flex items-center p-1 w-32 flex-shrink-0">
-            <UserAvatar :name="ticket.assignee" size="sm" />
+            <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="sm" />
+            <span v-else class="text-xs text-gray-500">Unassigned</span>
           </div>
         </div>
       </div>
@@ -370,11 +372,13 @@ const handlePageSizeChange = (size: number) => {
               </div>
               <div class="mt-2 flex items-center gap-2 text-xs">
                 <div class="flex items-center gap-1">
-                  <UserAvatar :name="ticket.requester" size="xs" />
+                  <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="xs" />
+                  <span v-else class="text-gray-500">No requester</span>
                   <span class="text-gray-400">Requester</span>
                 </div>
                 <div class="flex items-center gap-1">
-                  <UserAvatar :name="ticket.assignee" size="xs" />
+                  <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="xs" />
+                  <span v-else class="text-gray-500">Unassigned</span>
                   <span class="text-gray-400">Assignee</span>
                 </div>
               </div>

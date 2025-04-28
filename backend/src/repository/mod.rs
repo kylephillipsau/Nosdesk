@@ -9,6 +9,7 @@ pub mod projects;
 pub mod linked_tickets;
 pub mod document_updates;
 pub mod article_content;
+pub mod user_auth_identities;
 
 // Re-export from domain-specific modules
 pub use documentation::*;

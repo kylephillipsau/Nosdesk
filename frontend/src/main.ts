@@ -1,4 +1,5 @@
 import './assets/main.css'
+import './services/apiConfig' // Import axios configuration
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

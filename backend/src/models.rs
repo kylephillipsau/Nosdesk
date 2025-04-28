@@ -7,6 +7,7 @@ use diesel::serialize::{self, IsNull, Output, ToSql};
 use diesel::sql_types::Text;
 use serde::{Deserialize, Serialize, Deserializer};
 use std::io::Write;
+use serde_json;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[derive(diesel::deserialize::FromSqlRow, diesel::expression::AsExpression)]
@@ -628,10 +629,11 @@ pub struct User {
     pub name: String,
     pub email: String,
     pub role: UserRole,
-    #[serde(skip_serializing)]
-    pub password_hash: Vec<u8>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 impl Queryable<(
@@ -642,7 +644,9 @@ impl Queryable<(
     diesel::sql_types::Text,
     diesel::sql_types::Timestamp,
     diesel::sql_types::Timestamp,
-    diesel::sql_types::Binary,
+    diesel::sql_types::Nullable<diesel::sql_types::Text>,
+    diesel::sql_types::Nullable<diesel::sql_types::Text>,
+    diesel::sql_types::Nullable<diesel::sql_types::Text>,
 ), Pg> for User {
     type Row = (
         i32,
@@ -652,7 +656,9 @@ impl Queryable<(
         String,
         NaiveDateTime,
         NaiveDateTime,
-        Vec<u8>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
     );
 
     fn build(row: Self::Row) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -669,9 +675,11 @@ impl Queryable<(
             name: row.2,
             email: row.3,
             role,
-            password_hash: row.7,
             created_at: row.5,
             updated_at: row.6,
+            pronouns: row.7,
+            avatar_url: row.8,
+            banner_url: row.9,
         })
     }
 }
@@ -684,7 +692,9 @@ pub struct NewUser {
     pub name: String,
     pub email: String,
     pub role: String,
-    pub password_hash: Vec<u8>,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 // Add a separate struct for user registration with password
@@ -694,6 +704,9 @@ pub struct UserRegistration {
     pub email: String,
     pub role: String, 
     pub password: String,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 // User update struct
@@ -703,6 +716,9 @@ pub struct UserUpdateForm {
     pub email: Option<String>,
     pub role: Option<String>,
     pub password: Option<String>,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 #[derive(AsChangeset, Debug)]
@@ -711,7 +727,9 @@ pub struct UserUpdate {
     pub name: Option<String>,
     pub email: Option<String>,
     pub role: Option<String>,
-    pub password_hash: Option<Vec<u8>>,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 // User response with minimal information
@@ -722,6 +740,9 @@ pub struct UserResponse {
     pub name: String,
     pub email: String,
     pub role: String,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 // User info for comments - minimal user data to include with comments
@@ -744,6 +765,9 @@ impl From<User> for UserResponse {
                 UserRole::Technician => "technician".to_string(),
                 UserRole::User => "user".to_string(),
             },
+            pronouns: user.pronouns,
+            avatar_url: user.avatar_url,
+            banner_url: user.banner_url,
         }
     }
 }
@@ -1078,6 +1102,7 @@ pub struct OAuthState {
     pub redirect_uri: String,
     pub provider_type: String,
     pub exp: usize,
+    pub user_connection: Option<bool>,
 }
 
 // OAuth Authentication request
@@ -1085,13 +1110,16 @@ pub struct OAuthState {
 pub struct OAuthRequest {
     pub provider_type: String,
     pub redirect_uri: Option<String>,
+    pub user_connection: Option<bool>,
 }
 
-// OAuth Exchange Request
-#[derive(Debug, Serialize, Deserialize)]
+// OAuth callback/exchange parameters
+#[derive(Debug, Deserialize)]
 pub struct OAuthExchangeRequest {
-    pub code: String,
-    pub state: String,
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>
 }
 
 // Microsoft Entra specific models
@@ -1101,4 +1129,40 @@ pub struct MicrosoftAuthConfig {
     pub tenant_id: String,
     pub client_secret: String,
     pub redirect_uri: String,
+}
+
+// Models for user authentication identities
+#[derive(Debug, Serialize, Deserialize, Queryable, Identifiable, Clone)]
+#[diesel(table_name = crate::schema::user_auth_identities)]
+pub struct UserAuthIdentity {
+    pub id: i32,
+    pub user_id: i32,
+    pub auth_provider_id: i32,
+    pub provider_user_id: String,
+    pub email: Option<String>,
+    pub identity_data: Option<serde_json::Value>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub password_hash: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::user_auth_identities)]
+pub struct NewUserAuthIdentity {
+    pub user_id: i32,
+    pub auth_provider_id: i32,
+    pub provider_user_id: String,
+    pub email: Option<String>,
+    pub identity_data: Option<serde_json::Value>,
+    pub password_hash: Option<Vec<u8>>,
+}
+
+// For displaying auth identities in the user profile
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserAuthIdentityDisplay {
+    pub id: i32,
+    pub provider_type: String,
+    pub provider_name: String,
+    pub email: Option<String>,
+    pub created_at: NaiveDateTime,
 }

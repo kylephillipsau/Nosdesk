@@ -111,7 +111,7 @@ pub async fn get_ticket(
         Ok(mut ticket) => {
             // Format article content for frontend consumption if it exists
             if let Some(ref content) = ticket.article_content {
-                if content.starts_with("<") && content.ends_with(">") {
+                if content.starts_with::<&str>("<") && content.ends_with::<&str>(">") {
                     // Format XML content to a more consumable format
                     let formatted_content = format_article_content(content);
                     ticket.article_content = Some(formatted_content);
@@ -405,7 +405,7 @@ pub async fn unlink_tickets(
 /// Format article content for frontend consumption
 pub fn format_article_content(content: &str) -> String {
     // If it looks like XML, convert it to a ProseMirror-compatible structure
-    if content.starts_with("<") && content.ends_with(">") {
+    if content.starts_with::<&str>("<") && content.ends_with::<&str>(">") {
         // For simplicity, we're assuming any XML is a valid ProseMirror structure
         // A more robust implementation would properly parse and convert
         return format!(r#"{{"type":"doc","content":[{{"type":"paragraph","content":[{{"type":"text","text":"{}"}}]}}]}}"#, 

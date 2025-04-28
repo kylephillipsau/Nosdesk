@@ -19,6 +19,22 @@ async fn health_check() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    
+    // Validate that JWT_SECRET is set
+    if std::env::var("JWT_SECRET").is_err() {
+        eprintln!("\n========== SECURITY CONFIGURATION ERROR ==========");
+        eprintln!("ERROR: JWT_SECRET environment variable must be set");
+        eprintln!("Generate a secure key with: openssl rand -base64 32");
+        eprintln!("Add it to your .env file or environment variables");
+        eprintln!("See README-SECURITY.md for more information");
+        eprintln!("================================================\n");
+        std::process::exit(1);
+    } else {
+        // Log that we successfully loaded the JWT_SECRET
+        // Don't log the actual secret!
+        println!("JWT_SECRET environment variable is set and loaded");
+    }
+    
     let host = "0.0.0.0";
     let port = env::var("PORT").unwrap_or("8080".to_string()).parse::<u16>().unwrap();
 
@@ -79,6 +95,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/login", web::post().to(handlers::login))
                     .route("/auth/register", web::post().to(handlers::register))
                     .route("/auth/change-password", web::post().to(handlers::change_password))
+                    .route("/auth/me", web::get().to(handlers::get_current_user))
                     
                     // Authentication Provider endpoints
                     .route("/auth/providers", web::get().to(handlers::get_auth_providers))
@@ -89,8 +106,9 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
                     .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
                     .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
-                    // For Microsoft OAuth Callback - we'll implement this later
-                    .route("/auth/microsoft/callback", web::get().to(health_check))
+                    .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
+                    // For Microsoft OAuth Callback
+                    .route("/auth/microsoft/callback", web::get().to(handlers::oauth_callback))
                     
                     // File upload endpoint
                     .route("/upload", web::post().to(handlers::upload_files))
@@ -140,11 +158,15 @@ async fn main() -> std::io::Result<()> {
                     // ===== USER MANAGEMENT =====
                     .route("/users", web::get().to(handlers::get_users))
                     .route("/users", web::post().to(handlers::create_user))
-                    .route("/users/{id}", web::get().to(handlers::get_user_by_id))
-                    .route("/users/{id}", web::put().to(handlers::update_user))
-                    .route("/users/{id}", web::delete().to(handlers::delete_user))
-                    .route("/users/uuid/{uuid}", web::get().to(handlers::get_user_by_uuid))
-                    .route("/users/reset-password", web::post().to(handlers::admin_reset_password))
+                    .route("/users/{uuid}", web::get().to(handlers::get_user_by_uuid))
+                    .route("/users/{uuid}", web::put().to(handlers::update_user_by_uuid))
+                    .route("/users/{uuid}", web::delete().to(handlers::delete_user))
+                    .route("/users/{uuid}/image", web::post().to(handlers::upload_user_image))
+                    .route("/users/auth-identities", web::get().to(handlers::get_user_auth_identities))
+                    .route("/users/auth-identities/{id}", web::delete().to(handlers::delete_user_auth_identity))
+                    // New routes using UUIDs for auth identities
+                    .route("/users/{uuid}/auth-identities", web::get().to(handlers::get_user_auth_identities_by_uuid))
+                    .route("/users/{uuid}/auth-identities/{id}", web::delete().to(handlers::delete_user_auth_identity_by_uuid))
                     
                     // ===== DEVICE MANAGEMENT =====
                     .route("/devices", web::get().to(handlers::get_all_devices))

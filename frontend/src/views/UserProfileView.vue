@@ -13,7 +13,7 @@ import type { User } from '@/services/userService';
 interface UserProfile extends User {
   department?: string;
   joinedDate?: string;
-  avatar?: string | null;
+  created_at?: string;
 }
 
 interface Device {
@@ -55,12 +55,16 @@ const fetchUserData = async () => {
     // Fetch the user from the API
     const user = await userService.getUserByUuid(userUuid);
     
+    if (!user) {
+      error.value = 'User not found';
+      return;
+    }
+    
     // Create the user profile with the fetched data
     userProfile.value = {
       ...user,
       department: 'IT Support', // Default department (could be added to backend later)
-      joinedDate: new Date().toISOString(), // Placeholder - could be created_at from backend
-      avatar: null
+      joinedDate: new Date().toISOString() // Default to current date
     };
 
     // Load tickets from the API
@@ -137,6 +141,12 @@ onMounted(() => {
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
         <BackButton fallbackRoute="/users" label="Back to Users" />
+        <RouterLink 
+          :to="`/profile/settings`"
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+        >
+          Edit Profile
+        </RouterLink>
       </div>
       
       <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
@@ -144,34 +154,50 @@ onMounted(() => {
         <div class="grid-container">
           <!-- User Info Area -->
           <div class="info-area flex flex-col gap-4">
-            <!-- User Profile Header -->
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <div class="flex items-start gap-4">
-                <!-- Avatar Container with fixed dimensions -->
-                <div class="w-32 h-32 flex-shrink-0">
+            <!-- User Profile Card with Banner -->
+            <div class="bg-slate-800 rounded-2xl overflow-hidden">
+              <!-- Cover/Banner Image -->
+              <div 
+                class="h-32 bg-gradient-to-r from-blue-600 to-purple-600 relative"
+                :style="userProfile.banner_url ? `background-image: url('${userProfile.banner_url}'); background-size: cover; background-position: center;` : ''"
+              >
+              </div>
+              
+              <!-- Profile Content -->
+              <div class="px-6 pt-16 pb-6 relative">
+                <!-- Avatar that overlaps the banner -->
+                <div class="absolute -top-12 left-6 w-24 h-24 rounded-full overflow-hidden border-4 border-slate-800">
                   <UserAvatar
                     :name="userProfile.name"
                     size="full"
-                    :avatar="userProfile.avatar"
-                    :show-name="false"
+                    :avatar="userProfile.avatar_url || null"
+                    :showName="false"
                     :clickable="false"
+                    class="w-full h-full"
                   />
                 </div>
-                <div class="flex-1 min-w-0">
-                  <h1 class="text-2xl font-semibold text-white truncate">{{ userProfile.name }}</h1>
-                  <p class="text-slate-400 truncate">{{ userProfile.email }}</p>
-                  <div class="mt-2 flex items-center space-x-4">
-                    <span class="text-sm text-slate-400">{{ userProfile.role }}</span>
-                    <span class="text-slate-600">•</span>
-                    <span class="text-sm text-slate-400">{{ userProfile.department }}</span>
+                
+                <!-- User Info -->
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h1 class="text-2xl font-semibold text-white truncate">{{ userProfile.name }}</h1>
+                    <p class="text-slate-400 truncate">{{ userProfile.email }}</p>
+                    <div class="mt-2 flex items-center space-x-4">
+                      <span class="text-sm text-slate-400">{{ userProfile.role }}</span>
+                      <span class="text-slate-600">•</span>
+                      <span class="text-sm text-slate-400">{{ userProfile.department }}</span>
+                    </div>
+                    <div v-if="userProfile.pronouns" class="mt-1">
+                      <span class="text-sm text-slate-500">{{ userProfile.pronouns }}</span>
+                    </div>
+                    <p class="mt-2 text-sm text-slate-500">
+                      Joined {{ userProfile.joinedDate ? formatDate(userProfile.joinedDate) : 'Recently' }}
+                    </p>
                   </div>
-                  <p class="mt-2 text-sm text-slate-500">
-                    Joined {{ userProfile.joinedDate ? formatDate(userProfile.joinedDate) : 'Recently' }}
-                  </p>
                 </div>
               </div>
             </div>
-
+            
             <!-- Devices Section -->
             <div class="bg-slate-800 rounded-2xl p-6">
               <h2 class="text-lg font-medium text-white mb-4">Devices</h2>

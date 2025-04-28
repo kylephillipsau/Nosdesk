@@ -11,6 +11,7 @@ import KanbanBoard from '@/components/projectComponents/KanbanBoard.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 import BackButton from '@/components/common/BackButton.vue'
+import GanttPlanner from '@/components/projectComponents/GanttPlanner.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,7 +25,9 @@ const error = ref<string | null>(null)
 const showEditModal = ref(false)
 const showAddTicketModal = ref(false)
 const activeTab = computed(() => {
-  return route.query.view === 'list' ? 'list' : 'kanban'
+  if (route.query.view === 'list') return 'list'
+  if (route.query.view === 'gantt') return 'gantt'
+  return 'kanban'
 })
 
 // Fetch project details on component mount
@@ -271,12 +274,24 @@ watch(() => route.query.view, (newValue) => {
             >
               List View
             </button>
+            <button 
+              @click="setActiveTab('gantt')"
+              class="py-2 px-4 border-b-2 font-medium text-sm"
+              :class="activeTab === 'gantt' ? 'border-blue-500 text-blue-500' : 'border-transparent text-slate-400 hover:text-slate-300'"
+            >
+              Gantt Planner
+            </button>
           </div>
         </div>
 
         <!-- Kanban Board View -->
         <div v-if="activeTab === 'kanban'" class="flex-1 min-h-[500px]">
           <KanbanBoard :project-id="project.id" />
+        </div>
+
+        <!-- Gantt Planner View -->
+        <div v-else-if="activeTab === 'gantt'" class="flex-1 min-h-[500px]">
+          <GanttPlanner v-if="project" :project-id="project.id" :tickets="tickets" />
         </div>
 
         <!-- List View -->
