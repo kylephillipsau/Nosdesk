@@ -181,6 +181,22 @@ diesel::table! {
 }
 
 diesel::table! {
+    user_auth_identities (id) {
+        id -> Int4,
+        user_id -> Int4,
+        auth_provider_id -> Int4,
+        #[max_length = 255]
+        provider_user_id -> Varchar,
+        #[max_length = 255]
+        email -> Nullable<Varchar>,
+        identity_data -> Nullable<Jsonb>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        password_hash -> Nullable<Bytea>,
+    }
+}
+
+diesel::table! {
     users (id) {
         id -> Int4,
         #[max_length = 36]
@@ -193,7 +209,12 @@ diesel::table! {
         role -> Varchar,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        password_hash -> Bytea,
+        #[max_length = 50]
+        pronouns -> Nullable<Varchar>,
+        #[max_length = 255]
+        avatar_url -> Nullable<Varchar>,
+        #[max_length = 255]
+        banner_url -> Nullable<Varchar>,
     }
 }
 
@@ -205,6 +226,8 @@ diesel::joinable!(devices -> tickets (ticket_id));
 diesel::joinable!(documentation_pages -> tickets (ticket_id));
 diesel::joinable!(project_tickets -> projects (project_id));
 diesel::joinable!(project_tickets -> tickets (ticket_id));
+diesel::joinable!(user_auth_identities -> auth_providers (auth_provider_id));
+diesel::joinable!(user_auth_identities -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     article_contents,
@@ -219,5 +242,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     project_tickets,
     projects,
     tickets,
+    user_auth_identities,
     users,
 );

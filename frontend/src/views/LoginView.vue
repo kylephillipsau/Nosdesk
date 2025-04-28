@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import logo from '@/assets/logo.svg';
+import axios from 'axios';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -34,12 +35,35 @@ const handleLogin = async () => {
   }
 };
 
-const handleMicrosoftLogin = () => {
-  // Placeholder for Microsoft Entra integration
-  // This would redirect to Microsoft's authentication endpoint
-  console.log('Microsoft Entra login clicked');
-  // For actual implementation:
-  // window.location.href = 'https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/authorize?...'
+const handleMicrosoftLogin = async () => {
+  isLoading.value = true;
+  errorMessage.value = '';
+  
+  try {
+    // Store the current URL to redirect back after authentication
+    const redirectPath = router.currentRoute.value.query.redirect?.toString() || '/';
+    sessionStorage.setItem('authRedirect', redirectPath);
+    
+    // Get authorization URL from backend
+    const response = await axios.post('/api/auth/oauth/authorize', {
+      provider_type: 'microsoft',
+      redirect_uri: `${window.location.origin}/auth/microsoft/callback`
+    });
+    
+    // Make sure we got a valid auth URL
+    if (response.data && response.data.auth_url) {
+      // Redirect to Microsoft login
+      window.location.href = response.data.auth_url;
+    } else {
+      throw new Error('Invalid authorization URL received');
+    }
+  } catch (error: any) {
+    console.error('Error initiating Microsoft authentication:', error);
+    errorMessage.value = error.response?.data?.message || 
+                          error.response?.data?.error ||
+                          'Failed to initiate Microsoft authentication';
+    isLoading.value = false;
+  }
 };
 </script>
 
