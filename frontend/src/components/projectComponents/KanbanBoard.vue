@@ -228,7 +228,7 @@ const getPriorityColor = (priority: string) => {
           class="w-80 flex flex-col bg-slate-800 rounded-lg h-full"
         >
           <!-- Column Header -->
-          <div class="p-3 border-b border-slate-700 sticky top-0 bg-slate-800" style="z-index: 1;">
+          <div class="p-3 border-b border-slate-700 sticky top-0 bg-slate-800 rounded-t-lg" style="z-index: 1;">
             <div class="flex items-center justify-between">
               <h3 class="font-medium text-slate-200">{{ column.title }}</h3>
               <span class="text-sm text-slate-400">{{ column.tickets.length }}</span>

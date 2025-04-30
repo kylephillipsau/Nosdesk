@@ -573,8 +573,8 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
         >
           <!-- Blue overlay with conversion text -->
           <div class="absolute p-1 inset-0 flex items-center justify-center">
-            <div class="bg-blue-600 px-2 py-2 text-center rounded-md shadow-lg">
-              <span class="text-sm text-white font-black tracking-wider">
+            <div class="bg-blue-600 px-2 py-2 text-center rounded-sm shadow-lg">
+              <span class="text-sm text-white font-semibold tracking-wider">
                 Converting HEIC to JPEG...
               </span>
             </div>
@@ -619,7 +619,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
               key="image"
               :src="isHeicFile(attachment.name) && convertedThumbnailSrc ? convertedThumbnailSrc : attachment.url" 
               :alt="attachment.name" 
-              class="w-full h-full object-contain bg-slate-900/50 z-5 heic-image"
+              class="w-full h-full object-cover bg-transparent z-5 heic-image"
               :class="{
                 'animated-preview': isAnimatedImage(attachment.name)
               }"
@@ -845,7 +845,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
             <img 
               :src="previewImageSrc" 
               :alt="attachment.name" 
-              class="max-w-full max-h-[70vh] object-contain"
+              class="max-w-full max-h-[70vh] object-contain bg-transparent"
               :class="{
                 'animated-preview-modal': isAnimatedImage(attachment.name)
               }"
@@ -949,6 +949,17 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
   transform: scale(1);
 }
 
+/* Image handling styles for different aspect ratios */
+.heic-image {
+  z-index: 5 !important;
+  background-color: transparent !important;
+}
+
+/* Optional: Add this class to the modal to remove any background */
+:deep(.modal-content) {
+  background-color: rgba(15, 23, 42, 0.95); /* Slightly transparent dark background */
+}
+
 /* Add a pulse animation for the loading spinner */
 @keyframes pulse {
   0%, 100% {
@@ -1038,11 +1049,6 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
   50% {
     background-color: rgba(79, 70, 229, 0.9);
   }
-}
-
-/* Ensure z-index layering works correctly */
-.heic-image {
-  z-index: 5 !important;
 }
 
 /* Remove the old animated-image class and replace with new styles */

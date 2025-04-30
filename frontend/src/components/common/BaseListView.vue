@@ -284,9 +284,9 @@ onBeforeUnmount(() => {
         <template v-if="!isMobile">
           <!-- Table Header (if columns are provided) -->
           <div v-if="columns && columns.length > 0" class="sticky top-0 z-10 bg-slate-800 border-b border-slate-700 text-sm text-gray-200">
-            <div class="flex min-w-[800px]">
+            <div class="flex min-w-[800px] gap-1">
               <!-- Selection checkbox in header -->
-              <div v-if="enableSelection" class="p-3 w-10 flex-shrink-0">
+              <div v-if="enableSelection" class="p-3 py-4 w-10 flex-shrink-0">
                 <input
                   type="checkbox"
                   class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
@@ -297,14 +297,14 @@ onBeforeUnmount(() => {
               </div>
               
               <!-- Custom header prefix slot -->
-              <slot name="header-prefix"></slot>
+              <slot name="header-prefix" class="p-3 py-4"></slot>
               
               <!-- Generated column headers -->
               <div 
                 v-for="column in columns" 
                 :key="column.field"
                 :class="[
-                  'p-3 font-medium', 
+                  'p-3 py-4 font-medium', 
                   column.sortable !== false ? 'cursor-pointer select-none' : '',
                   column.width || (column.field === 'id' ? 'w-20 flex-shrink-0' : 'flex-1 min-w-0'),
                   column.class || ''
@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
               </div>
               
               <!-- Slot for additional header columns -->
-              <slot name="header-suffix"></slot>
+              <slot name="header-suffix" class="p-3 py-4"></slot>
             </div>
           </div>
           

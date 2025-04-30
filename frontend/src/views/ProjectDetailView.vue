@@ -321,54 +321,83 @@ watch(() => route.query.view, (newValue) => {
           </div>
           
           <div v-else class="bg-slate-800 rounded-lg overflow-hidden">
-            <table class="w-full">
-              <thead>
-                <tr class="border-b border-slate-700">
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">ID</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Title</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Status</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Priority</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Assignee</th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-700">
-                <tr 
+            <div class="w-full">
+              <!-- Header - Hidden on mobile -->
+              <div class="hidden md:flex items-center border-b border-slate-700 bg-slate-800 text-xs font-medium text-slate-400 uppercase tracking-wider">
+                <div class="px-6 py-3 w-16">ID</div>
+                <div class="px-6 py-3 flex-1">Title</div>
+                <div class="px-6 py-3 w-28">Status</div>
+                <div class="px-6 py-3 w-28">Priority</div>
+                <div class="px-6 py-3 w-40">Assignee</div>
+                <div class="px-6 py-3 w-20">Actions</div>
+              </div>
+              
+              <!-- Rows -->
+              <div class="divide-y divide-slate-700">
+                <div 
                   v-for="ticket in tickets" 
                   :key="ticket.id"
-                  class="hover:bg-slate-700 transition-colors"
+                  class="flex md:items-center flex-col md:flex-row hover:bg-slate-700 transition-colors p-4 md:p-0"
                 >
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-300">#{{ ticket.id }}</td>
-                  <td 
+                  <!-- Mobile View Header -->
+                  <div class="flex items-center justify-between w-full mb-2 md:hidden">
+                    <div class="text-sm text-slate-300 font-medium">#{{ ticket.id }}</div>
+                    <div class="flex items-center space-x-2">
+                      <StatusBadge type="status" :value="ticket.status" />
+                      <StatusBadge type="priority" :value="ticket.priority" short />
+                      <button 
+                        @click="handleRemoveTicket(ticket.id)"
+                        class="text-red-400 hover:text-red-300 transition-colors ml-2"
+                        title="Remove from project"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- Desktop View - ID Column -->
+                  <div class="hidden md:block px-6 py-4 w-16 text-sm text-slate-300">#{{ ticket.id }}</div>
+                  
+                  <!-- Title - Both Views -->
+                  <div 
                     @click="goToTicket(ticket.id)"
-                    class="px-6 py-4 whitespace-nowrap text-sm text-white cursor-pointer hover:underline"
+                    class="w-full md:px-4 md:py-2 md:flex-1 text-sm text-white cursor-pointer hover:underline font-medium md:font-normal mb-2 md:mb-0"
                   >
                     {{ ticket.title }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap">
+                  </div>
+                  
+                  <!-- Desktop View - Status, Priority, Assignee, Actions -->
+                  <div class="hidden md:block px-2 py-4 w-28 text-nowrap">
                     <StatusBadge 
                       type="status" 
                       :value="ticket.status"
                     />
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap">
+                  </div>
+                  <div class="hidden md:block px-2 py-4 w-28">
                     <StatusBadge 
                       type="priority" 
                       :value="ticket.priority"
                       short
                     />
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap">
+                  </div>
+                  
+                  <!-- Assignee - Both Views -->
+                  <div class="w-full md:w-40 md:px-4 md:py-2 flex items-center">
+                    <div class="text-xs text-slate-400 md:hidden mr-2">Assigned to:</div>
                     <UserAvatar 
                       v-if="ticket.assignee" 
                       :name="ticket.assignee" 
-                      size="xs" 
+                      size="sm" 
                       :showName="true"
                       :clickable="false"
                     />
                     <span v-else class="text-xs text-slate-400">Unassigned</span>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap">
+                  </div>
+                  
+                  <!-- Desktop View - Actions -->
+                  <div class="hidden md:flex items-center px-6 py-4 w-20">
                     <button 
                       @click="handleRemoveTicket(ticket.id)"
                       class="text-red-400 hover:text-red-300 transition-colors"
@@ -378,10 +407,10 @@ watch(() => route.query.view, (newValue) => {
                         <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                       </svg>
                     </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

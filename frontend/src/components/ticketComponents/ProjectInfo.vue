@@ -38,7 +38,7 @@ const getStatusClass = (status: string) => {
 
 <template>
   <div class="bg-slate-800 rounded-lg overflow-hidden">
-    <div class="px-4 py-3 bg-slate-700/50 flex items-center justify-between">
+    <div class="px-4 py-2 bg-slate-700/50 flex items-center justify-between">
       <h2 class="text-lg font-medium text-slate-100">{{ project.name }}</h2>
 
       <div class="flex items-center gap-2">

@@ -123,6 +123,7 @@ const viewTicket = (ticketId: number, event: Event) => {
                 type="status" 
                 :value="ticket.status"
                 custom-classes="w-2.5 h-2.5 rounded-full"
+                :compact="true"
               />
               <span class="text-sm text-gray-400">#{{ ticket.id }}</span>
               <span 
