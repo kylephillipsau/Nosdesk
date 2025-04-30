@@ -48,14 +48,14 @@ pub fn update_documentation_page(
 ) -> Result<DocumentationPage, Error> {
     diesel::update(documentation_pages::table.find(page.id))
         .set((
-            documentation_pages::slug.eq(page.slug.clone()),
-            documentation_pages::title.eq(page.title.clone()),
-            documentation_pages::description.eq(page.description.clone()),
-            documentation_pages::content.eq(page.content.clone()),
+            documentation_pages::slug.eq(&page.slug),
+            documentation_pages::title.eq(&page.title),
+            documentation_pages::description.eq(&page.description),
+            documentation_pages::content.eq(&page.content),
             documentation_pages::parent_id.eq(page.parent_id),
-            documentation_pages::author.eq(page.author.clone()),
+            documentation_pages::author.eq(&page.author),
             documentation_pages::status.eq(page.status),
-            documentation_pages::icon.eq(page.icon.clone()),
+            documentation_pages::icon.eq(&page.icon),
             documentation_pages::updated_at.eq(page.updated_at),
         ))
         .get_result(conn)

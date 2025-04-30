@@ -384,18 +384,18 @@ pub struct NewAttachment {
 #[diesel(belongs_to(Ticket))]
 pub struct ArticleContent {
     pub id: i32,
-    pub content: String,
+    pub content: Vec<u8>,
     pub ticket_id: Option<i32>,
 }
 
 impl Queryable<(
     diesel::sql_types::Integer,
-    diesel::sql_types::Text,
+    diesel::sql_types::Binary,
     diesel::sql_types::Nullable<diesel::sql_types::Integer>,
 ), Pg> for ArticleContent {
     type Row = (
         i32,
-        String,
+        Vec<u8>,
         Option<i32>,
     );
 
@@ -411,7 +411,7 @@ impl Queryable<(
 #[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
 #[diesel(table_name = crate::schema::article_contents)]
 pub struct NewArticleContent {
-    pub content: String,
+    pub content: Vec<u8>,
     pub ticket_id: i32,
 }
 
@@ -528,7 +528,7 @@ pub struct DocumentationPage {
     pub slug: String,
     pub title: String,
     pub description: Option<String>,
-    pub content: String,
+    pub content: Vec<u8>,
     pub author: String,
     pub status: DocumentationStatus,
     pub icon: Option<String>,
@@ -539,22 +539,7 @@ pub struct DocumentationPage {
     pub display_order: Option<i32>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
-#[diesel(table_name = crate::schema::documentation_pages)]
-pub struct NewDocumentationPage {
-    pub slug: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub content: String,
-    pub author: String,
-    pub status: DocumentationStatus,
-    pub icon: Option<String>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-    pub parent_id: Option<i32>,
-    pub ticket_id: Option<i32>,
-    pub display_order: Option<i32>,
-}
+// Remove the manual Queryable implementation that causes the conflict
 
 // Documentation Page with Children
 #[derive(Debug, Serialize, Deserialize)]
@@ -1165,4 +1150,21 @@ pub struct UserAuthIdentityDisplay {
     pub provider_name: String,
     pub email: Option<String>,
     pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
+#[diesel(table_name = crate::schema::documentation_pages)]
+pub struct NewDocumentationPage {
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub content: Vec<u8>,
+    pub author: String,
+    pub status: DocumentationStatus,
+    pub icon: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub parent_id: Option<i32>,
+    pub ticket_id: Option<i32>,
+    pub display_order: Option<i32>,
 }

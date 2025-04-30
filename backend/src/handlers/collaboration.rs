@@ -60,8 +60,19 @@ pub async fn sync_ticket_article(
         }
     };
     
+    // Temporarily store content as is, assuming it's binary data
+    // TODO: Implement base64 decoding once dependency is added
+    let binary_content = update.content.as_bytes().to_vec();
+    // let binary_content = match base64::decode(&update.content) {
+    //     Ok(data) => data,
+    //     Err(e) => {
+    //         println!("Failed to decode base64 content: {}", e);
+    //         return HttpResponse::BadRequest().json("Invalid content format");
+    //     }
+    // };
+
     let new_article_content = NewArticleContent {
-        content: update.content.clone(),
+        content: binary_content,
         ticket_id,
     };
 
@@ -106,8 +117,14 @@ pub async fn get_article_content(
     match repository::get_article_content_by_ticket_id(&mut conn, ticket_id) {
         Ok(article_content) => {
             println!("Retrieved article content for ticket {}", ticket_id);
+            
+            // Temporarily return content as is, assuming it's binary data
+            // TODO: Implement base64 encoding once dependency is added
+            let content_string = String::from_utf8_lossy(&article_content.content).to_string();
+            // let content_base64 = base64::encode(&article_content.content);
+            
             HttpResponse::Ok().json(json!({
-                "content": article_content.content,
+                "content": content_string,
                 "ticket_id": ticket_id
             }))
         },
@@ -141,11 +158,34 @@ pub struct YjsAppState {
 
 impl YjsAppState {
     pub fn new(pool: web::Data<crate::db::Pool>) -> Self {
-        YjsAppState {
+        let state = YjsAppState {
             documents: Arc::new(Mutex::new(HashMap::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             pool,
+        };
+        // Start the periodic cleanup and save task
+        let state_clone = state.clone();
+        actix::spawn(async move {
+            use actix::clock::interval;
+            let mut interval = interval(Duration::from_secs(30)); // Check every 30 seconds
+            loop {
+                interval.tick().await;
+                state_clone.cleanup_stale_sessions();
+                state_clone.save_all_active_documents();
+            }
+        });
+        state
+    }
+
+    // Save all active documents
+    fn save_all_active_documents(&self) {
+        let sessions = self.sessions.lock().unwrap();
+        let active_docs: Vec<String> = sessions.keys().cloned().collect();
+        drop(sessions); // Release the lock before saving
+        for doc_id in active_docs {
+            self.save_document(&doc_id);
         }
+        println!("Periodic save completed for all active documents");
     }
 
     // Get or create document 
@@ -203,6 +243,9 @@ impl YjsAppState {
                 // Release the mutex to avoid deadlock when saving
                 drop(sessions);
                 self.save_document(doc_id);
+                println!("Completed saving state for document {} after room emptied", doc_id);
+                // Re-acquire the mutex
+                sessions = self.sessions.lock().unwrap();
             }
         }
     }
@@ -243,7 +286,7 @@ impl YjsAppState {
             println!("Cleaned up {} stale sessions", stale_session_count);
         }
         
-        // Process documents with no active sessions
+        // Process empty rooms and save their state
         for doc_id in docs_to_clean {
             println!("Room for document {} is empty, saving state", &doc_id);
             // Release the mutex before calling save_document
@@ -280,20 +323,17 @@ impl YjsAppState {
             // Check if it's a ticket document
             if let Some(ticket_id_str) = doc_id.strip_prefix("ticket-") {
                 if let Ok(ticket_id) = ticket_id_str.parse::<i32>() {
-                    // Get text content from the document
-                    let text_content = {
+                    // Get binary content from the document
+                    let binary_content = {
                         let txn = doc.transact();
-                        match txn.get_text("prosemirror") {
-                            Some(text) => text.get_string(&txn),
-                            None => String::new(),
-                        }
+                        txn.encode_state_as_update_v1(&StateVector::default())
                     };
                     
                     println!("Saving document content for ticket {}", ticket_id);
                     
                     // Save to database in a separate thread
                     let pool = self.pool.clone();
-                    let content = text_content.clone();
+                    let content = binary_content.clone(); // Already Vec<u8>
                     
                     // Use actix to spawn a blocking operation
                     actix::spawn(async move {
@@ -369,6 +409,8 @@ impl YjsWebSocket {
             // Sync protocol message
             MESSAGE_SYNC => {
                 self.app_state.broadcast(&self.doc_id, &self.id, msg);
+                // After processing a sync message, trigger a save to ensure the backend captures the latest state
+                self.app_state.save_document(&self.doc_id);
             },
             
             // Awareness protocol message

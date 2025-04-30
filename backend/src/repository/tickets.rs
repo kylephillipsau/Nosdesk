@@ -206,7 +206,11 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     
     // Get article content
     let article_content = crate::repository::article_content::get_article_content_by_ticket_id(conn, ticket_id)
-        .map(|content| content.content)
+        .map(|content| {
+            // Try to convert binary content to string
+            String::from_utf8(content.content)
+                .unwrap_or_else(|_| String::new())
+        })
         .ok();
     
     // Get linked tickets
@@ -313,7 +317,7 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
     // Create article content if present
     if let Some(content) = &ticket_json.article_content {
         let new_article_content = NewArticleContent {
-            content: content.clone(),
+            content: content.as_bytes().to_vec(),
             ticket_id: ticket.id,
         };
         
@@ -408,7 +412,7 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     // Create article content if present
     if let Some(content) = &ticket_json.article_content {
         let new_article_content = NewArticleContent {
-            content: content.clone(),
+            content: content.as_bytes().to_vec(),
             ticket_id: ticket.id,
         };
         

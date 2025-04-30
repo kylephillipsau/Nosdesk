@@ -7,6 +7,7 @@ const props = defineProps<{
   value: 'open' | 'in-progress' | 'closed' | 'low' | 'medium' | 'high'
   customClasses?: string
   short?: boolean
+  compact?: boolean
 }>()
 
 const statusColors = {
@@ -40,14 +41,16 @@ const displayText = computed(() => {
 })
 
 const badgeClasses = computed(() => {
+  // Standard base classes
   const baseClasses = props.type === 'status' 
     ? [
         statusColors[props.value as 'open' | 'in-progress' | 'closed'],
-        'px-3 py-1 rounded-full text-sm'
+        props.compact ? 'px-2 py-0.5 rounded text-xs' : 'px-3 py-1 rounded-full text-sm'
       ]
     : [
         priorityColors[props.value as 'low' | 'medium' | 'high'],
-        'font-medium'
+        'font-medium',
+        props.compact ? 'text-xs' : ''
       ]
 
   return props.customClasses 

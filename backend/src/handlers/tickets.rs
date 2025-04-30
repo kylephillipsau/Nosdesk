@@ -108,16 +108,7 @@ pub async fn get_ticket(
     };
     
     match repository::get_complete_ticket(&mut conn, ticket_id) {
-        Ok(mut ticket) => {
-            // Format article content for frontend consumption if it exists
-            if let Some(ref content) = ticket.article_content {
-                if content.starts_with::<&str>("<") && content.ends_with::<&str>(">") {
-                    // Format XML content to a more consumable format
-                    let formatted_content = format_article_content(content);
-                    ticket.article_content = Some(formatted_content);
-                }
-            }
-            
+        Ok(ticket) => {
             HttpResponse::Ok().json(ticket)
         },
         Err(_) => HttpResponse::NotFound().json("Ticket not found"),
@@ -277,7 +268,7 @@ pub async fn create_empty_ticket(
         Ok(ticket) => {
             // Create empty article content for the ticket
             let new_article_content = crate::models::NewArticleContent {
-                content: "".to_string(),
+                content: Vec::new(), // Empty byte vector for binary content
                 ticket_id: ticket.id,
             };
             
@@ -400,28 +391,4 @@ pub async fn unlink_tickets(
             HttpResponse::InternalServerError().json("Failed to unlink tickets")
         }
     }
-}
-
-/// Format article content for frontend consumption
-pub fn format_article_content(content: &str) -> String {
-    // If it looks like XML, convert it to a ProseMirror-compatible structure
-    if content.starts_with::<&str>("<") && content.ends_with::<&str>(">") {
-        // For simplicity, we're assuming any XML is a valid ProseMirror structure
-        // A more robust implementation would properly parse and convert
-        return format!(r#"{{"type":"doc","content":[{{"type":"paragraph","content":[{{"type":"text","text":"{}"}}]}}]}}"#, 
-            content.replace("\"", "\\\"")
-                .replace("<paragraph>", "")
-                .replace("</paragraph>", "")
-        );
-    }
-    
-    // If it's already JSON, return it as is
-    if content.starts_with("{") && content.ends_with("}") {
-        return content.to_string();
-    }
-    
-    // Default case, wrap plain text in a paragraph
-    format!(r#"{{"type":"doc","content":[{{"type":"paragraph","content":[{{"type":"text","text":"{}"}}]}}]}}"#, 
-        content.replace("\"", "\\\"")
-    )
 } 

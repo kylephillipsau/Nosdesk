@@ -21,7 +21,7 @@ pub mod sql_types {
 diesel::table! {
     article_contents (id) {
         id -> Int4,
-        content -> Text,
+        content -> Bytea,
         ticket_id -> Nullable<Int4>,
     }
 }
@@ -115,7 +115,7 @@ diesel::table! {
         #[max_length = 255]
         title -> Varchar,
         description -> Nullable<Text>,
-        content -> Text,
+        content -> Bytea,
         #[max_length = 255]
         author -> Varchar,
         status -> DocumentationStatus,

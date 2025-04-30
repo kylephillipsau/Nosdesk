@@ -314,7 +314,7 @@ onMounted(() => {
             v-for="user in filteredUsers"
             :key="user.uuid"
             @click="navigateToUser(user.uuid)"
-            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-1"
           >
             <div class="flex items-center p-3 w-10 flex-shrink-0">
               <input

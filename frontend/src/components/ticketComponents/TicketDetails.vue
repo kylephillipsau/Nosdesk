@@ -69,12 +69,12 @@ watch(selectedAssignee, (newAssignee) => {
 
 <template>
   <div class="w-full">
-    <div class="flex flex-col bg-slate-800 rounded-2xl p-4 gap-2 shadow-lg">
-      <h2 class="text-lg font-medium text-slate-100">Details</h2>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="flex flex-col bg-slate-800 rounded-xl pt-3 p-2 gap-2 shadow-lg">
+      <h2 class="text-lg font-medium text-slate-100 px-2">Details</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <!-- Requester -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Requester</dt>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Requester</dt>
           <dd class="text-slate-200">
             <UserAutocomplete
               v-model="selectedRequester"
@@ -87,8 +87,8 @@ watch(selectedAssignee, (newAssignee) => {
         </div>
 
         <!-- Assignee -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Assignee</dt>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Assignee</dt>
           <dd class="text-slate-200">
             <UserAutocomplete
               v-model="selectedAssignee"
@@ -101,20 +101,20 @@ watch(selectedAssignee, (newAssignee) => {
         </div>
 
         <!-- Created Date -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Created</dt>
-          <dd class="text-slate-200">{{ createdDate }}</dd>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Created</dt>
+          <dd class="text-slate-200 px-1">{{ createdDate }}</dd>
         </div>
 
         <!-- Date Modified -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Modified</dt>
-          <dd class="text-slate-200">{{ modifiedDate }}</dd>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Modified</dt>
+          <dd class="text-slate-200 px-1">{{ modifiedDate }}</dd>
         </div>
 
         <!-- Status -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Status</dt>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Status</dt>
           <dd class="text-slate-200">
             <CustomDropdown
               :value="selectedStatus"
@@ -127,8 +127,8 @@ watch(selectedAssignee, (newAssignee) => {
         </div>
 
         <!-- Priority -->
-        <div class="flex flex-col gap-1 bg-slate-700 p-3 rounded-xl shadow-inner">
-          <dt class="text-sm text-slate-400">Priority</dt>
+        <div class="flex flex-col gap-1 bg-slate-700 p-2 rounded-md shadow-inner">
+          <dt class="text-sm text-slate-400 px-1">Priority</dt>
           <dd class="text-slate-200">
             <CustomDropdown
               :value="selectedPriority"

@@ -19,30 +19,24 @@ use crate::handlers::auth::validate_token_internal;
 pub async fn get_users(
     pool: web::Data<crate::db::Pool>,
 ) -> impl Responder {
-    println!("GET /api/users - Handler called");
     
     let mut conn = match pool.get() {
         Ok(conn) => {
-            println!("Database connection obtained successfully");
             conn
         },
         Err(e) => {
-            println!("Database connection error: {:?}", e);
+            eprintln!("Database connection error: {:?}", e);
             return HttpResponse::InternalServerError().json("Database connection error");
         },
     };
 
-    println!("Calling repository::get_users");
     match repository::get_users(&mut conn) {
         Ok(users) => {
-            println!("Successfully retrieved {} users", users.len());
-            // Convert to UserResponse to hide sensitive information
             let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
-            println!("Converted to UserResponse, returning JSON");
             HttpResponse::Ok().json(user_responses)
         },
         Err(e) => {
-            println!("Error fetching users: {:?}", e);
+            eprintln!("Error fetching users: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to fetch users")
         },
     }
@@ -92,7 +86,6 @@ pub async fn create_user(
         })),
     };
 
-    println!("Checking if user with email {} already exists", user_data.email);
     if let Ok(_) = repository::get_user_by_email(&user_data.email, &mut conn) {
         return HttpResponse::BadRequest().json(json!({
             "status": "error",
@@ -118,11 +111,8 @@ pub async fn create_user(
         banner_url: user_data.banner_url.clone(),
     };
 
-    println!("Creating user with name {}", new_user.name);
     match repository::create_user(new_user, &mut conn) {
         Ok(user) => {
-            println!("User created successfully");
-            
             // Create default password hash for this user
             use bcrypt::hash;
             use crate::models::NewUserAuthIdentity;
@@ -130,7 +120,7 @@ pub async fn create_user(
             let password_hash = match hash("changeme", DEFAULT_COST) {
                 Ok(hash) => hash.into_bytes(),
                 Err(e) => {
-                    println!("Error hashing password: {:?}", e);
+                    eprintln!("Error hashing password: {:?}", e);
                     return HttpResponse::InternalServerError().json(json!({
                         "status": "error",
                         "message": "Error setting default password"
@@ -151,14 +141,14 @@ pub async fn create_user(
             match repository::user_auth_identities::create_identity(new_identity, &mut conn) {
                 Ok(_) => HttpResponse::Created().json(UserResponse::from(user)),
                 Err(e) => {
-                    println!("Error creating auth identity: {:?}", e);
+                    eprintln!("Error creating auth identity: {:?}", e);
                     // If identity creation fails, still return the user
                     HttpResponse::Created().json(UserResponse::from(user))
                 }
             }
         },
         Err(e) => {
-            println!("Error creating user: {:?}", e);
+            eprintln!("Error creating user: {:?}", e);
             HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": "Error creating user"
@@ -345,12 +335,9 @@ pub async fn get_user_auth_identities(
 
     // Validate token and get user UUID
     let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => {
-            println!("Successfully validated token for user UUID: {}", claims.sub);
-            claims
-        },
+        Ok(claims) => claims,
         Err(e) => {
-            println!("Token validation error: {:?}", e);
+            eprintln!("Token validation error: {:?}", e);
             return HttpResponse::Unauthorized().json(json!({
                 "status": "error",
                 "message": "Invalid or expired token"
@@ -359,25 +346,17 @@ pub async fn get_user_auth_identities(
     };
 
     // Get user ID from UUID
-    println!("Looking up user with UUID: {}", claims.sub);
     let user = match repository::get_user_by_uuid(&claims.sub, &mut conn) {
-        Ok(user) => {
-            println!("Found user with ID: {}", user.id);
-            user
-        },
+        Ok(user) => user,
         Err(e) => {
-            println!("Error finding user by UUID {}: {:?}", claims.sub, e);
+            eprintln!("Error finding user by UUID {}: {:?}", claims.sub, e);
             return HttpResponse::NotFound().json("User not found");
         },
     };
 
     // Get auth identities for the user
-    println!("Fetching auth identities for user ID: {}", user.id);
     match repository::user_auth_identities::get_user_identities_display(user.id, &mut conn) {
-        Ok(identities) => {
-            println!("Found {} auth identities", identities.len());
-            HttpResponse::Ok().json(identities)
-        },
+        Ok(identities) => HttpResponse::Ok().json(identities),
         Err(e) => {
             eprintln!("Error fetching auth identities: {:?}", e);
             HttpResponse::InternalServerError().json(json!({
@@ -407,14 +386,10 @@ pub async fn get_user_auth_identities_by_uuid(
     };
 
     let user_uuid = path.into_inner();
-    println!("GET auth identities for UUID: {}", user_uuid);
 
     // Validate token and get user UUID from token
     let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => {
-            println!("Token validated for user: {}", claims.sub);
-            claims
-        },
+        Ok(claims) => claims,
         Err(e) => {
             eprintln!("Token validation error: {:?}", e);
             return HttpResponse::Unauthorized().json(json!({
@@ -434,17 +409,8 @@ pub async fn get_user_auth_identities_by_uuid(
     }
 
     // Get auth identities for the user by UUID
-    println!("Fetching auth identities for user UUID: {}", user_uuid);
     match repository::user_auth_identities::get_user_identities_display_by_uuid(&user_uuid, &mut conn) {
-        Ok(identities) => {
-            println!("Found {} auth identities for UUID {}", identities.len(), user_uuid);
-            // Log details of each identity
-            for (i, identity) in identities.iter().enumerate() {
-                println!("  Identity {}: id={}, provider_type={}, email={:?}", 
-                         i+1, identity.id, identity.provider_type, identity.email);
-            }
-            HttpResponse::Ok().json(identities)
-        },
+        Ok(identities) => HttpResponse::Ok().json(identities),
         Err(e) => {
             eprintln!("Error fetching auth identities for UUID {}: {:?}", user_uuid, e);
             match e {
@@ -776,10 +742,7 @@ pub async fn update_user_by_uuid(
     };
 
     match repository::update_user(user.id, user_update, &mut conn) {
-        Ok(updated_user) => {
-            println!("User updated successfully: {:?}", updated_user);
-            HttpResponse::Ok().json(UserResponse::from(updated_user))
-        },
+        Ok(updated_user) => HttpResponse::Ok().json(UserResponse::from(updated_user)),
         Err(e) => {
             eprintln!("Error updating user: {:?}", e);
             HttpResponse::InternalServerError().json(json!({
@@ -799,8 +762,6 @@ pub async fn upload_user_image(
 ) -> impl Responder {
     let user_uuid = uuid.into_inner();
     let image_type = &type_query.type_; // "avatar" or "banner"
-    
-    println!("Received {} upload request for user {}", image_type, user_uuid);
     
     let mut conn = match pool.get() {
         Ok(conn) => conn,
@@ -838,7 +799,6 @@ pub async fn upload_user_image(
     
     // Ensure the directory exists
     if !Path::new(storage_path).exists() {
-        println!("Creating directory: {}", storage_path);
         if let Err(e) = fs::create_dir_all(storage_path) {
             eprintln!("Failed to create directory: {:?}", e);
             return HttpResponse::InternalServerError().json(json!({
@@ -877,8 +837,6 @@ pub async fn upload_user_image(
         
         let unique_filename = format!("{}_{}.{}", user_uuid, Uuid::new_v4(), file_ext);
         let filepath = format!("{}/{}", storage_path, unique_filename);
-        
-        println!("Saving {} to: {}", image_type, filepath);
         
         // Read file data
         let mut file_data = Vec::new();

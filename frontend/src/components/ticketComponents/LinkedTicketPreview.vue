@@ -84,15 +84,16 @@ const formattedDate = (dateString: string) => {
 <template>
   <div v-if="linkedTicket && !isSameAsCurrentTicket" class="bg-slate-800 rounded-lg overflow-hidden">
     <!-- Header with status and actions -->
-    <div class="px-4 py-3 bg-slate-700/50 flex items-center justify-between">
+    <div class="py-2 px-4 bg-slate-700/50 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <StatusBadge
           type="status"
           :value="linkedTicket.status"
           custom-classes="w-1 h-2.5 flex-shrink-0"
         />
+        <span class="text-gray-400 text-sm">#{{ linkedTicket.id }}</span>
         <div class="flex items-center gap-2">
-          <span class="text-gray-400 text-sm">#{{ linkedTicket.id }}</span>
+          
           <h3 class="text-white font-medium flex-1">
             {{ linkedTicket.title }}
           </h3>
