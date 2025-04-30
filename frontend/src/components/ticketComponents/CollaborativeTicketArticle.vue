@@ -23,16 +23,42 @@ const emit = defineEmits<{
   'initialization-complete': [];
 }>();
 
-// Always use an empty document for now - ignore initialContent
-const content = ref('{"type":"doc","content":[{"type":"paragraph"}]}');
+// Use binary content for Yjs document
+const content = ref('');
 const router = useRouter();
 const isLoading = ref(false);
-const isBinaryUpdate = ref(false);
+const isBinaryUpdate = ref(true);
 
-// SIMPLIFIED: Just emit initialization complete
-onMounted(() => {
-  // Always emit initialization complete
-  emit('initialization-complete');
+// Load initial content from backend
+onMounted(async () => {
+  isLoading.value = true;
+  console.log('Attempting to load content for ticket', props.ticketId, 'from URL:', `${API_BASE_URL}/collaboration/article/ticket-${props.ticketId}`);
+  try {
+    const response = await axios.get(`${API_BASE_URL}/collaboration/article/ticket-${props.ticketId}`);
+    console.log('Response received:', response);
+    if (response.data.content) {
+      content.value = response.data.content;
+      console.log('Loaded initial content for ticket', props.ticketId, 'Content length:', content.value.length);
+    } else {
+      console.log('No initial content found for ticket', props.ticketId);
+      content.value = '';
+    }
+  } catch (error: any) {
+    console.error('Error loading initial content for ticket', props.ticketId, ':', error);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received:', error.request);
+    } else {
+      console.error('Error setting up request:', error.message);
+    }
+    content.value = '';
+  } finally {
+    isLoading.value = false;
+    emit('initialization-complete');
+    console.log('Initialization complete for ticket', props.ticketId);
+  }
 });
 
 // Handle expand to full page editor
@@ -43,32 +69,37 @@ const handleExpand = () => {
   });
 };
 
-// SIMPLIFIED: Just update local content, don't sync to server or parent
-const handleContentChange = (newValue: string) => {
+// Save content to backend on update
+const handleContentChange = async (newValue: string) => {
   content.value = newValue;
-  // Don't emit updates to parent
-};
-
-// Disable watching initialContent changes
-/* 
-watch(() => props.initialContent, (newValue) => {
-  // Only update if different to avoid loops
-  if (newValue !== content.value) {
-    content.value = newValue || '';
+  console.log('Attempting to save content for ticket', props.ticketId, 'Content length:', newValue.length);
+  try {
+    const response = await axios.post(`${API_BASE_URL}/collaboration/sync`, {
+      doc_id: `ticket-${props.ticketId}`,
+      content: newValue
+    });
+    console.log('Content saved successfully for ticket', props.ticketId, 'Response:', response.data);
+  } catch (error: any) {
+    console.error('Error saving content for ticket', props.ticketId, ':', error);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    } else if (error.request) {
+      console.error('No response received:', error.request);
+    } else {
+      console.error('Error setting up request:', error.message);
+    }
   }
-}, { immediate: true });
-*/
+};
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-2xl p-2 shadow-lg">
-    <div class="text-lg font-medium text-slate-100 p-4 py-2 flex justify-between items-center">
-      <div class="flex items-center gap-4">
-        <span>Ticket Notes</span>
-      </div>
+  <div class="bg-slate-800 rounded-2xl p-2 pt-3 shadow-lg flex flex-col gap-2 w-full h-auto">
+    <div class="text-lg font-medium text-slate-100 px-2 flex justify-between items-center">
+      <h2 class="text-lg font-medium text-slate-100 px-2">Ticket Notes</h2>
       <button
         @click="handleExpand"
-        class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+        class="p-1.5 py-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
         title="Open full editor"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -76,16 +107,16 @@ watch(() => props.initialContent, (newValue) => {
         </svg>
       </button>
     </div>
-    <div v-if="isLoading" class="p-4 flex justify-center items-center">
+    <div v-if="isLoading" class="p-4 flex flex-grow justify-center items-center">
       <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
     </div>
-    <div v-else>
+    <div v-else class="flex-grow flex w-full">
       <CollaborativeEditor
         v-model="content"
         :doc-id="`ticket-${ticketId}`"
-        :is-binary-update="false"
-        placeholder="Enter ticket notes here..."
+        :is-binary-update="true"
         @update:model-value="handleContentChange"
+        class="flex-grow w-full"
       />
     </div>
   </div>
@@ -94,5 +125,8 @@ watch(() => props.initialContent, (newValue) => {
 <style scoped>
 .editor-wrapper {
   position: relative;
+  height: auto;
+  width: 100%;
+  overflow: visible;
 }
 </style> 

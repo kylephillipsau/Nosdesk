@@ -347,7 +347,7 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
           <div
             v-for="device in sortedDevices"
             :key="device.id"
-            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-2"
+            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-1"
             @click="navigateToDevice(device.id)"
           >
             <div class="flex items-center p-3 w-10 flex-shrink-0">

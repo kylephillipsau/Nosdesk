@@ -134,7 +134,7 @@ const removeProject = async (event: Event, projectId: number) => {
           v-for="project in projects"
           @click="openProject(project.id)" 
           :key="project.id"
-          class="bg-slate-800 rounded-lg p-6 group relative hover:bg-slate-700 transition-colors cursor-pointerno"
+          class="bg-slate-800 rounded-lg p-4 group relative hover:bg-slate-700 transition-colors cursor-pointerno"
         >
           <div class="flex flex-col gap-2">
             <div class="flex items-start justify-between">

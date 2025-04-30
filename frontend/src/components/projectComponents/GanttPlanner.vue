@@ -202,10 +202,10 @@ const isSameDay = (date: Date, today: Date) => {
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
     </div>
     
-    <div v-else class="flex-1 flex flex-col">
+    <div v-else class="flex-1 flex flex-col gap-2">
       <!-- Controls -->
       <div class="flex items-center justify-between mb-2 bg-slate-800 p-2 rounded-lg">
-        <div class="flex items-center space-x-1">
+        <div class="flex items-center gap-2">
           <button 
             @click="setTimeScale('day')" 
             class="px-2 py-0.5 text-xs rounded-md transition-colors"
@@ -229,7 +229,7 @@ const isSameDay = (date: Date, today: Date) => {
           </button>
         </div>
         
-        <div class="flex items-center space-x-1">
+        <div class="flex items-center space-x-1 gap-2">
           <button 
             @click="moveRangeLeft" 
             class="p-1 bg-slate-700 text-slate-300 rounded-md hover:bg-slate-600 transition-colors"
@@ -482,7 +482,6 @@ const isSameDay = (date: Date, today: Date) => {
   border-right: 1px solid #334155; /* slate-700 */
   position: sticky;
   left: 0;
-  background-color: #1e293b; /* slate-800 */
   z-index: 5;
   transition: background-color 0.15s ease;
 }

@@ -326,8 +326,8 @@ const handleDrop = (event: DragEvent) => {
 </script>
 
 <template>
-  <div class="flex flex-col bg-slate-800 rounded-2xl p-4 gap-2 shadow-lg h-fit">
-    <h2 class="text-lg font-medium text-slate-100">Comments and Attachments</h2>
+  <div class="flex flex-col bg-slate-800 rounded-2xl p-2 pt-3 gap-3 shadow-lg h-fit">
+    <h2 class="text-lg font-medium text-slate-100 px-2">Comments and Attachments</h2>
 
     <!-- Add New Comment Form -->
     <div
@@ -499,7 +499,7 @@ const handleDrop = (event: DragEvent) => {
     </div>
 
     <!-- List of Comments -->
-    <div class="flex flex-col gap-2 space-y-3">
+    <div class="flex flex-col gap-3 space-y-3">
       <div
         v-for="comment in props.comments"
         :key="comment.id"
@@ -510,7 +510,7 @@ const handleDrop = (event: DragEvent) => {
             <UserAvatar
               :name="comment.user?.uuid || comment.user_uuid"
               :showName="false"
-              size="sm"
+              size="md"
             />
             <div class="flex flex-col flex-grow">
               <p class="text-slate-200">{{ comment.content }}</p>
@@ -537,7 +537,7 @@ const handleDrop = (event: DragEvent) => {
         </div>
         <div
           v-if="comment.attachments && comment.attachments.length > 0"
-          class="flex flex-wrap gap-3"
+          class="flex items-center justify-center flex-wrap gap-3 bg-slate-800/50 rounded-lg p-2"
         >
           <AttachmentPreview
             v-for="(attachment, index) in comment.attachments"

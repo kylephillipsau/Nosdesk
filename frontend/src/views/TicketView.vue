@@ -927,7 +927,7 @@ const navigateToDeviceView = (deviceId: number) => {
         />
       </div>
       
-      <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
+      <div class="flex flex-col gap-3 px-6 py-3 mx-auto w-full max-w-8xl">
         <!-- Grid Container -->
         <div class="grid-container">
           <!-- Details (TicketDetails and DeviceDetails) -->
@@ -1100,32 +1100,43 @@ const navigateToDeviceView = (deviceId: number) => {
 .grid-container {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: auto;
+  grid-template-rows: auto auto 1fr;
   grid-template-areas: "details" "article" "comments";
   gap: 1rem;
+  min-height: calc(100vh - 140px); /* Changed from height to min-height */
 
-  @media (min-width: 1024px) {
-    grid-template-columns: repeat(2, 1fr);
+  @media (min-width: 1280px) {
+    grid-template-columns: minmax(400px, 1fr) minmax(0, 2fr);
+    grid-template-rows: auto 1fr; /* Add explicit rows */
     grid-template-areas:
       "details article"
-      "details comments";
+      "comments article";
   }
 
-  @media (min-width: 1536px) {
-    grid-template-columns: repeat(3, 1fr);
+  @media (min-width: 1860px) {
+    grid-template-columns: minmax(400px, 1fr) minmax(0, 2fr) minmax(400px, 1fr);
+    grid-template-rows: 1fr; /* Single row at large screens */
     grid-template-areas: "details article comments";
   }
 }
 
 .details-area {
   grid-area: details;
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 .article-area {
   grid-area: article;
+  display: flex;
+  flex-direction: column;
+  overflow: visible; /* Allow content to be fully visible */
+  min-height: fit-content; /* Let it grow based on content */
 }
 
 .comments-area {
   grid-area: comments;
+  max-height: 100%;
+  overflow-y: auto;
 }
 </style>

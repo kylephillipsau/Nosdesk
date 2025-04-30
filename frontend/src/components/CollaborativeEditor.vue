@@ -34,7 +34,6 @@ import {
 } from "prosemirror-schema-list";
 import "prosemirror-view/style/prosemirror.css";
 import { Schema } from "prosemirror-model";
-import { Plugin, PluginKey } from "prosemirror-state";
 
 // Import individual components instead of exampleSetup
 import { baseKeymap } from "prosemirror-commands";
@@ -52,13 +51,11 @@ import {
 // Props
 interface Props {
   docId: string;
-  placeholder?: string;
   modelValue?: string;
   isBinaryUpdate?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  placeholder: "Start typing...",
   modelValue: "",
   isBinaryUpdate: false,
 });
@@ -220,6 +217,104 @@ const initEditor = async () => {
 
     // 4. Get the XML fragment and initialize ProseMirror document
     yXmlFragment = ydoc.getXmlFragment("prosemirror");
+    
+    // Check if we have initial content from props.modelValue
+    if (props.modelValue) {
+      if (props.isBinaryUpdate) {
+        try {
+          // Check if the content looks like base64 (contains only valid base64 characters)
+          let base64String = props.modelValue.trim();
+          const isBase64 = /^[A-Za-z0-9+/=]+$/.test(base64String);
+          if (isBase64) {
+            // Add padding if necessary
+            const paddingNeeded = (4 - (base64String.length % 4)) % 4;
+            base64String += '='.repeat(paddingNeeded);
+            log.info("Sanitized base64 string length:", base64String.length, "Original length:", props.modelValue.length);
+            log.debug("Base64 content preview:", base64String.substring(0, 50) + (base64String.length > 50 ? "..." : ""));
+            const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0));
+            Y.applyUpdate(ydoc, binaryData);
+            log.info("Applied initial binary content to Yjs document", binaryData.length);
+            log.info("Loaded latest binary content from backend on initialization");
+          } else {
+            log.warn("Content does not appear to be valid base64, treating as JSON");
+            // Try to parse as JSON if it's not base64
+            const parsedDoc = JSON.parse(props.modelValue);
+            const newDoc = schema.nodeFromJSON(parsedDoc);
+            if (newDoc) {
+              const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
+              if (tr) editorView?.dispatch(tr);
+              log.info("Applied initial JSON content to editor");
+              log.info("Loaded latest JSON content from backend on initialization");
+            } else {
+              log.error("Failed to parse content as JSON");
+              if (yXmlFragment.toString() === "") {
+                const emptyParagraph = new Y.XmlElement("paragraph");
+                yXmlFragment.insert(0, [emptyParagraph]);
+                log.info("Added empty paragraph to empty document after failed content parse");
+              }
+            }
+          }
+        } catch (error) {
+          log.error("Error applying initial binary content:", error);
+          log.error("Base64 content causing error (first 100 chars):", props.modelValue.substring(0, 100) + (props.modelValue.length > 100 ? "..." : ""));
+          // Try to parse as JSON as a fallback
+          try {
+            const parsedDoc = JSON.parse(props.modelValue);
+            const newDoc = schema.nodeFromJSON(parsedDoc);
+            if (newDoc) {
+              const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
+              if (tr) editorView?.dispatch(tr);
+              log.info("Applied initial JSON content to editor as fallback");
+              log.info("Loaded latest JSON content from backend on initialization as fallback");
+            } else {
+              if (yXmlFragment.toString() === "") {
+                const emptyParagraph = new Y.XmlElement("paragraph");
+                yXmlFragment.insert(0, [emptyParagraph]);
+                log.info("Added empty paragraph to empty document after failed JSON parse");
+              }
+            }
+          } catch (jsonError) {
+            log.error("Error parsing content as JSON:", jsonError);
+            if (yXmlFragment.toString() === "") {
+              const emptyParagraph = new Y.XmlElement("paragraph");
+              yXmlFragment.insert(0, [emptyParagraph]);
+              log.info("Added empty paragraph to empty document after failed binary and JSON parse");
+            }
+          }
+        }
+      } else {
+        // Handle as JSON directly
+        try {
+          const parsedDoc = JSON.parse(props.modelValue);
+          const newDoc = schema.nodeFromJSON(parsedDoc);
+          if (newDoc) {
+            const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
+            if (tr) editorView?.dispatch(tr);
+            log.info("Applied initial JSON content to editor");
+            log.info("Loaded latest JSON content from backend on initialization");
+          } else {
+            if (yXmlFragment.toString() === "") {
+              const emptyParagraph = new Y.XmlElement("paragraph");
+              yXmlFragment.insert(0, [emptyParagraph]);
+              log.info("Added empty paragraph to empty document after failed JSON parse");
+            }
+          }
+        } catch (error) {
+          log.error("Error applying initial JSON content:", error);
+          if (yXmlFragment.toString() === "") {
+            const emptyParagraph = new Y.XmlElement("paragraph");
+            yXmlFragment.insert(0, [emptyParagraph]);
+            log.info("Added empty paragraph to empty document after failed JSON parse");
+          }
+        }
+      }
+    } else if (yXmlFragment.toString() === "") {
+      // Only add empty paragraph if no content is loaded
+      const emptyParagraph = new Y.XmlElement("paragraph");
+      yXmlFragment.insert(0, [emptyParagraph]);
+      log.info("Added empty paragraph to empty document");
+    }
+    
     const { doc, meta } = initProseMirrorDoc(yXmlFragment, schema);
 
     // 5. Create the editor view - following the exact pattern in the official demo
@@ -235,6 +330,8 @@ const initEditor = async () => {
             "Mod-z": undo,
             "Mod-y": redo,
             "Mod-Shift-z": redo,
+            "Mod-b": toggleMark(schema.marks.strong),
+            "Mod-i": toggleMark(schema.marks.em),
           }),
           // Add list handling keymap - this is crucial for proper list behavior
           keymap(createListKeymap(schema)),
@@ -246,6 +343,21 @@ const initEditor = async () => {
         ],
       }),
     });
+
+    // Ensure the editor view is updated with the latest content
+    if (props.modelValue && !props.isBinaryUpdate) {
+      try {
+        const parsedDoc = JSON.parse(props.modelValue);
+        const newDoc = schema.nodeFromJSON(parsedDoc);
+        if (newDoc) {
+          const tr = editorView.state.tr.replaceWith(0, editorView.state.doc.content.size, newDoc.content);
+          editorView.dispatch(tr);
+          log.info("Re-applied initial JSON content to ensure rendering");
+        }
+      } catch (error) {
+        log.error("Error re-applying content to ensure rendering:", error);
+      }
+    }
 
     // 6. Set up connection status handler
     provider.on(
@@ -577,7 +689,18 @@ const updateState = (newState: EditorState) => {
 watch(
   () => props.modelValue,
   (newValue, oldValue) => {
-    if (newValue !== oldValue && editorView && !props.isBinaryUpdate) {
+    if (newValue !== oldValue && editorView && props.isBinaryUpdate) {
+      try {
+        // Handle binary update for Yjs document
+        if (newValue && ydoc) {
+          const binaryData = Uint8Array.from(atob(newValue), c => c.charCodeAt(0));
+          Y.applyUpdate(ydoc, binaryData);
+          log.debug('Applied binary update to Yjs document');
+        }
+      } catch (error) {
+        log.error('Error applying binary content update:', error);
+      }
+    } else if (newValue !== oldValue && editorView && !props.isBinaryUpdate) {
       try {
         // Only update if JSON is valid and the editor is already initialized
         const parsedDoc = JSON.parse(newValue);
@@ -591,10 +714,10 @@ watch(
             newDoc.content
           );
           editorView.dispatch(tr);
-          log.debug("Applied updated content from model");
+          log.debug('Applied updated content from model');
         }
       } catch (error) {
-        log.error("Error applying content update:", error);
+        log.error('Error applying content update:', error);
       }
     }
   }
@@ -695,16 +818,58 @@ declare global {
   }
 }
 
+// Function to save document state as binary
+const saveBinaryState = () => {
+  if (!ydoc) return null;
+  const update = Y.encodeStateAsUpdate(ydoc);
+  const base64String = btoa(String.fromCharCode.apply(null, Array.from(update)));
+  emit('update:modelValue', base64String);
+  log.debug('Saved binary state to model');
+  return base64String;
+};
+
+// Auto-save functionality
+const autoSaveInterval = ref<number | null>(null);
+const AUTO_SAVE_INTERVAL_MS = 30000; // Save every 30 seconds
+
+const startAutoSave = () => {
+  // Auto-save removed as backend handles saving
+  log.info('Auto-save not started as backend handles saving');
+};
+
+const stopAutoSave = () => {
+  if (autoSaveInterval.value !== null) {
+    clearInterval(autoSaveInterval.value);
+    autoSaveInterval.value = null;
+    log.info('Stopped auto-save interval');
+  }
+};
+
+// Save on page unload
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  // Keep minimal fallback save on page unload
+  saveBinaryState();
+  log.info('Saved document state before page unload as fallback');
+  log.warn('Frontend fallback save triggered due to page unload - backend save may not have occurred');
+  // Optionally, you can prompt the user if there are unsaved changes
+  // event.preventDefault();
+  // event.returnValue = '';
+};
+
 onMounted(() => {
   initEditor();
   document.addEventListener("mousedown", handleClickOutside);
   document.addEventListener("keydown", handleKeydown);
+  startAutoSave();
+  window.addEventListener("beforeunload", handleBeforeUnload);
 });
 
 onBeforeUnmount(() => {
   cleanup();
   document.removeEventListener("mousedown", handleClickOutside);
   document.removeEventListener("keydown", handleKeydown);
+  stopAutoSave();
+  window.removeEventListener("beforeunload", handleBeforeUnload);
 });
 </script>
 
@@ -1073,7 +1238,6 @@ onBeforeUnmount(() => {
       ref="editorElement"
       @click="focusEditor"
       class="editor-container"
-      :data-placeholder="placeholder"
     ></div>
   </div>
 </template>
@@ -1085,7 +1249,7 @@ onBeforeUnmount(() => {
   border: 1px solid #374151;
   border-radius: 0.375rem;
   overflow: hidden;
-  background-color: #1e293b;
+  background-color: #202C41;
   height: 100%;
   width: 100%;
   position: relative;
@@ -1170,21 +1334,57 @@ onBeforeUnmount(() => {
 }
 
 .editor-container {
-  padding: 1rem;
-  background-color: #212c42;
-  color: #e2e8f0;
-  min-height: 250px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  background-color: #202C41;
+  border-radius: 0.5rem;
+  color: #f8fafc;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  min-height: 200px;
+  height: auto;
+  overflow: visible;
+  width: 100%;
 }
 
 .ProseMirror {
   outline: none;
+  padding: 1rem;
   min-height: 200px;
-  height: 100%;
-  flex: 1;
-  position: relative;
+  height: auto;
+  overflow: visible;
+  width: 100%;
+}
+
+/* Ensures the content doesn't overflow the container */
+.editor-wrapper {
+  height: auto;
+  min-height: 200px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+/* Style for the editor container when active and there are users connected */
+.collaboration-active {
+  border: 1px solid #4f46e5;
+  border-radius: 0.5rem;
+}
+
+/* Ensure toolbar doesn't restrict editor content */
+.editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #1e293b;
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  border-bottom: 1px solid #334155;
+  padding: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
 }
 
 .ProseMirror p {
@@ -1296,12 +1496,23 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
+.ProseMirror strong {
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.ProseMirror em {
+  font-style: italic;
+  color: #e2e8f0;
+}
+
 .ProseMirror .yRemoteSelection {
   position: absolute;
   border-left: 2px solid;
   border-right: 2px solid;
   pointer-events: none;
   opacity: 0.5;
+  background-color: rgba(59, 130, 246, 0.2); /* Add a subtle background for selection */
 }
 
 .ProseMirror .yRemoteSelectionHead {
@@ -1422,45 +1633,5 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   z-index: 10;
-}
-
-/* this is a rough fix for the first cursor position when the first paragraph is empty */
-.ProseMirror > .ProseMirror-yjs-cursor:first-child,
-.ProseMirror > .y-prosemirror-cursor:first-child,
-.ProseMirror > .yRemoteSelection:first-child {
-  margin-top: 16px;
-}
-
-.ProseMirror p:first-child,
-.ProseMirror h1:first-child,
-.ProseMirror h2:first-child,
-.ProseMirror h3:first-child,
-.ProseMirror h4:first-child,
-.ProseMirror h5:first-child,
-.ProseMirror h6:first-child {
-  margin-top: 16px;
-}
-
-/* Handle empty document state */
-.ProseMirror:empty::before {
-  content: attr(data-placeholder);
-  color: #64748b;
-  pointer-events: none;
-  display: block;
-  margin-top: 16px;
-}
-
-/* Ensure cursor has proper position in empty document */
-.ProseMirror:empty + .ProseMirror-yjs-cursor,
-.ProseMirror:empty + .y-prosemirror-cursor,
-.ProseMirror:empty + .yRemoteSelection {
-  margin-top: 16px;
-}
-
-/* this is a rough fix for the first cursor position when the first paragraph is empty */
-.ProseMirror > .ProseMirror-yjs-cursor:first-child,
-.ProseMirror > .y-prosemirror-cursor:first-child,
-.ProseMirror > .yRemoteSelection:first-child {
-  margin-top: 16px;
 }
 </style>
