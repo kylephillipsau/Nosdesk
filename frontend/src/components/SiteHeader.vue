@@ -338,7 +338,7 @@ defineExpose({
               <UserAvatar
                 :name="user.name"
                 :avatar="user.avatar"
-                size="md" 
+                size="xl" 
                 :showName="false"
                 :clickable="false"
               />
