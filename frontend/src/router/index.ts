@@ -248,6 +248,36 @@ const router = createRouter({
       }
     },
     {
+      path: '/admin/data-import',
+      name: 'admin-data-import',
+      component: () => import('../views/DataImportView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Data Import',
+        adminRequired: true
+      }
+    },
+    {
+      path: '/admin/data-import/microsoft-graph',
+      name: 'admin-microsoft-graph',
+      component: () => import('../views/MicrosoftGraphView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Microsoft Graph Connection',
+        adminRequired: true
+      }
+    },
+    {
+      path: '/admin/data-import/csv',
+      name: 'admin-csv-import',
+      component: () => import('../views/CsvImportView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'CSV Import',
+        adminRequired: true
+      }
+    },
+    {
       path: '/auth/microsoft/callback',
       name: 'microsoft-callback',
       component: () => import('../views/auth/MicrosoftCallbackView.vue'),
