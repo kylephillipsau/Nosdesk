@@ -1,6 +1,6 @@
 <!-- Modal.vue -->
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 defineProps<{
   show: boolean;
@@ -14,36 +14,49 @@ const emit = defineEmits<{
   (e: 'close'): void;
 }>()
 
+// Refs for DOM elements
+const backdropRef = ref<HTMLElement | null>(null)
+const modalContentRef = ref<HTMLElement | null>(null)
+
 const handleEscape = (e: KeyboardEvent) => {
   if (e.key === 'Escape') {
     emit('close')
   }
 }
 
+// Standard Vue approach for closing on backdrop click
+const handleClick = (e: MouseEvent) => {
+  // Only close if clicked on backdrop directly (not inside the modal content)
+  // We use the element references to check this directly
+  if (backdropRef.value && e.target instanceof Node && backdropRef.value.contains(e.target) && 
+      modalContentRef.value && !modalContentRef.value.contains(e.target)) {
+    emit('close')
+  }
+}
+
 onMounted(() => {
   document.addEventListener('keydown', handleEscape)
+  // Add click listener to document to ensure proper event capture
+  document.addEventListener('click', handleClick)
 })
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEscape)
+  document.removeEventListener('click', handleClick)
 })
 </script>
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="show"
-      class="fixed inset-0 z-[9999] overflow-y-auto"
-      @click="emit('close')"
-    >
-      <!-- Backdrop -->
-      <div class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999]"></div>
+    <div v-if="show" class="fixed inset-0 z-[9999] overflow-y-auto">
+      <!-- Backdrop - no click handler here -->
+      <div ref="backdropRef" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9999]"></div>
 
       <!-- Modal -->
       <div class="flex min-h-full items-center justify-center p-4">
         <div
+          ref="modalContentRef"
           :class="['relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl z-[10000]', contentClass]"
-          @click.stop
         >
           <!-- Header -->
           <div :class="['flex items-center justify-between p-4 border-b border-slate-700', headerClass]">
