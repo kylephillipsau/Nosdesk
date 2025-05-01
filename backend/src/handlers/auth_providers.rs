@@ -5,6 +5,7 @@ use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use urlencoding;
 use querystring;
+use serde::Deserialize;
 
 use crate::db::{Pool, DbConnection};
 use crate::handlers::auth::{validate_token_internal, JWT_SECRET};
@@ -15,6 +16,13 @@ use crate::models::{
 };
 use crate::repository::auth_providers as auth_provider_repo;
 use crate::repository::user_auth_identities;
+
+// Structure for OAuth logout requests
+#[derive(Deserialize, Debug)]
+pub struct OAuthLogoutRequest {
+    pub provider_type: String,
+    pub redirect_uri: String,
+}
 
 // Get all authentication providers (admin only)
 pub async fn get_auth_providers(
@@ -850,6 +858,83 @@ pub async fn oauth_callback(
         HttpResponse::BadRequest().json(json!({
             "status": "error",
             "message": format!("{} authentication callback is not implemented", provider.name)
+        }))
+    }
+}
+
+// Handle OAuth logout request
+pub async fn oauth_logout(
+    db_pool: web::Data<Pool>,
+    logout_request: web::Json<OAuthLogoutRequest>,
+) -> impl Responder {
+    // Get database connection
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    let provider_type = &logout_request.provider_type;
+    
+    // Get the provider by type
+    let provider = match auth_provider_repo::get_provider_by_type(provider_type, &mut conn) {
+        Ok(p) => {
+            if !p.enabled {
+                return HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "message": format!("{} authentication is not enabled", p.name)
+                }));
+            }
+            p
+        },
+        Err(e) => {
+            if let diesel::result::Error::NotFound = e {
+                return HttpResponse::NotFound().json(json!({
+                    "status": "error",
+                    "message": format!("{} authentication provider not found", provider_type)
+                }));
+            } else {
+                eprintln!("Error getting auth provider {}: {:?}", provider_type, e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to retrieve authentication provider"
+                }));
+            }
+        }
+    };
+
+    // For Microsoft Entra, generate the logout URL
+    if provider.provider_type == "microsoft" {
+        // Get the tenant ID from provider configuration
+        let tenant_id = match auth_provider_repo::get_provider_config(provider.id, "tenant_id", &mut conn) {
+            Ok(config) => config.config_value,
+            Err(e) => {
+                eprintln!("Error getting tenant_id for Microsoft provider: {:?}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Microsoft authentication is not properly configured"
+                }));
+            }
+        };
+        
+        // URL encode the redirect URI
+        let encoded_redirect = urlencoding::encode(&logout_request.redirect_uri);
+        
+        // Create the logout URL
+        let logout_url = format!(
+            "https://login.microsoftonline.com/{}/oauth2/v2.0/logout?post_logout_redirect_uri={}",
+            tenant_id, encoded_redirect
+        );
+        
+        HttpResponse::Ok().json(json!({
+            "logout_url": logout_url
+        }))
+    } else {
+        HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": format!("{} logout is not implemented", provider.name)
         }))
     }
 }

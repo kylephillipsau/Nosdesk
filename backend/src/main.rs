@@ -107,6 +107,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
                     .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
+                    .route("/auth/oauth/logout", web::post().to(handlers::oauth_logout))
                     // For Microsoft OAuth Callback
                     .route("/auth/microsoft/callback", web::get().to(handlers::oauth_callback))
                     
