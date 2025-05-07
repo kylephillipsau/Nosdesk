@@ -11,7 +11,6 @@ import UserProfileView from '../views/UserProfileView.vue'
 import DocumentationPageView from '@/views/DocumentationPageView.vue'
 import ProfileSettingsView from '@/views/ProfileSettingsView.vue'
 import PDFViewerView from '@/views/PDFViewerView.vue'
-import TestEditor from '../components/TestEditor.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -216,15 +215,6 @@ const router = createRouter({
       component: ProfileSettingsView,
       meta: {
         requiresAuth: true
-      }
-    },
-    {
-      path: '/test-editor',
-      name: 'test-editor',
-      component: TestEditor,
-      meta: {
-        requiresAuth: false,
-        title: 'Test Editor'
       }
     },
     {

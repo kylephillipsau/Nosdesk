@@ -95,7 +95,7 @@ const handleMicrosoftLogout = async () => {
     <div class="flex flex-col gap-4 w-full max-w-md p-8">
       <!-- Logo/Brand -->
       <div class="flex flex-col gap-2 items-center">
-        <img :src="logo" alt="Nosdesk Logo" class="px-8" />
+        <img :src="logo" alt="Nosdesk Logo" class="px-4" />
         <p class="text-slate-400 mt-2">Sign in to your account</p>
       </div>
 

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import axios from 'axios';
 import BackButton from '@/components/common/BackButton.vue';
 import Modal from '@/components/Modal.vue';
+import MicrosoftConfigView from '@/views/MicrosoftConfigView.vue';
 
 // Define types for our data structures
 interface ProviderConfig {
@@ -13,7 +14,7 @@ interface ProviderConfig {
 }
 
 interface Provider {
-  id: string;
+  id: number;
   name: string;
   provider_type: string;
   enabled: boolean;
@@ -116,24 +117,20 @@ const createProvider = async () => {
 // Open configuration modal for a provider
 const configureProvider = (provider: Provider) => {
   selectedProvider.value = provider;
-  
-  // Initialize form values from provider config
-  if (provider.provider_type === 'microsoft') {
-    const configs = provider.configs || [];
-    
-    clientId.value = configs.find((c) => c.key === 'client_id')?.value || '';
-    tenantId.value = configs.find((c) => c.key === 'tenant_id')?.value || '';
-    clientSecret.value = ''; // We don't store or display secrets
-    redirectUri.value = configs.find((c) => c.key === 'redirect_uri')?.value || 
-      `${window.location.origin}/auth/microsoft/callback`;
-  }
-  
   showConfigModal.value = true;
 };
 
 // Close configuration modal
 const closeConfigModal = () => {
   showConfigModal.value = false;
+  selectedProvider.value = null;
+};
+
+// Handle Microsoft configuration completion
+const handleMicrosoftConfigured = async () => {
+  showConfigModal.value = false;
+  selectedProvider.value = null;
+  await loadProviders();
 };
 
 // Close add provider modal
@@ -150,12 +147,9 @@ const saveProviderConfig = async () => {
   
   try {
     // Create config request based on provider type
-    const configRequest: {
-      provider_id: string;
-      configs: ProviderConfig[];
-    } = {
+    const configRequest = {
       provider_id: selectedProvider.value.id,
-      configs: []
+      configs: [] as ProviderConfig[]
     };
     
     if (selectedProvider.value.provider_type === 'microsoft') {
@@ -176,7 +170,7 @@ const saveProviderConfig = async () => {
     }
     
     // Send configuration to backend
-    await axios.post(`/api/auth/providers/config`, configRequest);
+    await axios.post('/api/auth/providers/config', configRequest);
     
     // Close the modal and reload providers
     showConfigModal.value = false;
@@ -195,7 +189,7 @@ const saveProviderConfig = async () => {
 // Set a provider as default
 const setAsDefault = async (provider: Provider) => {
   try {
-    await axios.post(`/api/auth/providers/default`, { provider_id: provider.id });
+    await axios.post('/api/auth/providers/default', { provider_id: provider.id });
     
     // Update the UI
     await loadProviders();
@@ -443,78 +437,16 @@ onMounted(() => {
     <Modal
       :show="showConfigModal"
       :title="`Configure ${selectedProvider?.name}`"
-      contentClass="max-w-lg"
+      contentClass="max-w-6xl"
       @close="closeConfigModal"
     >
-      <div v-if="selectedProvider?.provider_type === 'microsoft'" class="flex flex-col gap-2">
-        <div>
-          <label class="block text-sm font-medium text-slate-300 mb-1">
-            Client ID
-          </label>
-          <input 
-            v-model="clientId"
-            type="text"
-            class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-            placeholder="Enter client ID"
-          />
-        </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-slate-300 mb-1">
-            Tenant ID
-          </label>
-          <input 
-            v-model="tenantId"
-            type="text"
-            class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-            placeholder="Enter tenant ID"
-          />
-        </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-slate-300 mb-1">
-            Client Secret
-          </label>
-          <input 
-            v-model="clientSecret"
-            type="password"
-            class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-            placeholder="Enter new client secret (leave empty to keep existing)"
-          />
-          <p class="text-xs text-slate-400 mt-1">
-            Only enter a value if you want to change the existing secret
-          </p>
-        </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-slate-300 mb-1">
-            Redirect URI
-          </label>
-          <input 
-            v-model="redirectUri"
-            type="text"
-            class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-            placeholder="Callback URL for authentication"
-          />
-        </div>
-      </div>
-      
-      <div class="flex justify-end gap-3 pt-3">
-        <button 
-          @click="closeConfigModal"
-          class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
-        >
-          Cancel
-        </button>
-        <button 
-          @click="saveProviderConfig"
-          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          :disabled="isLoading"
-        >
-          <span v-if="isLoading">Saving...</span>
-          <span v-else>Save Configuration</span>
-        </button>
-      </div>
+      <MicrosoftConfigView
+        v-if="selectedProvider?.provider_type === 'microsoft'"
+        mode="auth"
+        :providerId="Number(selectedProvider?.id)"
+        :showBackButton="false"
+        @configured="handleMicrosoftConfigured"
+      />
     </Modal>
   </div>
 </template>

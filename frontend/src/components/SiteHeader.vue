@@ -250,7 +250,7 @@ defineExpose({
         >
           <template v-if="isTicketView && props.ticket">
             <div class="flex items-center gap-2 min-w-0">
-              <TicketIdentifier :ticketId="props.ticket.id" size="lg" class="flex-shrink-0" />
+              <TicketIdentifier :ticketId="props.ticket.id" size="md" class="flex-shrink-0" />
               <HeaderTitle
                 :initialTitle="props.ticket.title"
                 :placeholder-text="'Enter ticket title...'"
