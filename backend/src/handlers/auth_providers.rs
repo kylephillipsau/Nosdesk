@@ -1410,4 +1410,155 @@ pub async fn oauth_connect(
             "message": format!("{} authentication is not implemented", provider.name)
         }))
     }
+}
+
+// Test Microsoft Entra configuration
+pub async fn test_microsoft_config(
+    db_pool: web::Data<Pool>,
+    auth: BearerAuth,
+    path: web::Path<i32>,
+) -> impl Responder {
+    // Get database connection
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Validate the token and get admin info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Check if the user is an admin
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Only administrators can test authentication providers"
+        }));
+    }
+
+    let provider_id = path.into_inner();
+
+    // Get the provider
+    let provider = match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
+        Ok(p) => {
+            if p.provider_type != "microsoft" {
+                return HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "message": "This endpoint only supports testing Microsoft Entra configuration"
+                }));
+            }
+            p
+        },
+        Err(e) => {
+            if let diesel::result::Error::NotFound = e {
+                return HttpResponse::NotFound().json(json!({
+                    "status": "error",
+                    "message": "Authentication provider not found"
+                }));
+            } else {
+                eprintln!("Error getting auth provider {}: {:?}", provider_id, e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to retrieve authentication provider"
+                }));
+            }
+        }
+    };
+
+    // Get required configuration values
+    let client_id = match auth_provider_repo::get_provider_config(provider.id, "client_id", &mut conn) {
+        Ok(config) => config.config_value,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Missing client_id configuration"
+        })),
+    };
+
+    let tenant_id = match auth_provider_repo::get_provider_config(provider.id, "tenant_id", &mut conn) {
+        Ok(config) => config.config_value,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Missing tenant_id configuration"
+        })),
+    };
+
+    let client_secret = match auth_provider_repo::get_provider_config(provider.id, "client_secret", &mut conn) {
+        Ok(config) => config.config_value,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Missing client_secret configuration"
+        })),
+    };
+
+    let redirect_uri = match auth_provider_repo::get_provider_config(provider.id, "redirect_uri", &mut conn) {
+        Ok(config) => config.config_value,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Missing redirect_uri configuration"
+        })),
+    };
+
+    // Test the configuration by attempting to get an access token
+    let params = [
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
+        ("grant_type", "client_credentials"),
+        ("scope", "https://graph.microsoft.com/.default"),
+    ];
+
+    // Make the token request
+    let client = reqwest::Client::new();
+    match client
+        .post(format!("https://login.microsoftonline.com/{}/oauth2/v2.0/token", tenant_id))
+        .form(&params)
+        .send()
+        .await
+    {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(token_response) => {
+                    if token_response.get("access_token").is_some() {
+                        HttpResponse::Ok().json(json!({
+                            "status": "success",
+                            "message": "Microsoft Entra configuration is valid",
+                            "details": {
+                                "client_id_valid": true,
+                                "tenant_id_valid": true,
+                                "client_secret_valid": true,
+                                "redirect_uri_configured": true
+                            }
+                        }))
+                    } else {
+                        HttpResponse::BadRequest().json(json!({
+                            "status": "error",
+                            "message": "Invalid configuration",
+                            "details": token_response.get("error_description").and_then(|v| v.as_str()).unwrap_or("Unknown error")
+                        }))
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error parsing token response: {:?}", e);
+                    HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to parse Microsoft authentication response"
+                    }))
+                }
+            }
+        },
+        Err(e) => {
+            eprintln!("Error testing Microsoft configuration: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to test Microsoft configuration"
+            }))
+        }
+    }
 } 
