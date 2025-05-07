@@ -105,6 +105,7 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
                     .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
                     .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
+                    .route("/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
                     .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
                     .route("/auth/oauth/logout", web::post().to(handlers::oauth_logout))
