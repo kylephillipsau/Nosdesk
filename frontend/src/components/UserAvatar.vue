@@ -45,7 +45,7 @@ const sharedUsers = {
 interface Props {
   name: string;
   showName?: boolean;
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'full';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
   avatar?: string | null;
   clickable?: boolean;
 }
@@ -228,6 +228,11 @@ const sizeClasses = computed(() => {
       base: 'h-[2.25rem] w-[2.25rem]', // 36px at default font size
       text: 'text-sm',
       responsive: 'sm:h-[2.5rem] sm:w-[2.5rem]' // 40px on small screens
+    },
+    xl: {
+      base: 'h-[3.75rem] w-[3.75rem]', // 60px at default font size
+      text: 'text-sm',
+      responsive: 'sm:h-[3.5rem] sm:w-[3.5rem]' // 56px on small screens
     },
     full: {
       base: 'w-full h-full min-w-full min-h-full', // Full size with minimum dimensions

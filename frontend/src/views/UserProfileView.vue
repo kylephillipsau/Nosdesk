@@ -158,7 +158,7 @@ onMounted(() => {
             <div class="bg-slate-800 rounded-2xl overflow-hidden">
               <!-- Cover/Banner Image -->
               <div 
-                class="h-32 bg-gradient-to-r from-blue-600 to-purple-600 relative"
+                class="h-42 bg-gradient-to-r from-blue-600 to-purple-600 relative"
                 :style="userProfile.banner_url ? `background-image: url('${userProfile.banner_url}'); background-size: cover; background-position: center;` : ''"
               >
               </div>
@@ -166,7 +166,7 @@ onMounted(() => {
               <!-- Profile Content -->
               <div class="px-6 pt-16 pb-6 relative">
                 <!-- Avatar that overlaps the banner -->
-                <div class="absolute -top-12 left-6 w-24 h-24 rounded-full overflow-hidden border-4 border-slate-800">
+                <div class="absolute -top-16 left-6 w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800">
                   <UserAvatar
                     :name="userProfile.name"
                     size="full"

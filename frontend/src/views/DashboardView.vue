@@ -16,7 +16,7 @@ const getGreeting = () => {
     morning: [
       { message: "Good morning, {0}.", weight: 1 },
       { message: "Morning, {0}.", weight: 1 },
-      { message: "Hello {0}, hope you have a nice day.", weight: 1 }
+      { message: "Hey {0}, hope you're having a nice day.", weight: 1 }
     ],
     afternoon: [
       { message: "Good afternoon, {0}.", weight: 1 },
