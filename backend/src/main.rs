@@ -3,6 +3,7 @@ mod handlers;
 mod models;
 mod repository;
 mod schema;
+mod config_utils;
 
 use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
@@ -26,7 +27,6 @@ async fn main() -> std::io::Result<()> {
         eprintln!("ERROR: JWT_SECRET environment variable must be set");
         eprintln!("Generate a secure key with: openssl rand -base64 32");
         eprintln!("Add it to your .env file or environment variables");
-        eprintln!("See README-SECURITY.md for more information");
         eprintln!("================================================\n");
         std::process::exit(1);
     } else {
@@ -105,10 +105,33 @@ async fn main() -> std::io::Result<()> {
                     .route("/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
                     .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
                     .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
+                    .route("/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
                     .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
+                    .route("/auth/oauth/logout", web::post().to(handlers::oauth_logout))
+                    // Microsoft Graph API endpoint
+                    .route("/auth/microsoft/graph", web::post().to(handlers::process_graph_request))
                     // For Microsoft OAuth Callback
                     .route("/auth/microsoft/callback", web::get().to(handlers::oauth_callback))
+                    
+                    // Microsoft Graph API endpoints in dedicated section
+                    .service(
+                        web::scope("/msgraph")
+                            .route("/request", web::post().to(handlers::process_graph_request))
+                            .route("/users", web::get().to(handlers::get_graph_users))
+                            .route("/devices", web::get().to(handlers::get_graph_devices))
+                            .route("/groups", web::get().to(handlers::get_graph_groups))
+                            .route("/directory-objects", web::get().to(handlers::get_graph_directory_objects))
+                    )
+                    
+                    // Microsoft Graph Integration endpoints
+                    .service(
+                        web::scope("/integrations/graph")
+                            .route("/status", web::get().to(handlers::get_connection_status))
+                            .route("/test", web::post().to(handlers::test_connection))
+                            .route("/sync", web::post().to(handlers::sync_data))
+                            .route("/sync-photos", web::post().to(handlers::sync_profile_photos))
+                    )
                     
                     // File upload endpoint
                     .route("/upload", web::post().to(handlers::upload_files))

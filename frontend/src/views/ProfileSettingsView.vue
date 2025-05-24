@@ -56,6 +56,17 @@ const emailModified = computed(() =>
   formData.value.email !== originalData.value.email && formData.value.email.trim() !== ''
 );
 
+// Check if user already has a Microsoft account connected
+const hasMicrosoftAccount = computed(() => 
+  authIdentities.value.some(identity => identity.provider_type === 'microsoft')
+);
+
+// Check if pronouns have been modified
+const pronounsModified = computed(() => {
+  const originalPronouns = authStore.user?.pronouns || '';
+  return formData.value.pronouns !== originalPronouns && formData.value.pronouns !== undefined;
+});
+
 // Update form data when user data changes
 watch(() => authStore.user, (newUserData) => {
   if (newUserData) {
@@ -772,7 +783,7 @@ onMounted(async () => {
           <div class="bg-slate-800 rounded-2xl overflow-hidden">
             <!-- Cover/Banner Image -->
             <div 
-              class="h-32 bg-gradient-to-r from-blue-600 to-purple-600 relative"
+              class="h-42 bg-gradient-to-r from-blue-600 to-purple-600 relative"
               :style="formData.banner_url ? `background-image: url('${formData.banner_url}'); background-size: cover; background-position: center;` : ''"
             >
               <!-- Add cover image upload option -->
@@ -796,10 +807,10 @@ onMounted(async () => {
             </div>
             
             <!-- Profile Content -->
-            <div class="px-6 pt-16 pb-6 relative">
+            <div class="px-6 pt-20 pb-6 relative">
               <!-- Avatar that overlaps the banner -->
               <div 
-                class="absolute -top-12 left-6 w-24 h-24 rounded-full overflow-hidden border-4 border-slate-800 cursor-pointer"
+                class="absolute -top-16 left-8 w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800 cursor-pointer shadow-lg"
                 @click="handleAvatarClick"
               >
                 <UserAvatar
@@ -814,10 +825,11 @@ onMounted(async () => {
                 <!-- Hover Overlay -->
                 <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                   <div class="text-white flex flex-col items-center gap-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
+                    <span class="text-xs">Change Photo</span>
                   </div>
                 </div>
                 <!-- Hidden file input -->
@@ -831,7 +843,7 @@ onMounted(async () => {
               </div>
               
               <!-- User info section -->
-              <div class="flex justify-between items-start mb-6">
+              <div class="flex justify-between items-start mb-8">
                 <div class="flex flex-col gap-2">
                   <!-- Role badges section -->
                   <div class="flex gap-2 mb-3">
@@ -840,34 +852,6 @@ onMounted(async () => {
                     </div>
                     <div v-if="authStore.isAdmin" class="px-3 py-1 bg-red-600/20 text-red-400 rounded-full text-sm font-medium">
                       Admin
-                    </div>
-                  </div>
-                  
-                  <!-- Pronouns field -->
-                  <div class="mt-2 text-sm text-slate-400 flex items-center gap-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    <div class="flex items-start gap-2 w-full mt-1">
-                      <input
-                        v-model="formData.pronouns"
-                        type="text"
-                        class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
-                        placeholder="Add pronouns (e.g., he/him, she/her, they/them)"
-                      />
-                      <button
-                        @click="updatePronouns"
-                        :disabled="loading"
-                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center text-sm"
-                      >
-                        <span v-if="loading" class="animate-spin h-4 w-4 mr-2">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                        </span>
-                        Save
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -891,6 +875,32 @@ onMounted(async () => {
                       class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
                     >
                       <span v-if="loading && nameModified" class="animate-spin h-4 w-4 mr-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      </span>
+                      Save
+                    </button>
+                  </div>
+                </div>
+                
+                <!-- Pronouns field -->
+                <div>
+                  <h3 class="text-sm font-medium text-slate-400 mb-2">Pronouns</h3>
+                  <div class="flex items-start gap-2 w-full">
+                    <input
+                      v-model="formData.pronouns"
+                      type="text"
+                      class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      placeholder="Add pronouns (e.g., he/him, she/her, they/them)"
+                    />
+                    <button
+                      @click="updatePronouns"
+                      :disabled="!pronounsModified || loading"
+                      class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
+                    >
+                      <span v-if="loading && pronounsModified" class="animate-spin h-4 w-4 mr-2">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -1082,6 +1092,7 @@ onMounted(async () => {
             <!-- Add Authentication Method Button -->
             <div class="mt-4">
               <button 
+                v-if="!hasMicrosoftAccount"
                 @click="connectMicrosoftAccount" 
                 class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors w-full justify-center disabled:bg-blue-800 disabled:cursor-not-allowed"
                 :disabled="loadingIdentities"

@@ -65,6 +65,29 @@ const handleMicrosoftLogin = async () => {
     isLoading.value = false;
   }
 };
+
+const handleMicrosoftLogout = async () => {
+  try {
+    errorMessage.value = '';
+    
+    // Get the sign-out URL from backend
+    const response = await axios.post('/api/auth/oauth/logout', {
+      provider_type: 'microsoft',
+      redirect_uri: window.location.href
+    });
+    
+    // Redirect to Microsoft logout page
+    if (response.data && response.data.logout_url) {
+      window.location.href = response.data.logout_url;
+    } else {
+      throw new Error('Invalid logout URL received');
+    }
+  } catch (error: any) {
+    console.error('Error logging out of Microsoft:', error);
+    errorMessage.value = error.response?.data?.message || 
+                        'Failed to initiate Microsoft logout';
+  }
+};
 </script>
 
 <template>
@@ -72,7 +95,7 @@ const handleMicrosoftLogin = async () => {
     <div class="flex flex-col gap-4 w-full max-w-md p-8">
       <!-- Logo/Brand -->
       <div class="flex flex-col gap-2 items-center">
-        <img :src="logo" alt="Nosdesk Logo" class="px-8" />
+        <img :src="logo" alt="Nosdesk Logo" class="px-4" />
         <p class="text-slate-400 mt-2">Sign in to your account</p>
       </div>
 
@@ -136,19 +159,32 @@ const handleMicrosoftLogin = async () => {
           <div class="border-t border-slate-700 flex-grow"></div>
         </div>
         
-        <button
-          type="button"
-          @click="handleMicrosoftLogin"
-          class="w-full flex gap-1 justify-center items-center py-2 px-4 border border-slate-600 rounded-lg shadow-sm text-sm font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 focus:ring-offset-slate-900"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21" class="mr-2">
-            <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-            <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-            <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-            <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-          </svg>
-          Sign in with Microsoft Entra
-        </button>
+        <div class="flex gap-2">
+          <button
+            type="button"
+            @click="handleMicrosoftLogin"
+            class="flex-1 flex gap-1 justify-center items-center py-2 px-4 border border-slate-600 rounded-lg shadow-sm text-sm font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 focus:ring-offset-slate-900"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21" class="mr-2">
+              <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+              <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+              <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+              <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+            </svg>
+            Sign in with Microsoft Entra
+          </button>
+          
+          <button
+            type="button"
+            @click="handleMicrosoftLogout"
+            title="Sign out of Microsoft account"
+            class="p-2 border border-slate-600 rounded-lg text-slate-400 bg-slate-800 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500 focus:ring-offset-slate-900"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd" />
+            </svg>
+          </button>
+        </div>
       </form>
     </div>
   </div>
