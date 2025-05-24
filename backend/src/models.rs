@@ -1026,28 +1026,6 @@ pub struct AuthProviderUpdate {
     pub updated_at: Option<NaiveDateTime>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable, Associations)]
-#[diesel(table_name = crate::schema::auth_provider_configs)]
-#[diesel(belongs_to(AuthProvider))]
-pub struct AuthProviderConfig {
-    pub id: i32,
-    pub auth_provider_id: i32,
-    pub config_key: String,
-    pub config_value: String,
-    pub is_secret: bool,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = crate::schema::auth_provider_configs)]
-pub struct NewAuthProviderConfig {
-    pub auth_provider_id: i32,
-    pub config_key: String,
-    pub config_value: String,
-    pub is_secret: bool,
-}
-
 // Request models for authentication
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthProviderConfigRequest {
