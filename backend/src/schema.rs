@@ -38,19 +38,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    auth_provider_configs (id) {
-        id -> Int4,
-        auth_provider_id -> Int4,
-        #[max_length = 255]
-        config_key -> Varchar,
-        config_value -> Text,
-        is_secret -> Bool,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
     auth_providers (id) {
         id -> Int4,
         #[max_length = 50]
@@ -220,7 +207,6 @@ diesel::table! {
 
 diesel::joinable!(article_contents -> tickets (ticket_id));
 diesel::joinable!(attachments -> comments (comment_id));
-diesel::joinable!(auth_provider_configs -> auth_providers (auth_provider_id));
 diesel::joinable!(comments -> tickets (ticket_id));
 diesel::joinable!(devices -> tickets (ticket_id));
 diesel::joinable!(documentation_pages -> tickets (ticket_id));
@@ -232,7 +218,6 @@ diesel::joinable!(user_auth_identities -> users (user_id));
 diesel::allow_tables_to_appear_in_same_query!(
     article_contents,
     attachments,
-    auth_provider_configs,
     auth_providers,
     comments,
     devices,

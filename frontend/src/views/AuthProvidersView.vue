@@ -116,8 +116,13 @@ const createProvider = async () => {
 
 // Open configuration modal for a provider
 const configureProvider = (provider: Provider) => {
-  selectedProvider.value = provider;
-  showConfigModal.value = true;
+  if (provider.provider_type === 'microsoft') {
+    router.push(`/admin/microsoft-config/${provider.id}?mode=auth`);
+  } else {
+    // For other provider types, still use the modal
+    selectedProvider.value = provider;
+    showConfigModal.value = true;
+  }
 };
 
 // Close configuration modal
@@ -276,12 +281,12 @@ onMounted(() => {
 <template>
   <div class="flex-1">
     <!-- Navigation and actions bar -->
-    <div class="pt-4 px-6 flex justify-between items-center">
+    <div class="pt-6 px-8 flex justify-between items-center">
       <BackButton fallbackRoute="/admin/settings" label="Back to Administration" />
     </div>
     
-    <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
-      <div class="mb-6">
+    <div class="flex flex-col gap-4 px-8 py-6 mx-auto w-full max-w-6xl">
+      <div class="mb-8">
         <h1 class="text-2xl font-bold text-white">Authentication Providers</h1>
         <p class="text-slate-400 mt-2">
           Configure and manage login methods for your organization
@@ -291,24 +296,34 @@ onMounted(() => {
       <!-- Success message -->
       <div 
         v-if="successMessage" 
-        class="p-4 bg-green-900/50 text-green-400 rounded-lg border border-green-700"
+        class="p-4 bg-green-900/30 text-green-400 rounded-lg border border-green-700/50 mb-4 flex items-start"
       >
-        {{ successMessage }}
+        <div class="mr-3 mt-0.5 text-green-400 flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <div>{{ successMessage }}</div>
       </div>
       
       <!-- Error message -->
       <div 
         v-if="errorMessage" 
-        class="p-4 bg-red-900/50 text-red-400 rounded-lg border border-red-700"
+        class="p-4 bg-red-900/30 text-red-400 rounded-lg border border-red-700/50 mb-4 flex items-start"
       >
-        {{ errorMessage }}
+        <div class="mr-3 mt-0.5 text-red-400 flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <div>{{ errorMessage }}</div>
       </div>
       
       <!-- Add Provider Button -->
-      <div class="flex justify-end mb-4">
+      <div class="flex justify-end mb-6">
         <button 
           @click="showAddProviderModal = true"
-          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+          class="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -331,32 +346,38 @@ onMounted(() => {
       <!-- Provider list -->
       <div v-else class="flex flex-col gap-4">
         <div v-for="provider in providers" :key="provider.id" 
-             class="bg-slate-800 p-6 rounded-lg border border-slate-700 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+             class="bg-slate-800 p-6 rounded-lg border border-slate-700 flex flex-col md:flex-row md:items-center md:justify-between gap-4 transition-all hover:bg-slate-800/80">
           
           <div class="flex items-start gap-4">
             <!-- Provider icon -->
-            <div class="flex-shrink-0 h-10 w-10 rounded-md bg-blue-600/20 flex items-center justify-center text-blue-400" v-html="getProviderIcon(provider.provider_type)"></div>
+            <div class="flex-shrink-0 h-12 w-12 rounded-md bg-blue-600/20 flex items-center justify-center text-blue-400" v-html="getProviderIcon(provider.provider_type)"></div>
             
             <!-- Provider name and status -->
             <div>
-              <div class="flex items-center">
+              <div class="flex items-center gap-1">
                 <span class="font-medium text-lg text-white">{{ provider.name }}</span>
                 <span v-if="provider.is_default" 
                       class="ml-2 px-2 py-0.5 text-xs bg-blue-900/50 text-blue-200 rounded-full border border-blue-700">
                   Default
                 </span>
+                <span 
+                  class="ml-2 px-2 py-0.5 text-xs rounded-full border" 
+                  :class="provider.enabled ? 'bg-green-900/50 text-green-200 border-green-700' : 'bg-red-900/50 text-red-200 border-red-700'"
+                >
+                  {{ provider.enabled ? 'Enabled' : 'Disabled' }}
+                </span>
               </div>
-              <div class="text-sm text-slate-400">
-                {{ provider.enabled ? 'Enabled' : 'Disabled' }}
+              <div class="text-sm text-slate-400 mt-1">
+                {{ provider.provider_type === 'microsoft' ? 'Microsoft Entra ID Single Sign-On' : 'Authentication Provider' }}
               </div>
             </div>
           </div>
           
           <!-- Provider actions -->
-          <div class="flex flex-wrap gap-2">
+          <div class="flex flex-wrap gap-2 ml-auto">
             <button 
               @click="toggleProvider(provider)"
-              class="px-3 py-1 rounded-md text-sm"
+              class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
               :class="provider.enabled ? 'bg-red-900/50 text-red-200 hover:bg-red-800/50 border border-red-700' : 'bg-green-900/50 text-green-200 hover:bg-green-800/50 border border-green-700'"
             >
               {{ provider.enabled ? 'Disable' : 'Enable' }}
@@ -364,7 +385,7 @@ onMounted(() => {
             
             <button 
               @click="configureProvider(provider)"
-              class="px-3 py-1 bg-slate-700 text-slate-200 rounded-md text-sm hover:bg-slate-600 border border-slate-600"
+              class="px-3 py-1.5 bg-slate-700 text-slate-200 rounded-md text-sm hover:bg-slate-600 border border-slate-600 font-medium transition-colors"
             >
               Configure
             </button>
@@ -372,7 +393,7 @@ onMounted(() => {
             <button 
               v-if="provider.enabled && !provider.is_default"
               @click="setAsDefault(provider)"
-              class="px-3 py-1 bg-blue-900/50 text-blue-200 rounded-md text-sm hover:bg-blue-800/50 border border-blue-700"
+              class="px-3 py-1.5 bg-blue-900/50 text-blue-200 rounded-md text-sm hover:bg-blue-800/50 border border-blue-700 font-medium transition-colors"
             >
               Set as Default
             </button>
@@ -380,15 +401,21 @@ onMounted(() => {
             <button 
               v-if="provider.enabled"
               @click="testAuthProvider(provider)"
-              class="px-3 py-1 bg-purple-900/50 text-purple-200 rounded-md text-sm hover:bg-purple-800/50 border border-purple-700"
+              class="px-3 py-1.5 bg-purple-900/50 text-purple-200 rounded-md text-sm hover:bg-purple-800/50 border border-purple-700 font-medium transition-colors"
             >
               Test
             </button>
           </div>
         </div>
         
-        <div v-if="providers.length === 0 && !isLoading" class="text-center py-8 text-slate-400 bg-slate-800 rounded-lg border border-slate-700 p-6">
-          No authentication providers found
+        <div v-if="providers.length === 0 && !isLoading" class="text-center py-12 text-slate-400 bg-slate-800 rounded-lg border border-slate-700 p-6">
+          <div class="flex justify-center mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <p class="text-lg font-medium">No authentication providers found</p>
+          <p class="mt-2 text-slate-500">Click the "Add Authentication Provider" button to get started</p>
         </div>
       </div>
     </div>
@@ -400,31 +427,41 @@ onMounted(() => {
       contentClass="max-w-lg"
       @close="closeAddProviderModal"
     >
-      <div class="space-y-4">
+      <div class="p-4 space-y-6">
         <div>
-          <label class="block text-sm font-medium text-slate-300 mb-1">
+          <label class="block text-sm font-medium text-slate-300 mb-2">
             Provider Type
           </label>
           <select 
             v-model="newProviderType"
-            class="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white focus:outline-none focus:border-blue-500"
+            class="w-full px-3 py-2.5 bg-slate-700/50 border border-slate-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 transition-colors"
           >
             <option value="microsoft">Microsoft Entra</option>
             <!-- Add more provider types as needed -->
           </select>
         </div>
+        
+        <div class="pt-4 border-t border-slate-700">
+          <div class="flex items-start">
+            <div class="flex-shrink-0 h-10 w-10 rounded-md bg-blue-600/20 flex items-center justify-center text-blue-400 mr-3" v-html="getProviderIcon(newProviderType)"></div>
+            <div>
+              <p class="text-sm text-white font-medium">{{ newProviderType === 'microsoft' ? 'Microsoft Entra ID' : 'Authentication Provider' }}</p>
+              <p class="text-xs text-slate-400 mt-1">{{ newProviderType === 'microsoft' ? 'Allow users to sign in with their Microsoft Entra ID accounts' : 'Configure authentication provider settings' }}</p>
+            </div>
+          </div>
+        </div>
       </div>
       
-      <div class="flex justify-end gap-3 mt-6">
+      <div class="flex justify-end gap-3 px-4 pb-4 mt-6">
         <button 
           @click="closeAddProviderModal"
-          class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
+          class="px-4 py-2.5 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600 transition-colors"
         >
           Cancel
         </button>
         <button 
           @click="createProvider"
-          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          class="px-4 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
           :disabled="isLoading"
         >
           <span v-if="isLoading">Creating...</span>
@@ -437,16 +474,14 @@ onMounted(() => {
     <Modal
       :show="showConfigModal"
       :title="`Configure ${selectedProvider?.name}`"
-      contentClass="max-w-6xl"
+      contentClass="max-w-4xl"
       @close="closeConfigModal"
     >
-      <MicrosoftConfigView
-        v-if="selectedProvider?.provider_type === 'microsoft'"
-        mode="auth"
-        :providerId="Number(selectedProvider?.id)"
-        :showBackButton="false"
-        @configured="handleMicrosoftConfigured"
-      />
+      <!-- Only show for non-Microsoft providers now -->
+      <div v-if="selectedProvider && selectedProvider.provider_type !== 'microsoft'">
+        <!-- Configuration UI for other provider types -->
+        <p class="text-slate-300 p-4">Configuration for {{ selectedProvider.name }} is not yet implemented.</p>
+      </div>
     </Modal>
   </div>
 </template>

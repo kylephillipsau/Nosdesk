@@ -14,6 +14,10 @@ const lastSync = ref<string | null>(null);
 const errorMessage = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const isLoading = ref(false);
+const configurationStatus = ref<any>(null);
+const graphApiResults = ref<any>(null);
+const permissionTestResults = ref<any>(null);
+const syncResults = ref<any>(null);
 
 // Connection details
 const graphConfig = ref({
@@ -50,7 +54,6 @@ const availableEntities = [
 // Modals
 const showConfigModal = ref(false);
 const showSyncModal = ref(false);
-const showImportCredentialsModal = ref(false);
 
 const router = useRouter();
 
@@ -80,71 +83,12 @@ const fetchMicrosoftAuthProvider = async () => {
   }
 };
 
-// Import credentials from Microsoft Entra auth provider
-const importCredentialsFromAuthProvider = async () => {
-  isLoading.value = true;
-  errorMessage.value = null;
-
-  try {
-    // First check if we have a Microsoft Auth Provider
-    const microsoftProvider = await fetchMicrosoftAuthProvider();
-
-    if (!microsoftProvider) {
-      errorMessage.value = "No configured Microsoft Entra provider found";
-      return;
-    }
-
-    // Get the configs for this provider
-    if (microsoftProvider.configs && Array.isArray(microsoftProvider.configs)) {
-      // Extract client ID and tenant ID
-      const clientIdConfig = microsoftProvider.configs.find(
-        (c: { key: string; value: string }) => c.key === "client_id"
-      );
-      const tenantIdConfig = microsoftProvider.configs.find(
-        (c: { key: string; value: string }) => c.key === "tenant_id"
-      );
-
-      if (clientIdConfig && tenantIdConfig) {
-        // Update our graph config
-        graphConfig.value.clientId = clientIdConfig.value;
-        graphConfig.value.tenantId = tenantIdConfig.value;
-
-        // Client secret won't be returned for security reasons
-        graphConfig.value.clientSecret = "";
-
-        successMessage.value =
-          "Successfully imported Microsoft Entra credentials";
-        setTimeout(() => {
-          successMessage.value = null;
-        }, 3000);
-
-        // Close the modal if it's open
-        showImportCredentialsModal.value = false;
-
-        // Save the imported configuration
-        await saveConfiguration();
-      } else {
-        errorMessage.value =
-          "Microsoft Entra provider is missing required configuration";
-      }
-    } else {
-      errorMessage.value = "Microsoft Entra provider has no configuration";
-    }
-  } catch (error: any) {
-    console.error("Failed to import credentials:", error);
-    errorMessage.value =
-      error.response?.data?.message || "Failed to import credentials";
-  } finally {
-    isLoading.value = false;
-  }
-};
-
 // Fetch current connection status
 const fetchConnectionStatus = async () => {
   isLoading.value = true;
 
   try {
-    // This is a placeholder - replace with actual API endpoint
+    // Use the real Microsoft Graph integration endpoint
     const response = await axios.get("/api/integrations/graph/status");
     connectionStatus.value = response.data.status;
 
@@ -179,44 +123,13 @@ const fetchConnectionStatus = async () => {
 
 // Configure connection
 const configureConnection = () => {
-  showConfigModal.value = true;
-};
-
-// Show import credentials modal
-const showImportCredentials = () => {
-  showImportCredentialsModal.value = true;
-};
-
-// Save connection configuration
-const saveConfiguration = async () => {
-  isLoading.value = true;
-  errorMessage.value = null;
-
-  try {
-    // This is a placeholder - replace with actual API endpoint
-    await axios.post("/api/integrations/graph/configure", {
-      client_id: graphConfig.value.clientId,
-      tenant_id: graphConfig.value.tenantId,
-      client_secret: graphConfig.value.clientSecret,
-      scopes: graphConfig.value.scopes.join(" "),
-    });
-
-    showConfigModal.value = false;
-
-    // Show success message
-    successMessage.value = "Configuration saved successfully";
+  if (microsoftAuthProviderId.value) {
+    router.push(`/admin/microsoft-config/${microsoftAuthProviderId.value}?mode=graph`);
+  } else {
+    errorMessage.value = "No Microsoft Auth Provider found. Please set one up first.";
     setTimeout(() => {
-      successMessage.value = null;
+      errorMessage.value = null;
     }, 3000);
-
-    // Refresh connection status
-    await fetchConnectionStatus();
-  } catch (error: any) {
-    console.error("Failed to save configuration:", error);
-    errorMessage.value =
-      error.response?.data?.message || "Failed to save configuration";
-  } finally {
-    isLoading.value = false;
   }
 };
 
@@ -226,12 +139,12 @@ const testConnection = async () => {
   errorMessage.value = null;
 
   try {
-    // This is a placeholder - replace with actual API endpoint
+    // Use the real Microsoft Graph integration endpoint
     const response = await axios.post("/api/integrations/graph/test");
 
     if (response.data.success) {
       connectionStatus.value = "connected";
-      successMessage.value = "Connection tested successfully";
+      successMessage.value = response.data.message || "Connection tested successfully";
     } else {
       connectionStatus.value = "error";
       errorMessage.value = response.data.message || "Connection test failed";
@@ -255,13 +168,58 @@ const syncData = () => {
   showSyncModal.value = true;
 };
 
+// Sync profile photos
+const syncProfilePhotos = async () => {
+  isLoading.value = true;
+  errorMessage.value = null;
+  syncResults.value = null;
+
+  try {
+    const response = await axios.post("/api/integrations/graph/sync-photos");
+
+    if (response.data.success) {
+      successMessage.value = response.data.message || "Profile photos synced successfully";
+      
+      // Store detailed sync results
+      syncResults.value = {
+        success: true,
+        message: response.data.message,
+        results: [{
+          entity: "profile_photos",
+          processed: response.data.photos_synced,
+          total: response.data.total_users,
+          status: response.data.photos_failed > 0 ? "completed_with_errors" : "completed",
+          errors: response.data.errors || []
+        }],
+        total_processed: response.data.photos_synced,
+        total_errors: response.data.photos_failed
+      };
+      
+      console.log("Profile photo sync results:", response.data);
+    } else {
+      errorMessage.value = response.data.message || "Failed to sync profile photos";
+    }
+
+    setTimeout(() => {
+      successMessage.value = null;
+    }, 5000);
+  } catch (error: any) {
+    console.error("Failed to sync profile photos:", error);
+    errorMessage.value =
+      error.response?.data?.message || "Failed to sync profile photos";
+  } finally {
+    isLoading.value = false;
+  }
+};
+
 // Start sync process
 const startSync = async () => {
   isLoading.value = true;
   errorMessage.value = null;
+  syncResults.value = null; // Clear previous results
 
   try {
-    // This is a placeholder - replace with actual API endpoint
+    // Use the real Microsoft Graph integration endpoint
     const response = await axios.post("/api/integrations/graph/sync", {
       entities: selectedEntities.value,
     });
@@ -269,15 +227,25 @@ const startSync = async () => {
     showSyncModal.value = false;
 
     if (response.data.success) {
-      successMessage.value = "Sync started successfully";
+      successMessage.value = response.data.message || "Sync completed successfully";
       lastSync.value = new Date().toLocaleString();
+      
+      // Store detailed sync results
+      syncResults.value = response.data;
+      
+      // Log sync details for debugging
+      console.log("Sync results:", response.data);
     } else {
       errorMessage.value = response.data.message || "Failed to start sync";
+      // Store failed sync results too for debugging
+      if (response.data.results) {
+        syncResults.value = response.data;
+      }
     }
 
     setTimeout(() => {
       successMessage.value = null;
-    }, 3000);
+    }, 5000); // Show success message longer for sync operations
   } catch (error: any) {
     console.error("Failed to start sync:", error);
     errorMessage.value =
@@ -377,52 +345,19 @@ onMounted(() => {
         {{ errorMessage }}
       </div>
 
-      <!-- Microsoft Auth Provider info message -->
-      <div
-        v-if="microsoftAuthProviderFound"
-        class="p-4 bg-blue-900/50 text-blue-400 rounded-lg border border-blue-700 flex items-start gap-2"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-5 w-5 flex-shrink-0 mt-0.5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-        <div>
-          <p>
-            Microsoft Entra authentication provider is configured. You can
-            <button
-              @click="showImportCredentials"
-              class="text-blue-300 underline hover:text-blue-200"
-            >
-              import these credentials
-            </button>
-            to use with Microsoft Graph.
-          </p>
-        </div>
-      </div>
-
       <!-- Connection status card -->
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-4">
         <div
           class="flex flex-col md:flex-row md:justify-between md:items-center gap-4"
         >
-          <div>
+          <div class="flex flex-col gap-1">
             <h2 class="text-xl font-medium text-white mb-2">
               Connection Status
             </h2>
             <div class="flex items-center">
               <span
                 :class="[
-                  'px-3 py-1 rounded-full text-sm inline-flex items-center border',
+                  'px-3 py-1 rounded-full text-sm inline-flex items-center border gap-1',
                   getStatusDisplay(connectionStatus).class,
                 ]"
               >
@@ -459,7 +394,13 @@ onMounted(() => {
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="2"
-                  d="M12 8a4 4 0 100 8 4 4 0 000-8zm0 0v-1.5a2 2 0 012-2h1.5l.5 1.5c.3.9.8 1.7 1.5 2.3l1.2-.5 1 1.7-1.2.9c.2.7.2 1.4 0 2.1l1.2.9-1 1.7-1.2-.5c-.7.6-1.2 1.4-1.5 2.3l-.5 1.5h-1.5a2 2 0 01-2-2v-1.5a6 6 0 00-2.3-1.5l-.9 1.2-1.7-1 1-.9a4 4 0 010-2.1l-1-.9 1-1.7.9 1.2a6 6 0 002.3-1.5l.5-1.5h1.5a2 2 0 012 2z"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
                 />
               </svg>
               Configure
@@ -508,21 +449,47 @@ onMounted(() => {
               </svg>
               Sync Data
             </button>
+
+            <button
+              @click="syncProfilePhotos"
+              class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+              :disabled="connectionStatus !== 'connected' || isLoading"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="h-4 w-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                />
+              </svg>
+              Sync Profile Photos (64x64)
+            </button>
           </div>
         </div>
       </div>
 
       <!-- Available entities -->
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-6">
-        <h2 class="text-xl font-medium text-white mb-4">
-          Available Data Entities
-        </h2>
-        <p class="text-slate-400 mb-4">
-          These are the data entities that can be imported from Microsoft Graph
-          API
-        </p>
+      <div
+        class="flex flex-col gap-2 bg-slate-800 border border-slate-700 rounded-lg p-6"
+      >
+        <div>
+          <h2 class="text-xl font-medium text-white mb-4">
+            Available Data Entities
+          </h2>
+          <p class="text-slate-400 mb-4">
+            These are the data entities that can be imported from Microsoft
+            Graph API
+          </p>
+        </div>
 
-        <div class="space-y-4">
+        <div class="flex flex-col gap-4">
           <div
             v-for="entity in availableEntities"
             :key="entity.id"
@@ -557,7 +524,8 @@ onMounted(() => {
     </div>
 
     <!-- Configure Connection Modal -->
-    <Modal
+    <!-- Remove or comment out this modal since we're using a separate page now -->
+    <!-- <Modal
       :show="showConfigModal"
       title="Configure Microsoft Graph Connection"
       contentClass="max-w-6xl"
@@ -568,91 +536,7 @@ onMounted(() => {
         :showBackButton="false"
         @configured="handleConfigured"
       />
-    </Modal>
-
-    <!-- Import Credentials Modal -->
-    <Modal
-      :show="showImportCredentialsModal"
-      title="Import Microsoft Entra Credentials"
-      contentClass="max-w-lg"
-      @close="showImportCredentialsModal = false"
-    >
-      <div class="space-y-4">
-        <p class="text-slate-300">
-          Import credentials from your configured Microsoft Entra authentication
-          provider. This will use the same app registration for Microsoft Graph
-          API.
-        </p>
-
-        <div
-          class="bg-blue-900/20 border border-blue-800/50 rounded-md p-4 text-blue-300"
-        >
-          <p class="flex items-start gap-2">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-5 w-5 flex-shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <span>
-              To use Microsoft Graph API, your app registration in Microsoft
-              Entra ID must also have the required Graph API permissions added
-              and granted.
-            </span>
-          </p>
-        </div>
-
-        <div
-          class="bg-amber-900/20 border border-amber-800/50 rounded-md p-4 text-amber-300"
-        >
-          <p class="flex items-start gap-2">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-5 w-5 flex-shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <span>
-              You will need to provide the client secret again, as it is not
-              stored in a retrievable format.
-            </span>
-          </p>
-        </div>
-      </div>
-
-      <div class="flex justify-end gap-3 mt-6">
-        <button
-          @click="showImportCredentialsModal = false"
-          class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
-        >
-          Cancel
-        </button>
-        <button
-          @click="importCredentialsFromAuthProvider"
-          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          :disabled="isLoading || !microsoftAuthProviderFound"
-        >
-          <span v-if="isLoading">Importing...</span>
-          <span v-else>Import Credentials</span>
-        </button>
-      </div>
-    </Modal>
+    </Modal> -->
 
     <!-- Sync Data Modal -->
     <Modal
@@ -712,6 +596,70 @@ onMounted(() => {
               data.
             </span>
           </p>
+        </div>
+
+        <!-- Sync Progress Results -->
+        <div 
+          v-if="syncResults" 
+          class="mt-4 p-4 bg-slate-700 rounded-lg border border-slate-600"
+        >
+          <h4 class="text-lg font-medium text-white mb-3">Sync Results</h4>
+          
+          <div class="space-y-3">
+            <div v-for="result in syncResults.results" :key="result.entity" class="p-3 rounded-md border" :class="{
+              'bg-green-900/30 border-green-700': result.status === 'completed',
+              'bg-yellow-900/30 border-yellow-700': result.status === 'completed_with_errors',
+              'bg-red-900/30 border-red-700': result.status === 'error'
+            }">
+              <div class="flex justify-between items-start">
+                <div>
+                  <h5 class="font-medium text-white capitalize">{{ result.entity }}</h5>
+                  <p class="text-sm text-slate-300">
+                    Processed {{ result.processed }} of {{ result.total }} items
+                    <span v-if="result.total > 0" class="ml-2 text-slate-400">
+                      ({{ Math.round((result.processed / result.total) * 100) }}%)
+                    </span>
+                  </p>
+                </div>
+                <div class="flex items-center">
+                  <svg v-if="result.status === 'completed'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                  </svg>
+                  <svg v-else-if="result.status === 'completed_with_errors'" class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.864-.833-2.634 0l-5.898 8.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                  </svg>
+                  <svg v-else class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                  </svg>
+                </div>
+              </div>
+              
+              <!-- Error Details -->
+              <div v-if="result.errors && result.errors.length > 0" class="mt-2">
+                <p class="text-sm font-medium text-red-300 mb-1">Errors:</p>
+                <ul class="text-sm text-red-200 space-y-1">
+                  <li v-for="error in result.errors.slice(0, 3)" :key="error" class="pl-2 border-l-2 border-red-500">
+                    {{ error }}
+                  </li>
+                  <li v-if="result.errors.length > 3" class="text-red-300 italic">
+                    ... and {{ result.errors.length - 3 }} more errors
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Overall Summary -->
+          <div class="mt-4 pt-3 border-t border-slate-600">
+            <div class="flex justify-between items-center text-sm">
+              <span class="text-slate-300">Total processed:</span>
+              <span class="font-medium text-white">{{ syncResults.total_processed }} items</span>
+            </div>
+            <div v-if="syncResults.total_errors > 0" class="flex justify-between items-center text-sm mt-1">
+              <span class="text-slate-300">Total errors:</span>
+              <span class="font-medium text-red-400">{{ syncResults.total_errors }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
