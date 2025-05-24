@@ -175,4 +175,14 @@ pub fn has_provider_identity(
         .get_result::<i64>(conn)?;
     
     Ok(count > 0)
+}
+
+// Get all identities for a specific provider
+pub fn get_identities_by_provider(
+    provider_id: i32,
+    conn: &mut DbConnection,
+) -> Result<Vec<UserAuthIdentity>, Error> {
+    user_auth_identities::table
+        .filter(user_auth_identities::auth_provider_id.eq(provider_id))
+        .load::<UserAuthIdentity>(conn)
 } 

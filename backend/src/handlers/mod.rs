@@ -8,6 +8,8 @@ pub mod projects;
 pub mod devices;
 pub mod documentation;
 pub mod auth_providers;
+pub mod microsoft_graph;
+pub mod msgraph_integration;
 
 // Import all handlers from modules
 pub use auth::*;
@@ -18,6 +20,8 @@ pub use projects::*;
 pub use devices::*;
 pub use documentation::*;
 pub use auth_providers::*;
+pub use microsoft_graph::*;
+pub use msgraph_integration::{get_connection_status, test_connection, sync_data, sync_profile_photos};
 
 // Import necessary types for placeholders
 use actix_web::{web, HttpResponse, Responder, HttpRequest};

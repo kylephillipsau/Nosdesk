@@ -405,7 +405,7 @@ const isRouteActive = (path: string, exact = false) => {
     </div>
 
     <!-- Toggle button at the bottom of sidebar -->
-    <div class="mt-auto border-t border-slate-700 p-2">
+    <div class="mt-auto border-t border-slate-700 flex flex-col justify-end">
       <button
         @click="toggleNav"
         class="w-full p-2 text-slate-300 hover:text-white hover:bg-slate-700/70 rounded-md transition-colors group flex"
