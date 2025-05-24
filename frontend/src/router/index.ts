@@ -11,7 +11,7 @@ import UserProfileView from '../views/UserProfileView.vue'
 import DocumentationPageView from '@/views/DocumentationPageView.vue'
 import ProfileSettingsView from '@/views/ProfileSettingsView.vue'
 import PDFViewerView from '@/views/PDFViewerView.vue'
-import TestEditor from '../components/TestEditor.vue'
+import MicrosoftConfigView from '@/views/MicrosoftConfigView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -219,15 +219,6 @@ const router = createRouter({
       }
     },
     {
-      path: '/test-editor',
-      name: 'test-editor',
-      component: TestEditor,
-      meta: {
-        requiresAuth: false,
-        title: 'Test Editor'
-      }
-    },
-    {
       path: '/admin/settings',
       name: 'admin-settings',
       component: () => import('../views/AdminSettingsView.vue'),
@@ -248,6 +239,36 @@ const router = createRouter({
       }
     },
     {
+      path: '/admin/data-import',
+      name: 'admin-data-import',
+      component: () => import('../views/DataImportView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Data Import',
+        adminRequired: true
+      }
+    },
+    {
+      path: '/admin/data-import/microsoft-graph',
+      name: 'admin-microsoft-graph',
+      component: () => import('../views/MicrosoftGraphView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Microsoft Graph Connection',
+        adminRequired: true
+      }
+    },
+    {
+      path: '/admin/data-import/csv',
+      name: 'admin-csv-import',
+      component: () => import('../views/CsvImportView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'CSV Import',
+        adminRequired: true
+      }
+    },
+    {
       path: '/auth/microsoft/callback',
       name: 'microsoft-callback',
       component: () => import('../views/auth/MicrosoftCallbackView.vue'),
@@ -264,6 +285,17 @@ const router = createRouter({
       meta: {
         requiresAuth: true,
         title: 'PDF Viewer'
+      }
+    },
+    {
+      path: '/admin/microsoft-config/:providerId?',
+      name: 'admin-microsoft-config',
+      component: MicrosoftConfigView,
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: 'Microsoft Entra Configuration',
+        adminRequired: true
       }
     },
     {
