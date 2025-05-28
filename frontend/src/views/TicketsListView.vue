@@ -4,6 +4,8 @@ import ticketService from "@/services/ticketService";
 import { ref, onMounted, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import BaseListView from "@/components/common/BaseListView.vue";
+import DebouncedSearchInput from "@/components/common/DebouncedSearchInput.vue";
+import PaginationControls from "@/components/common/PaginationControls.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import type { Ticket, PaginatedResponse } from "@/services/ticketService";
@@ -270,35 +272,78 @@ const handlePageSizeChange = (size: number) => {
 </script>
 
 <template>
-  <BaseListView
-    title="Tickets"
-    :search-query="searchQuery"
-    :is-loading="loading"
-    :is-empty="tickets.length === 0 && !loading"
-    :error="error"
-    :filters="filterOptions"
-    :results-count="totalItems"
-    :selected-items="selectedTickets.map(id => id.toString())"
-    :visible-items="tickets"
-    :item-id-field="'id'"
-    :enable-selection="true"
-    :sort-field="sortField"
-    :sort-direction="sortDirection"
-    :columns="columns"
-    :current-page="currentPage"
-    :total-pages="totalPages"
-    :page-size="pageSize"
-    :page-size-options="pageSizeOptions"
-    @update:search-query="value => searchQuery = value"
-    @update:filter="handleFilterUpdate"
-    @update:sort="handleSortUpdate"
-    @toggle-selection="toggleSelection"
-    @toggle-all="toggleAllTickets"
-    @reset-filters="resetFilters"
-    @retry="fetchTickets"
-    @update:current-page="handlePageChange"
-    @update:page-size="handlePageSizeChange"
-  >
+  <div class="flex flex-col h-full overflow-hidden">
+    <!-- Search and filter bar - OUTSIDE of BaseListView -->
+    <div class="sticky top-0 z-20 bg-slate-800 border-b border-slate-700 shadow-md">
+      <div class="p-2 flex items-center gap-2 flex-wrap">
+        <!-- Search input - completely isolated -->
+        <DebouncedSearchInput
+          v-model="searchQuery"
+          :placeholder="`Search tickets...`"
+        />
+
+        <!-- Filters -->
+        <template v-if="filterOptions.length > 0">
+          <div 
+            v-for="filter in filterOptions" 
+            :key="filter.name"
+            :class="[filter.width || 'w-[120px]']"
+          >
+            <select
+              :value="filter.value"
+              @change="e => handleFilterUpdate(filter.name, (e.target as HTMLSelectElement).value)"
+              class="bg-slate-700 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full py-1 px-2"
+            >
+              <option
+                v-for="option in filter.options"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Reset filters button -->
+          <button
+            @click="resetFilters"
+            class="px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800"
+          >
+            Reset
+          </button>
+        </template>
+
+        <!-- Results count -->
+        <div class="text-xs text-gray-400 ml-auto">
+          {{ totalItems }} result{{ totalItems !== 1 ? "s" : "" }}
+        </div>
+      </div>
+    </div>
+
+    <!-- List View - WITHOUT search - flex-1 to take remaining space -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <BaseListView
+      title="Tickets"
+      :search-query="''"
+      :is-loading="loading"
+      :is-empty="tickets.length === 0 && !loading"
+      :error="error"
+      :filters="[]"
+      :results-count="totalItems"
+      :selected-items="selectedTickets.map(id => id.toString())"
+      :visible-items="tickets"
+      :item-id-field="'id'"
+      :enable-selection="true"
+      :sort-field="sortField"
+      :sort-direction="sortDirection"
+      :columns="columns"
+      :show-add-button="false"
+      @update:filter="handleFilterUpdate"
+      @update:sort="handleSortUpdate"
+      @toggle-selection="toggleSelection"
+      @toggle-all="toggleAllTickets"
+      @retry="fetchTickets"
+    >
     <!-- Desktop Table View -->
     <template #default>
       <div class="min-w-[960px]">
@@ -391,6 +436,20 @@ const handlePageSizeChange = (size: number) => {
       </div>
     </template>
   </BaseListView>
+  </div>
+
+  <!-- Pagination Controls -->
+  <PaginationControls
+    :current-page="currentPage"
+    :total-pages="totalPages"
+    :page-size="pageSize"
+    :page-size-options="pageSizeOptions"
+    :show-import="true"
+    @update:current-page="handlePageChange"
+    @update:page-size="handlePageSizeChange"
+    @import="() => {}"
+  />
+  </div>
 </template>
 
 <style scoped>

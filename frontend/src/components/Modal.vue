@@ -1,14 +1,25 @@
 <!-- Modal.vue -->
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   show: boolean;
   title: string;
   contentClass?: string;
   headerClass?: string;
   removePadding?: boolean;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }>()
+
+// Compute size classes
+const sizeClasses = computed(() => {
+  switch (props.size) {
+    case 'sm': return 'max-w-md';
+    case 'lg': return 'max-w-6xl';
+    case 'xl': return 'max-w-7xl';
+    default: return 'max-w-4xl';
+  }
+})
 
 const emit = defineEmits<{
   (e: 'close'): void;
@@ -56,7 +67,7 @@ onUnmounted(() => {
       <div class="flex min-h-full items-center justify-center p-4">
         <div
           ref="modalContentRef"
-          :class="['relative bg-slate-800 rounded-xl shadow-xl w-full max-w-4xl z-[10000]', contentClass]"
+          :class="['relative bg-slate-800 rounded-xl shadow-xl w-full z-[10000]', sizeClasses, contentClass]"
         >
           <!-- Header -->
           <div :class="['flex items-center justify-between p-4 border-b border-slate-700', headerClass]">

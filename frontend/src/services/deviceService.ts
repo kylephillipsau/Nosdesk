@@ -4,6 +4,84 @@ import type { Device, DeviceFormData } from '@/types/device';
 // Define the API base URL
 const API_BASE_URL = '/api';
 
+// Request cancellation manager
+class RequestManager {
+  private activeRequests = new Map<string, AbortController>();
+
+  createRequest(key: string): AbortController {
+    // Cancel any existing request with the same key
+    this.cancelRequest(key);
+    
+    // Create new abort controller
+    const controller = new AbortController();
+    this.activeRequests.set(key, controller);
+    
+    return controller;
+  }
+
+  cancelRequest(key: string): void {
+    const controller = this.activeRequests.get(key);
+    if (controller) {
+      controller.abort();
+      this.activeRequests.delete(key);
+    }
+  }
+
+  cancelAllRequests(): void {
+    this.activeRequests.forEach(controller => controller.abort());
+    this.activeRequests.clear();
+  }
+}
+
+const requestManager = new RequestManager();
+
+// Pagination interface
+export interface PaginationParams {
+  page: number;
+  pageSize: number;
+  sortField?: string;
+  sortDirection?: 'asc' | 'desc';
+  search?: string;
+  type?: string;
+  warranty?: string;
+}
+
+// Paginated response interface
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+/**
+ * Transform backend device response to frontend Device interface
+ */
+const transformDeviceResponse = (backendDevice: any): Device => {
+  return {
+    id: backendDevice.id,
+    name: backendDevice.name,
+    hostname: backendDevice.hostname,
+    serial_number: backendDevice.serial_number,
+    model: backendDevice.model,
+    warranty_status: backendDevice.warranty_status,
+    manufacturer: backendDevice.manufacturer,
+    primary_user_uuid: backendDevice.primary_user_uuid,
+    intune_device_id: backendDevice.intune_device_id,
+    entra_device_id: backendDevice.entra_device_id,
+    created_at: backendDevice.created_at,
+    updated_at: backendDevice.updated_at,
+    primary_user: backendDevice.primary_user,
+    // Legacy fields for backward compatibility
+    type: backendDevice.manufacturer || determineDeviceType(backendDevice.model),
+    lastSeen: backendDevice.updated_at || new Date().toISOString(),
+    status: 'online', // Default status
+    assignedTo: backendDevice.primary_user?.name || null,
+    specs: getDeviceSpecs(backendDevice.model)
+  };
+};
+
 /**
  * Get all devices
  * @returns Promise<Device[]> - A promise that resolves to an array of devices
@@ -11,24 +89,41 @@ const API_BASE_URL = '/api';
 export const getDevices = async (): Promise<Device[]> => {
   try {
     const response = await axios.get(`${API_BASE_URL}/devices`);
-    
-    // Transform the backend data to match our frontend Device interface
-    return response.data.map((device: any) => ({
-      id: device.id,
-      name: device.name,
-      hostname: device.hostname,
-      serial_number: device.serial_number,
-      model: device.model,
-      warranty_status: device.warranty_status,
-      ticket_id: device.ticket_id,
-      // Add frontend-specific fields with default values
-      type: determineDeviceType(device.model),
-      lastSeen: new Date().toISOString(),
-      status: 'online',
-      assignedTo: null
-    }));
+    return response.data.map(transformDeviceResponse);
   } catch (error) {
     console.error('Error fetching devices:', error);
+    throw error;
+  }
+};
+
+// Get paginated devices
+export const getPaginatedDevices = async (params: PaginationParams, requestKey: string = 'paginated-devices'): Promise<PaginatedResponse<Device>> => {
+  try {
+    // Create cancellable request
+    const controller = requestManager.createRequest(requestKey);
+    
+    const response = await axios.get(`${API_BASE_URL}/devices/paginated`, { 
+      params,
+      signal: controller.signal 
+    });
+    
+    // Remove from active requests on success
+    requestManager.cancelRequest(requestKey);
+    
+    return {
+      data: response.data.data.map(transformDeviceResponse),
+      total: response.data.total,
+      page: response.data.page,
+      pageSize: response.data.pageSize,
+      totalPages: response.data.totalPages,
+    };
+  } catch (error: any) {
+    // Don't throw if request was cancelled
+    if (error.name === 'AbortError' || error.name === 'CanceledError') {
+      console.log('Request cancelled:', requestKey);
+      throw new Error('REQUEST_CANCELLED');
+    }
+    console.error('Error fetching paginated devices:', error);
     throw error;
   }
 };
@@ -41,24 +136,7 @@ export const getDevices = async (): Promise<Device[]> => {
 export const getDeviceById = async (id: number | string): Promise<Device> => {
   try {
     const response = await axios.get(`${API_BASE_URL}/devices/${id}`);
-    const device = response.data;
-    
-    // Transform the backend data to match our frontend Device interface
-    return {
-      id: device.id,
-      name: device.name,
-      hostname: device.hostname,
-      serial_number: device.serial_number,
-      model: device.model,
-      warranty_status: device.warranty_status,
-      ticket_id: device.ticket_id,
-      // Add frontend-specific fields with default values
-      type: determineDeviceType(device.model),
-      lastSeen: new Date().toISOString(),
-      status: 'online',
-      assignedTo: null,
-      specs: getDeviceSpecs(device.model)
-    };
+    return transformDeviceResponse(response.data);
   } catch (error) {
     console.error(`Error fetching device with ID ${id}:`, error);
     throw error;
@@ -73,27 +151,25 @@ export const getDeviceById = async (id: number | string): Promise<Device> => {
 export const getDeviceByTicketId = async (ticketId: number): Promise<Device | null> => {
   try {
     const response = await axios.get(`${API_BASE_URL}/tickets/${ticketId}/device`);
-    const device = response.data;
-    
-    // Transform the backend data to match our frontend Device interface
-    return {
-      id: device.id,
-      name: device.name,
-      hostname: device.hostname,
-      serial_number: device.serial_number,
-      model: device.model,
-      warranty_status: device.warranty_status,
-      ticket_id: device.ticket_id,
-      // Add frontend-specific fields with default values
-      type: determineDeviceType(device.model),
-      lastSeen: new Date().toISOString(),
-      status: 'online',
-      assignedTo: null,
-      specs: getDeviceSpecs(device.model)
-    };
+    return transformDeviceResponse(response.data);
   } catch (error) {
     console.error(`Error fetching device for ticket ID ${ticketId}:`, error);
     return null;
+  }
+};
+
+/**
+ * Get devices by user UUID
+ * @param userUuid - The UUID of the user
+ * @returns Promise<Device[]> - A promise that resolves to an array of devices
+ */
+export const getDevicesByUser = async (userUuid: string): Promise<Device[]> => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/users/${userUuid}/devices`);
+    return response.data.map(transformDeviceResponse);
+  } catch (error) {
+    console.error(`Error fetching devices for user ${userUuid}:`, error);
+    throw error;
   }
 };
 
@@ -105,23 +181,7 @@ export const getDeviceByTicketId = async (ticketId: number): Promise<Device | nu
 export const createDevice = async (deviceData: DeviceFormData): Promise<Device> => {
   try {
     const response = await axios.post(`${API_BASE_URL}/devices`, deviceData);
-    const device = response.data;
-    
-    // Transform the backend data to match our frontend Device interface
-    return {
-      id: device.id,
-      name: device.name,
-      hostname: device.hostname,
-      serial_number: device.serial_number,
-      model: device.model,
-      warranty_status: device.warranty_status,
-      ticket_id: device.ticket_id,
-      // Add frontend-specific fields with default values
-      type: deviceData.type || determineDeviceType(device.model),
-      lastSeen: new Date().toISOString(),
-      status: 'online',
-      assignedTo: null
-    };
+    return transformDeviceResponse(response.data);
   } catch (error) {
     console.error('Error creating device:', error);
     throw error;
@@ -136,35 +196,21 @@ export const createDevice = async (deviceData: DeviceFormData): Promise<Device> 
  */
 export const updateDevice = async (id: number, device: Partial<Device>): Promise<Device> => {
   try {
-    // Convert frontend Device to backend NewDevice
+    // Convert frontend Device to backend update format
     const backendDevice = {
       name: device.name,
       hostname: device.hostname,
       serial_number: device.serial_number,
       model: device.model,
       warranty_status: device.warranty_status,
-      ticket_id: device.ticket_id
+      manufacturer: device.manufacturer,
+      primary_user_uuid: device.primary_user_uuid,
+      intune_device_id: device.intune_device_id,
+      entra_device_id: device.entra_device_id
     };
     
     const response = await axios.put(`${API_BASE_URL}/devices/${id}`, backendDevice);
-    const updatedDevice = response.data;
-    
-    // Transform the backend data to match our frontend Device interface
-    return {
-      id: updatedDevice.id,
-      name: updatedDevice.name,
-      hostname: updatedDevice.hostname,
-      serial_number: updatedDevice.serial_number,
-      model: updatedDevice.model,
-      warranty_status: updatedDevice.warranty_status,
-      ticket_id: updatedDevice.ticket_id,
-      // Add frontend-specific fields with default values
-      type: device.type || determineDeviceType(updatedDevice.model),
-      lastSeen: device.lastSeen || new Date().toISOString(),
-      status: device.status || 'online',
-      assignedTo: device.assignedTo || null,
-      specs: device.specs || getDeviceSpecs(updatedDevice.model)
-    };
+    return transformDeviceResponse(response.data);
   } catch (error) {
     console.error(`Error updating device with ID ${id}:`, error);
     throw error;
@@ -243,4 +289,9 @@ const getDeviceSpecs = (model: string): Device['specs'] => {
       os: 'Unknown'
     };
   }
+};
+
+// Cancel all active requests
+export const cancelAllRequests = (): void => {
+  requestManager.cancelAllRequests();
 }; 127

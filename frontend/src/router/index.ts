@@ -299,6 +299,16 @@ const router = createRouter({
       }
     },
     {
+      path: '/admin/system-settings',
+      name: 'admin-system-settings',
+      component: () => import('../views/SystemSettingsView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'System Settings',
+        adminRequired: true
+      }
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/error/404'
     }

@@ -75,7 +75,16 @@ diesel::table! {
         model -> Varchar,
         #[max_length = 50]
         warranty_status -> Varchar,
-        ticket_id -> Nullable<Int4>,
+        #[max_length = 255]
+        manufacturer -> Nullable<Varchar>,
+        #[max_length = 36]
+        primary_user_uuid -> Nullable<Varchar>,
+        #[max_length = 255]
+        intune_device_id -> Nullable<Varchar>,
+        #[max_length = 255]
+        entra_device_id -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
     }
 }
 
@@ -147,6 +156,32 @@ diesel::table! {
 }
 
 diesel::table! {
+    sync_history (id) {
+        id -> Int4,
+        session_id -> Varchar,
+        sync_type -> Varchar,
+        entity -> Varchar,
+        status -> Varchar,
+        message -> Text,
+        current_count -> Int4,
+        total_count -> Int4,
+        started_at -> Timestamp,
+        updated_at -> Timestamp,
+        completed_at -> Nullable<Timestamp>,
+        can_cancel -> Bool,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    ticket_devices (ticket_id, device_id) {
+        ticket_id -> Int4,
+        device_id -> Int4,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     use diesel::sql_types::*;
     use super::sql_types::TicketStatus;
     use super::sql_types::TicketPriority;
@@ -202,16 +237,21 @@ diesel::table! {
         avatar_url -> Nullable<Varchar>,
         #[max_length = 255]
         banner_url -> Nullable<Varchar>,
+        #[max_length = 255]
+        avatar_thumb -> Nullable<Varchar>,
+        #[max_length = 36]
+        microsoft_uuid -> Nullable<Varchar>,
     }
 }
 
 diesel::joinable!(article_contents -> tickets (ticket_id));
 diesel::joinable!(attachments -> comments (comment_id));
 diesel::joinable!(comments -> tickets (ticket_id));
-diesel::joinable!(devices -> tickets (ticket_id));
 diesel::joinable!(documentation_pages -> tickets (ticket_id));
 diesel::joinable!(project_tickets -> projects (project_id));
 diesel::joinable!(project_tickets -> tickets (ticket_id));
+diesel::joinable!(ticket_devices -> devices (device_id));
+diesel::joinable!(ticket_devices -> tickets (ticket_id));
 diesel::joinable!(user_auth_identities -> auth_providers (auth_provider_id));
 diesel::joinable!(user_auth_identities -> users (user_id));
 
@@ -226,6 +266,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     linked_tickets,
     project_tickets,
     projects,
+    sync_history,
+    ticket_devices,
     tickets,
     user_auth_identities,
     users,

@@ -1,19 +1,45 @@
 use actix_web::{web, HttpResponse, Responder};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
-use bcrypt::{hash, DEFAULT_COST};
+use bcrypt::DEFAULT_COST;
 use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 use futures::{StreamExt, TryStreamExt};
 use actix_multipart::Multipart;
 use std::fs;
 use std::path::Path;
+use std::collections::HashSet;
 
-use crate::db::DbConnection;
-use crate::models::{NewUser, User, UserResponse, UserUpdate, UserUpdateForm};
+use crate::models::{NewUser, UserResponse, UserUpdate, UserUpdateWithPassword, UserProfileUpdate};
 use crate::repository;
-use crate::repository::user_auth_identities;
 use crate::handlers::auth::validate_token_internal;
+
+// Pagination query parameters
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    page: Option<i64>,
+    #[serde(rename = "pageSize")]
+    page_size: Option<i64>,
+    #[serde(rename = "sortField")]
+    sort_field: Option<String>,
+    #[serde(rename = "sortDirection")]
+    sort_direction: Option<String>,
+    search: Option<String>,
+    role: Option<String>,
+}
+
+// Paginated response
+#[derive(Serialize)]
+pub struct PaginatedResponse<T> {
+    data: Vec<T>,
+    total: i64,
+    page: i64,
+    #[serde(rename = "pageSize")]
+    page_size: i64,
+    #[serde(rename = "totalPages")]
+    total_pages: i64,
+}
 
 // User handlers
 pub async fn get_users(
@@ -38,6 +64,54 @@ pub async fn get_users(
         Err(e) => {
             eprintln!("Error fetching users: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to fetch users")
+        },
+    }
+}
+
+// Get paginated users
+pub async fn get_paginated_users(
+    pool: web::Data<crate::db::Pool>,
+    query: web::Query<PaginationParams>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Extract and validate pagination parameters
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(25).clamp(1, 100);
+
+    match repository::get_paginated_users(
+        &mut conn,
+        page,
+        page_size,
+        query.sort_field.clone(),
+        query.sort_direction.clone(),
+        query.search.clone(),
+        query.role.clone(),
+    ) {
+        Ok((users, total)) => {
+            // Calculate total pages
+            let total_pages = (total as f64 / page_size as f64).ceil() as i64;
+            
+            // Convert users to UserResponse
+            let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
+            
+            // Create paginated response
+            let response = PaginatedResponse {
+                data: user_responses,
+                total,
+                page,
+                page_size,
+                total_pages,
+            };
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(e) => {
+            eprintln!("Error fetching paginated users: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get paginated users")
         },
     }
 }
@@ -109,6 +183,8 @@ pub async fn create_user(
         pronouns: user_data.pronouns.clone(),
         avatar_url: user_data.avatar_url.clone(),
         banner_url: user_data.banner_url.clone(),
+        avatar_thumb: user_data.avatar_thumb.clone(),
+        microsoft_uuid: None, // New users don't have Microsoft UUID initially
     };
 
     match repository::create_user(new_user, &mut conn) {
@@ -159,8 +235,9 @@ pub async fn create_user(
 
 pub async fn update_user(
     db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
     path: web::Path<i32>,
-    user_data: web::Json<UserUpdateForm>,
+    user_data: web::Json<UserUpdateWithPassword>,
 ) -> impl Responder {
     let user_id = path.into_inner();
     let mut conn = match db_pool.get() {
@@ -284,6 +361,9 @@ pub async fn update_user(
         pronouns: user_data.pronouns.clone(),
         avatar_url: user_data.avatar_url.clone(),
         banner_url: user_data.banner_url.clone(),
+        avatar_thumb: user_data.avatar_thumb.clone(),
+        microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
+        updated_at: Some(chrono::Utc::now().naive_utc()),
     };
 
     match repository::update_user(user_id, user_update, &mut conn) {
@@ -610,12 +690,12 @@ pub async fn delete_user_auth_identity_by_uuid(
     }
 }
 
-pub async fn update_user_by_uuid(
+pub async fn update_user_profile(
     db_pool: web::Data<crate::db::Pool>,
-    path: web::Path<String>,
-    user_data: web::Json<UserUpdateForm>,
+    auth: BearerAuth,
+    user_data: web::Json<UserProfileUpdate>,
 ) -> impl Responder {
-    let user_uuid = path.into_inner();
+    let user_id = user_data.id;
     let mut conn = match db_pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json(json!({
@@ -624,19 +704,17 @@ pub async fn update_user_by_uuid(
         })),
     };
 
-    // Get the user by UUID first
-    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
-        Ok(user) => user,
-        Err(_) => return HttpResponse::NotFound().json(json!({
+    if let Err(_) = repository::get_user_by_id(user_id, &mut conn) {
+        return HttpResponse::NotFound().json(json!({
             "status": "error",
             "message": "User not found"
-        })),
-    };
+        }));
+    }
 
     // Check if email is being updated and if it's already in use
     if let Some(email) = &user_data.email {
         if let Ok(existing_user) = repository::get_user_by_email(email, &mut conn) {
-            if existing_user.id != user.id {
+            if existing_user.id != user_id {
                 return HttpResponse::BadRequest().json(json!({
                     "status": "error",
                     "message": "Email already in use by another user"
@@ -660,7 +738,7 @@ pub async fn update_user_by_uuid(
         };
         
         // Find existing local auth identity
-        let auth_identities = match repository::user_auth_identities::get_user_identities(user.id, &mut conn) {
+        let auth_identities = match repository::user_auth_identities::get_user_identities(user_id, &mut conn) {
             Ok(identities) => identities,
             Err(e) => {
                 eprintln!("Error fetching auth identities: {:?}", e);
@@ -693,7 +771,7 @@ pub async fn update_user_by_uuid(
                 
                 // Create new identity with updated password
                 let new_auth_identity = NewUserAuthIdentity {
-                    user_id: user.id,
+                    user_id,
                     auth_provider_id: identity.auth_provider_id,
                     provider_user_id: identity.provider_user_id.clone(),
                     email: identity.email.clone(),
@@ -712,7 +790,7 @@ pub async fn update_user_by_uuid(
             None => {
                 // Create new local identity if none exists
                 let new_auth_identity = NewUserAuthIdentity {
-                    user_id: user.id,
+                    user_id,
                     auth_provider_id: 1, // Local provider
                     provider_user_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
                     email: user_data.email.clone(),
@@ -739,9 +817,12 @@ pub async fn update_user_by_uuid(
         pronouns: user_data.pronouns.clone(),
         avatar_url: user_data.avatar_url.clone(),
         banner_url: user_data.banner_url.clone(),
+        avatar_thumb: user_data.avatar_thumb.clone(),
+        microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
+        updated_at: Some(chrono::Utc::now().naive_utc()),
     };
 
-    match repository::update_user(user.id, user_update, &mut conn) {
+    match repository::update_user(user_id, user_update, &mut conn) {
         Ok(updated_user) => HttpResponse::Ok().json(UserResponse::from(updated_user)),
         Err(e) => {
             eprintln!("Error updating user: {:?}", e);
@@ -835,8 +916,15 @@ pub async fn upload_user_image(
             }
         };
         
-        let unique_filename = format!("{}_{}.{}", user_uuid, Uuid::new_v4(), file_ext);
-        let filepath = format!("{}/{}", storage_path, unique_filename);
+        // Clean up old files for this user and image type before saving new one
+        cleanup_old_user_images(&storage_path, &user_uuid, image_type).await
+            .map_err(|e| {
+                eprintln!("Warning: Failed to cleanup old images: {}", e);
+                // Continue even if cleanup fails
+            }).ok();
+        
+        let filename = format!("{}_{}.{}", user_uuid, image_type, file_ext);
+        let filepath = format!("{}/{}", storage_path, filename);
         
         // Read file data
         let mut file_data = Vec::new();
@@ -873,6 +961,9 @@ pub async fn upload_user_image(
             pronouns: None,
             avatar_url: if image_type == "avatar" { Some(url.clone()) } else { None },
             banner_url: if image_type == "banner" { Some(url.clone()) } else { None },
+            avatar_thumb: None,
+            microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
+            updated_at: Some(chrono::Utc::now().naive_utc()),
         };
         
         match repository::update_user(user.id, user_update, &mut conn) {
@@ -904,4 +995,376 @@ pub async fn upload_user_image(
 #[derive(serde::Deserialize)]
 pub struct UserImageTypeQuery {
     pub type_: String, // "avatar" or "banner"
+}
+
+/// Clean up old user images for a specific type (avatar or banner)
+async fn cleanup_old_user_images(
+    image_dir: &str,
+    user_uuid: &str,
+    image_type: &str,
+) -> Result<(), String> {
+    use tokio::fs;
+    
+    // Read the directory
+    let mut dir = match fs::read_dir(image_dir).await {
+        Ok(dir) => dir,
+        Err(_) => return Ok(()) // Directory doesn't exist, nothing to clean
+    };
+
+    // Look for files matching the pattern: {user_uuid}_{image_type}.{ext}
+    let pattern_prefix = format!("{}_{}", user_uuid, image_type);
+    
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if let Some(filename) = entry.file_name().to_str() {
+            // Check if this file matches our pattern (user_uuid_type.ext)
+            if filename.starts_with(&pattern_prefix) && filename.contains('.') {
+                let file_path = entry.path();
+                println!("Cleaning up old image file: {:?}", file_path);
+                
+                if let Err(e) = fs::remove_file(&file_path).await {
+                    eprintln!("Warning: Failed to remove old image file {:?}: {}", file_path, e);
+                    // Continue with cleanup even if one file fails
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Clean up all stale user images (admin endpoint)
+pub async fn cleanup_stale_images(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Validate token and check admin permissions
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Only administrators can cleanup stale images"
+        }));
+    }
+
+    // Get all users to know which files should exist
+    let users = match repository::get_users(&mut conn) {
+        Ok(users) => users,
+        Err(e) => {
+            eprintln!("Error fetching users: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to fetch users"
+            }));
+        }
+    };
+
+    let mut cleanup_stats = CleanupStats {
+        avatars_removed: 0,
+        banners_removed: 0,
+        thumbnails_removed: 0,
+        total_files_checked: 0,
+        errors: Vec::new(),
+    };
+
+    // Clean up avatar directory
+    if let Err(e) = cleanup_directory_stale_files(
+        "uploads/users/avatars", 
+        &users, 
+        &["avatar", "48x48", "120x120", "default"], 
+        &mut cleanup_stats
+    ).await {
+        cleanup_stats.errors.push(format!("Avatar cleanup error: {}", e));
+    }
+
+    // Clean up banner directory  
+    if let Err(e) = cleanup_directory_stale_files(
+        "uploads/users/banners", 
+        &users, 
+        &["banner"], 
+        &mut cleanup_stats
+    ).await {
+        cleanup_stats.errors.push(format!("Banner cleanup error: {}", e));
+    }
+
+    // Clean up thumbnail directory
+    if let Err(e) = cleanup_directory_stale_files(
+        "uploads/users/thumbs", 
+        &users, 
+        &["thumb"], 
+        &mut cleanup_stats
+    ).await {
+        cleanup_stats.errors.push(format!("Thumbnail cleanup error: {}", e));
+    }
+
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "message": "Stale image cleanup completed",
+        "stats": {
+            "avatars_removed": cleanup_stats.avatars_removed,
+            "banners_removed": cleanup_stats.banners_removed,
+            "thumbnails_removed": cleanup_stats.thumbnails_removed,
+            "total_files_checked": cleanup_stats.total_files_checked,
+            "errors": cleanup_stats.errors
+        }
+    }))
+}
+
+#[derive(Debug)]
+struct CleanupStats {
+    avatars_removed: usize,
+    banners_removed: usize,
+    thumbnails_removed: usize,
+    total_files_checked: usize,
+    errors: Vec<String>,
+}
+
+/// Clean up stale files in a specific directory
+async fn cleanup_directory_stale_files(
+    dir_path: &str,
+    users: &[crate::models::User],
+    valid_suffixes: &[&str],
+    stats: &mut CleanupStats,
+) -> Result<(), String> {
+    use tokio::fs;
+    use std::collections::HashSet;
+    
+    // Create a set of valid file prefixes (user UUIDs)
+    let valid_uuids: HashSet<String> = users.iter().map(|u| u.uuid.clone()).collect();
+    
+    // Read the directory
+    let mut dir = match fs::read_dir(dir_path).await {
+        Ok(dir) => dir,
+        Err(_) => return Ok(()) // Directory doesn't exist, nothing to clean
+    };
+
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if let Some(filename) = entry.file_name().to_str() {
+            stats.total_files_checked += 1;
+            
+            // Check if this file should be kept
+            let should_keep = should_keep_file(filename, &valid_uuids, valid_suffixes);
+            
+            if !should_keep {
+                let file_path = entry.path();
+                println!("Removing stale image file: {:?}", file_path);
+                
+                match fs::remove_file(&file_path).await {
+                    Ok(_) => {
+                        if dir_path.contains("avatars") {
+                            stats.avatars_removed += 1;
+                        } else if dir_path.contains("banners") {
+                            stats.banners_removed += 1;
+                        } else if dir_path.contains("thumbs") {
+                            stats.thumbnails_removed += 1;
+                        }
+                    },
+                    Err(e) => {
+                        let error_msg = format!("Failed to remove {:?}: {}", file_path, e);
+                        eprintln!("Warning: {}", error_msg);
+                        stats.errors.push(error_msg);
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Determine if a file should be kept based on naming patterns
+fn should_keep_file(filename: &str, valid_uuids: &HashSet<String>, valid_suffixes: &[&str]) -> bool {
+    // Skip hidden files and non-image files
+    if filename.starts_with('.') || !filename.contains('.') {
+        return true;
+    }
+    
+    // Extract the base name without extension
+    let base_name = filename.split('.').next().unwrap_or("");
+    
+    // Check for new format: {uuid}_{suffix}
+    if let Some(underscore_pos) = base_name.find('_') {
+        let uuid_part = &base_name[..underscore_pos];
+        let suffix_part = &base_name[underscore_pos + 1..];
+        
+        // Check if this matches our expected pattern
+        if valid_uuids.contains(uuid_part) && valid_suffixes.contains(&suffix_part) {
+            return true; // Keep this file
+        }
+    }
+    
+    // Check for old format with random UUIDs: {uuid}_{random_uuid}_{suffix}
+    // These should be removed as they're the old stale files
+    let parts: Vec<&str> = base_name.split('_').collect();
+    if parts.len() >= 3 {
+        // This looks like an old format file, check if the first part is a valid user UUID
+        if valid_uuids.contains(parts[0]) {
+            // This is an old format file for a valid user, but we want to remove it
+            // since we're using the new format now
+            return false;
+        }
+    }
+    
+    // If we can't determine the pattern, keep the file to be safe
+    true
+}
+
+pub async fn update_user_by_uuid(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+    path: web::Path<String>,
+    user_data: web::Json<UserUpdateWithPassword>,
+) -> impl Responder {
+    let user_uuid = path.into_inner();
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // First get the user by UUID to get the ID
+    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+        Ok(user) => user,
+        Err(_) => return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        })),
+    };
+
+    let user_id = user.id;
+
+    // Check if email is being updated and if it's already in use
+    if let Some(email) = &user_data.email {
+        if let Ok(existing_user) = repository::get_user_by_email(email, &mut conn) {
+            if existing_user.id != user_id {
+                return HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "message": "Email already in use by another user"
+                }));
+            }
+        }
+    }
+
+    // Create password hash if password is provided
+    if let Some(password) = &user_data.password {
+        use bcrypt::hash;
+        use crate::models::NewUserAuthIdentity;
+        
+        // Hash the new password
+        let password_hash = match hash(password, DEFAULT_COST) {
+            Ok(hash) => hash.into_bytes(),
+            Err(_) => return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error hashing password"
+            })),
+        };
+        
+        // Find existing local auth identity
+        let auth_identities = match repository::user_auth_identities::get_user_identities(user_id, &mut conn) {
+            Ok(identities) => identities,
+            Err(e) => {
+                eprintln!("Error fetching auth identities: {:?}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Error processing user identities"
+                }));
+            }
+        };
+        
+        // Find local identity
+        let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
+        
+        match local_identity {
+            Some(identity) => {
+                // Update existing local identity
+                // Delete the old identity 
+                match diesel::delete(
+                    crate::schema::user_auth_identities::table.filter(crate::schema::user_auth_identities::id.eq(identity.id))
+                ).execute(&mut conn) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        eprintln!("Error deleting auth identity: {:?}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "status": "error",
+                            "message": "Error updating password"
+                        }));
+                    }
+                }
+                
+                // Create new identity with updated password
+                let new_auth_identity = NewUserAuthIdentity {
+                    user_id,
+                    auth_provider_id: identity.auth_provider_id,
+                    provider_user_id: identity.provider_user_id.clone(),
+                    email: identity.email.clone(),
+                    identity_data: identity.identity_data.clone(),
+                    password_hash: Some(password_hash),
+                };
+                
+                if let Err(e) = repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
+                    eprintln!("Error creating updated auth identity: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error updating password"
+                    }));
+                }
+            },
+            None => {
+                // Create new local identity if none exists
+                let new_auth_identity = NewUserAuthIdentity {
+                    user_id,
+                    auth_provider_id: 1, // Local provider
+                    provider_user_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
+                    email: user_data.email.clone(),
+                    identity_data: None,
+                    password_hash: Some(password_hash),
+                };
+                
+                if let Err(e) = repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
+                    eprintln!("Error creating auth identity: {:?}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error setting password"
+                    }));
+                }
+            }
+        }
+    }
+
+    // Update user
+    let user_update = UserUpdate {
+        name: user_data.name.clone(),
+        email: user_data.email.clone(),
+        role: user_data.role.clone(),
+        pronouns: user_data.pronouns.clone(),
+        avatar_url: user_data.avatar_url.clone(),
+        banner_url: user_data.banner_url.clone(),
+        avatar_thumb: user_data.avatar_thumb.clone(),
+        microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
+        updated_at: Some(chrono::Utc::now().naive_utc()),
+    };
+
+    match repository::update_user(user_id, user_update, &mut conn) {
+        Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
+        Err(_) => HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Error updating user"
+        })),
+    }
 } 

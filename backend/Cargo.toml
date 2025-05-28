@@ -55,6 +55,7 @@ querystring = "1.1.0"       # Query string parsing
 yrs = { version = "0.23.0", features = ["sync"] }
 lib0 = "0.16.10"
 bytes = "1.5.0"
+image = { version = "0.24", features = ["webp", "jpeg", "png"] }
 
 # For testing only
 [dev-dependencies]
@@ -66,3 +67,6 @@ fastrand = "1.9.0"
 
 # Add mime crate
 mime = "0.3.17"
+
+# Image processing for thumbnail generation
+image = { version = "0.24", features = ["webp", "jpeg", "png"] }

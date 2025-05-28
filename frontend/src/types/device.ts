@@ -5,9 +5,21 @@ export interface Device {
   serial_number: string;
   model: string;
   warranty_status: string;
-  // Backend-specific field, not displayed in UI
-  ticket_id?: number | null;
-  // Frontend-specific fields
+  manufacturer?: string | null;
+  primary_user_uuid?: string | null;
+  intune_device_id?: string | null;
+  entra_device_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  // Computed/joined fields from API
+  primary_user?: {
+    uuid: string;
+    name: string;
+    email: string;
+    avatar_url?: string | null;
+    avatar_thumb?: string | null;
+  } | null;
+  // Legacy fields for backward compatibility
   type?: string;
   lastSeen?: string;
   status?: string;
@@ -26,6 +38,8 @@ export interface DeviceFormData {
   serial_number: string;
   model: string;
   warranty_status: string;
-  type: string;
-  // ticket_id is not included in the form data
+  manufacturer?: string;
+  primary_user_uuid?: string | null;
+  intune_device_id?: string;
+  entra_device_id?: string;
 } 
