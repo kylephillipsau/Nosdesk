@@ -893,7 +893,7 @@ onMounted(() => {
                       </p>
                       <ul class="text-red-200 text-xs mt-2 pl-4 list-disc list-inside space-y-1">
                         <li>Directory.Read.All</li>
-                        <li>Device.Read.All</li>
+                        <li>DeviceManagement.ManagedDevices.Read.All</li>
                         <li>User.Read.All</li>
                         <li>ProfilePhoto.Read.All (optional)</li>
                       </ul>
@@ -1033,10 +1033,10 @@ onMounted(() => {
                       >
                         <div>
                           <code class="text-green-400 text-sm"
-                            >Device.Read.All</code
+                            >DeviceManagement.ManagedDevices.Read.All</code
                           >
                           <p class="text-slate-400 text-xs mt-1">
-                            Read all devices
+                            Read Microsoft Intune managed devices
                           </p>
                         </div>
                         <span class="text-green-400 text-xs">Required</span>
@@ -1117,7 +1117,7 @@ onMounted(() => {
                       <li>Verify you have <strong>Application permissions</strong> (not Delegated) for:
                         <ul class="ml-4 pl-4 list-disc list-inside mt-1 space-y-1">
                           <li>Directory.Read.All</li>
-                          <li>Device.Read.All</li>
+                          <li>DeviceManagement.ManagedDevices.Read.All</li>
                           <li>User.Read.All</li>
                         </ul>
                       </li>

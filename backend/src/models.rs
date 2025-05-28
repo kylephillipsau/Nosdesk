@@ -236,9 +236,8 @@ impl<'de> Deserialize<'de> for TicketUpdate {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Identifiable, Associations)]
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
 #[diesel(table_name = crate::schema::devices)]
-#[diesel(belongs_to(Ticket))]
 pub struct Device {
     pub id: i32,
     pub name: String,
@@ -246,39 +245,12 @@ pub struct Device {
     pub serial_number: String,
     pub model: String,
     pub warranty_status: String,
-    pub ticket_id: Option<i32>,
-}
-
-impl Queryable<(
-    diesel::sql_types::Integer,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Nullable<diesel::sql_types::Integer>,
-), Pg> for Device {
-    type Row = (
-        i32,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<i32>,
-    );
-
-    fn build(row: Self::Row) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(Device {
-            id: row.0,
-            name: row.1,
-            hostname: row.2,
-            serial_number: row.3,
-            model: row.4,
-            warranty_status: row.5,
-            ticket_id: row.6,
-        })
-    }
+    pub manufacturer: Option<String>,
+    pub primary_user_uuid: Option<String>,
+    pub intune_device_id: Option<String>,
+    pub entra_device_id: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
@@ -289,7 +261,43 @@ pub struct NewDevice {
     pub serial_number: String,
     pub model: String,
     pub warranty_status: String,
+    pub manufacturer: Option<String>,
+    pub primary_user_uuid: Option<String>,
+    pub intune_device_id: Option<String>,
+    pub entra_device_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::devices)]
+pub struct DeviceUpdate {
+    pub name: Option<String>,
+    pub hostname: Option<String>,
+    pub serial_number: Option<String>,
+    pub model: Option<String>,
+    pub warranty_status: Option<String>,
+    pub manufacturer: Option<String>,
+    pub primary_user_uuid: Option<String>,
+    pub intune_device_id: Option<String>,
+    pub entra_device_id: Option<String>,
+    pub updated_at: Option<NaiveDateTime>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable, Associations)]
+#[diesel(table_name = crate::schema::ticket_devices)]
+#[diesel(belongs_to(Ticket))]
+#[diesel(belongs_to(Device))]
+#[diesel(primary_key(ticket_id, device_id))]
+pub struct TicketDevice {
     pub ticket_id: i32,
+    pub device_id: i32,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::ticket_devices)]
+pub struct NewTicketDevice {
+    pub ticket_id: i32,
+    pub device_id: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Identifiable, Associations)]
@@ -420,7 +428,7 @@ pub struct NewArticleContent {
 pub struct CompleteTicket {
     #[serde(flatten)]
     pub ticket: Ticket,
-    pub device: Option<Device>,
+    pub devices: Vec<Device>,
     pub comments: Vec<CommentWithAttachments>,
     pub article_content: Option<String>,
     pub linked_tickets: Vec<i32>,
@@ -606,71 +614,37 @@ impl FromSql<diesel::sql_types::Text, Pg> for UserRole {
 }
 
 // User model
-#[derive(Selectable, Identifiable, Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
 #[diesel(table_name = crate::schema::users)]
 pub struct User {
     pub id: i32,
     pub uuid: String,
     pub name: String,
     pub email: String,
-    pub role: UserRole,
+    pub role: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub pronouns: Option<String>,
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub microsoft_uuid: Option<String>,
 }
 
-impl Queryable<(
-    diesel::sql_types::Integer,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Text,
-    diesel::sql_types::Timestamp,
-    diesel::sql_types::Timestamp,
-    diesel::sql_types::Nullable<diesel::sql_types::Text>,
-    diesel::sql_types::Nullable<diesel::sql_types::Text>,
-    diesel::sql_types::Nullable<diesel::sql_types::Text>,
-), Pg> for User {
-    type Row = (
-        i32,
-        String,
-        String,
-        String,
-        String,
-        NaiveDateTime,
-        NaiveDateTime,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    );
-
-    fn build(row: Self::Row) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let role = match row.4.as_str() {
+// Convert string role to UserRole enum when needed
+impl User {
+    pub fn get_role(&self) -> UserRole {
+        match self.role.as_str() {
             "admin" => UserRole::Admin,
             "technician" => UserRole::Technician,
             "user" => UserRole::User,
-            _ => UserRole::User, // Default to user if unknown
-        };
-
-        Ok(User {
-            id: row.0,
-            uuid: row.1,
-            name: row.2,
-            email: row.3,
-            role,
-            created_at: row.5,
-            updated_at: row.6,
-            pronouns: row.7,
-            avatar_url: row.8,
-            banner_url: row.9,
-        })
+            _ => UserRole::User, // Default to user if unknown role
+        }
     }
 }
 
 // New user for creation
-#[derive(Insertable, Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
 #[diesel(table_name = crate::schema::users)]
 pub struct NewUser {
     pub uuid: String,
@@ -680,6 +654,8 @@ pub struct NewUser {
     pub pronouns: Option<String>,
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub microsoft_uuid: Option<String>,
 }
 
 // Add a separate struct for user registration with password
@@ -692,21 +668,11 @@ pub struct UserRegistration {
     pub pronouns: Option<String>,
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
 }
 
 // User update struct
-#[derive(Deserialize, Debug)]
-pub struct UserUpdateForm {
-    pub name: Option<String>,
-    pub email: Option<String>,
-    pub role: Option<String>,
-    pub password: Option<String>,
-    pub pronouns: Option<String>,
-    pub avatar_url: Option<String>,
-    pub banner_url: Option<String>,
-}
-
-#[derive(AsChangeset, Debug)]
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
 #[diesel(table_name = crate::schema::users)]
 pub struct UserUpdate {
     pub name: Option<String>,
@@ -715,6 +681,36 @@ pub struct UserUpdate {
     pub pronouns: Option<String>,
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub microsoft_uuid: Option<String>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
+}
+
+// User update with password for admin/user management
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserUpdateWithPassword {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub role: Option<String>,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub password: Option<String>,
+}
+
+// User profile update with ID for profile management
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserProfileUpdate {
+    pub id: i32,
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub role: Option<String>,
+    pub pronouns: Option<String>,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub password: Option<String>,
 }
 
 // User response with minimal information
@@ -728,6 +724,10 @@ pub struct UserResponse {
     pub pronouns: Option<String>,
     pub avatar_url: Option<String>,
     pub banner_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+    pub microsoft_uuid: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 // User info for comments - minimal user data to include with comments
@@ -745,14 +745,14 @@ impl From<User> for UserResponse {
             uuid: user.uuid,
             name: user.name,
             email: user.email,
-            role: match user.role {
-                UserRole::Admin => "admin".to_string(),
-                UserRole::Technician => "technician".to_string(),
-                UserRole::User => "user".to_string(),
-            },
+            role: user.role,
             pronouns: user.pronouns,
             avatar_url: user.avatar_url,
             banner_url: user.banner_url,
+            avatar_thumb: user.avatar_thumb,
+            microsoft_uuid: user.microsoft_uuid,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
         }
     }
 }
@@ -1145,4 +1145,51 @@ pub struct NewDocumentationPage {
     pub parent_id: Option<i32>,
     pub ticket_id: Option<i32>,
     pub display_order: Option<i32>,
+}
+
+// Sync History Models
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
+#[diesel(table_name = crate::schema::sync_history)]
+pub struct SyncHistory {
+    pub id: i32,
+    pub session_id: String,
+    pub sync_type: String,
+    pub entity: String,
+    pub status: String,
+    pub message: String,
+    pub current_count: i32,
+    pub total_count: i32,
+    pub started_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub completed_at: Option<NaiveDateTime>,
+    pub can_cancel: bool,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::sync_history)]
+pub struct NewSyncHistory {
+    pub session_id: String,
+    pub sync_type: String,
+    pub entity: String,
+    pub status: String,
+    pub message: String,
+    pub current_count: i32,
+    pub total_count: i32,
+    pub started_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub completed_at: Option<NaiveDateTime>,
+    pub can_cancel: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::sync_history)]
+pub struct SyncHistoryUpdate {
+    pub status: Option<String>,
+    pub message: Option<String>,
+    pub current_count: Option<i32>,
+    pub total_count: Option<i32>,
+    pub updated_at: Option<NaiveDateTime>,
+    pub completed_at: Option<Option<NaiveDateTime>>,
+    pub can_cancel: Option<bool>,
 }

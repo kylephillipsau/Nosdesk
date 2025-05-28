@@ -3,20 +3,10 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps<{
   title: string
-  searchQuery: string
   isLoading: boolean
   isEmpty: boolean
-  addButtonText?: string
-  showAddButton?: boolean
   emptyMessage?: string
   error?: string | null
-  // Filter props
-  filters?: Array<{
-    name: string
-    value: string
-    options: Array<{ value: string, label: string }>
-    width?: string
-  }>
   // Results count
   resultsCount?: number
   // Sorting props
@@ -35,26 +25,31 @@ const props = defineProps<{
   itemIdField?: string
   enableSelection?: boolean
   visibleItems?: any[]
-  // Pagination props
-  currentPage?: number
-  totalPages?: number
-  pageSize?: number
-  pageSizeOptions?: number[]
+
+  // Legacy props (kept for backward compatibility but not used)
+  searchQuery?: string
+  showAddButton?: boolean
+  addButtonText?: string
+  filters?: Array<{
+    name: string
+    value: string
+    options: Array<{ value: string, label: string }>
+    width?: string
+  }>
 }>()
 
 const emit = defineEmits<{
-  'update:searchQuery': [value: string]
-  'update:filter': [name: string, value: string]
   'update:sort': [field: string, direction: 'asc' | 'desc']
   'update:selectedItems': [selectedIds: string[]]
   'toggle-selection': [event: Event, itemId: string]
   'toggle-all': [event: Event, checked: boolean]
-  'add': []
   'import': []
-  'reset-filters': []
   'retry': []
-  'update:currentPage': [page: number]
-  'update:pageSize': [size: number]
+  // Legacy emits (kept for backward compatibility but not used)
+  'update:searchQuery': [value: string]
+  'update:filter': [name: string, value: string]
+  'add': []
+  'reset-filters': []
 }>()
 
 const defaultEmptyMessage = computed(() => {
@@ -98,60 +93,7 @@ const allSelected = computed(() => {
   )
 })
 
-// Pagination methods
-const changePage = (page: number) => {
-  if (page >= 1 && page <= (props.totalPages || 1)) {
-    emit('update:currentPage', page)
-  }
-}
 
-const changePageSize = (event: Event) => {
-  const select = event.target as HTMLSelectElement
-  emit('update:pageSize', parseInt(select.value))
-  // Reset to first page when changing page size
-  emit('update:currentPage', 1)
-}
-
-// Generate page numbers for pagination
-const pageNumbers = computed(() => {
-  if (!props.totalPages || props.totalPages <= 1) return []
-  
-  const currentPage = props.currentPage || 1
-  const totalPages = props.totalPages
-  
-  // Always show first, last, current, and pages around current
-  const pages: number[] = []
-  
-  // Always add page 1
-  pages.push(1)
-  
-  // Add ellipsis indicator if needed
-  if (currentPage > 3) {
-    pages.push(-1) // -1 represents ellipsis
-  }
-  
-  // Add pages around current page
-  for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
-    if (i > 1 && i < totalPages) {
-      pages.push(i)
-    }
-  }
-  
-  // Add ellipsis indicator if needed
-  if (currentPage < totalPages - 2) {
-    pages.push(-1) // -1 represents ellipsis
-  }
-  
-  // Always add last page if it's not already added
-  if (totalPages > 1) {
-    pages.push(totalPages)
-  }
-  
-  return pages
-})
-
-// Default page size options if not provided
-const defaultPageSizeOptions = [10, 25, 50, 100]
 
 // Add isMobile ref to track screen size
 const isMobile = ref(false)
@@ -174,89 +116,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
-    <!-- Search and filter bar -->
-    <div
-      v-if="!isLoading && !error"
-      class="sticky top-0 z-20 bg-slate-800 border-b border-slate-700 shadow-md"
-    >
-      <div class="p-2 flex items-center gap-2 flex-wrap">
-        <!-- Search input -->
-        <div class="relative flex-grow min-w-[150px]">
-          <div
-            class="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none"
-          >
-            <svg
-              class="w-3.5 h-3.5 text-gray-400"
-              aria-hidden="true"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 20 20"
-            >
-              <path
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="m19 19-4-4m0-7A7 7 0 1 1 1 8a7 7 0 0 1 14 0Z"
-              />
-            </svg>
-          </div>
-          <input
-            type="text"
-            :value="searchQuery"
-            @input="e => emit('update:searchQuery', (e.target as HTMLInputElement).value)"
-            class="block w-full py-1 pl-8 pr-2 text-sm border rounded-md bg-slate-700 border-slate-600 placeholder-gray-400 text-white focus:ring-blue-500 focus:border-blue-500"
-            :placeholder="`Search ${title.toLowerCase()}...`"
-          />
-        </div>
-
-        <!-- Filters - Hide on mobile -->
-        <template v-if="filters && filters.length > 0 && !isMobile">
-          <div 
-            v-for="filter in filters" 
-            :key="filter.name"
-            :class="[filter.width || 'w-[120px]']"
-          >
-            <select
-              :value="filter.value"
-              @change="e => emit('update:filter', filter.name, (e.target as HTMLSelectElement).value)"
-              class="bg-slate-700 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full py-1 px-2"
-            >
-              <option
-                v-for="option in filter.options"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </select>
-          </div>
-
-          <!-- Reset filters button -->
-          <button
-            @click="emit('reset-filters')"
-            class="px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800"
-          >
-            Reset
-          </button>
-        </template>
-
-        <!-- Add button -->
-        <button
-          v-if="showAddButton !== false"
-          @click="emit('add')"
-          class="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:ring-2 focus:outline-none focus:ring-green-800 ml-auto"
-        >
-          {{ addButtonText || `Add ${title.slice(0, -1)}` }}
-        </button>
-
-        <!-- Results count -->
-        <div v-if="resultsCount !== undefined" class="text-xs text-gray-400">
-          {{ resultsCount }} result{{ resultsCount !== 1 ? "s" : "" }}
-        </div>
-      </div>
-    </div>
+  <div class="flex flex-col flex-1 min-h-0">
+    <!-- Optional header slot for custom content -->
+    <slot name="header-extra"></slot>
 
     <!-- Main content container -->
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -337,102 +199,7 @@ onBeforeUnmount(() => {
           </div>
         </template>
         
-        <!-- Pagination controls -->
-        <div class="flex items-center justify-between p-2 border-t border-slate-700 bg-slate-800">
-          <!-- Page size selector - Hide on mobile -->
-          <div v-if="!isMobile" class="flex items-center gap-2 text-sm text-gray-400">
-            <span>Show</span>
-            <select 
-              :value="pageSize" 
-              @change="changePageSize"
-              class="bg-slate-700 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 py-1 px-2"
-            >
-              <option 
-                v-for="size in (pageSizeOptions || defaultPageSizeOptions)" 
-                :key="size" 
-                :value="size"
-              >
-                {{ size }}
-              </option>
-            </select>
-            <span>per page</span>
-          </div>
-          
-          <!-- Page navigation -->
-          <div class="flex items-center gap-1">
-            <!-- Previous page button -->
-            <button 
-              @click="changePage((currentPage || 1) - 1)"
-              :disabled="(currentPage || 1) <= 1"
-              :class="[
-                'px-2 py-1 rounded-md text-sm',
-                (currentPage || 1) <= 1 
-                  ? 'bg-slate-700 text-gray-500 cursor-not-allowed' 
-                  : 'bg-slate-700 text-white hover:bg-slate-600'
-              ]"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            
-            <!-- Page numbers -->
-            <div class="flex items-center gap-1">
-              <button 
-                v-for="page in pageNumbers" 
-                :key="page"
-                @click="page !== -1 && changePage(page)"
-                :class="[
-                  'px-3 py-1 text-sm rounded-md mx-0.5',
-                  page === -1 
-                    ? 'bg-transparent text-gray-400 cursor-default' 
-                    : page === (currentPage || 1)
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-slate-700 text-white hover:bg-slate-600'
-                ]"
-                :disabled="page === -1"
-              >
-                {{ page === -1 ? '...' : page }}
-              </button>
-            </div>
-            
-            <!-- Next page button -->
-            <button 
-              @click="changePage((currentPage || 1) + 1)"
-              :disabled="(currentPage || 1) >= (totalPages || 1)"
-              :class="[
-                'px-2 py-1 rounded-md text-sm',
-                (currentPage || 1) >= (totalPages || 1) 
-                  ? 'bg-slate-700 text-gray-500 cursor-not-allowed' 
-                  : 'bg-slate-700 text-white hover:bg-slate-600'
-              ]"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-          
-          <!-- Page info and Import button container -->
-          <div class="flex items-center gap-3">
-            <!-- Page info -->
-            <div class="text-sm text-gray-400">
-              Page {{ currentPage || 1 }} of {{ totalPages }}
-            </div>
-            
-            <!-- Import button - Hide on mobile -->
-            <button
-              v-if="!isMobile"
-              @click="emit('import')"
-              class="px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800 flex items-center gap-1"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12" />
-              </svg>
-              Import
-            </button>
-          </div>
-        </div>
+
       </div>
     </div>
   </div>

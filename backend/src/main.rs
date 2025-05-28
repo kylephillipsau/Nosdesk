@@ -130,7 +130,12 @@ async fn main() -> std::io::Result<()> {
                             .route("/status", web::get().to(handlers::get_connection_status))
                             .route("/test", web::post().to(handlers::test_connection))
                             .route("/sync", web::post().to(handlers::sync_data))
-                            .route("/sync-photos", web::post().to(handlers::sync_profile_photos))
+        
+                            .route("/progress/{session_id}", web::get().to(handlers::get_sync_progress_endpoint))
+                            .route("/active-syncs", web::get().to(handlers::get_active_syncs))
+                            .route("/last-sync", web::get().to(handlers::get_last_sync))
+                            .route("/cancel/{session_id}", web::post().to(handlers::cancel_sync_session))
+                            .route("/entra-object-id/{azure_ad_device_id}", web::get().to(handlers::get_entra_object_id))
                     )
                     
                     // File upload endpoint
@@ -154,6 +159,10 @@ async fn main() -> std::io::Result<()> {
                     // Ticket linking
                     .route("/tickets/{ticket_id}/link/{linked_ticket_id}", web::post().to(handlers::link_tickets))
                     .route("/tickets/{ticket_id}/unlink/{linked_ticket_id}", web::delete().to(handlers::unlink_tickets))
+                    
+                    // Ticket-device relationships
+                    .route("/tickets/{ticket_id}/devices/{device_id}", web::post().to(handlers::add_device_to_ticket))
+                    .route("/tickets/{ticket_id}/devices/{device_id}", web::delete().to(handlers::remove_device_from_ticket))
                     
                     // Ticket comments and attachments
                     .route("/tickets/{ticket_id}/comments", web::get().to(handlers::get_comments_by_ticket_id))
@@ -180,11 +189,13 @@ async fn main() -> std::io::Result<()> {
                     
                     // ===== USER MANAGEMENT =====
                     .route("/users", web::get().to(handlers::get_users))
+                    .route("/users/paginated", web::get().to(handlers::get_paginated_users))
                     .route("/users", web::post().to(handlers::create_user))
                     .route("/users/{uuid}", web::get().to(handlers::get_user_by_uuid))
                     .route("/users/{uuid}", web::put().to(handlers::update_user_by_uuid))
                     .route("/users/{uuid}", web::delete().to(handlers::delete_user))
                     .route("/users/{uuid}/image", web::post().to(handlers::upload_user_image))
+                    .route("/users/cleanup-images", web::post().to(handlers::cleanup_stale_images))
                     .route("/users/auth-identities", web::get().to(handlers::get_user_auth_identities))
                     .route("/users/auth-identities/{id}", web::delete().to(handlers::delete_user_auth_identity))
                     // New routes using UUIDs for auth identities
@@ -193,11 +204,13 @@ async fn main() -> std::io::Result<()> {
                     
                     // ===== DEVICE MANAGEMENT =====
                     .route("/devices", web::get().to(handlers::get_all_devices))
+                    .route("/devices/paginated", web::get().to(handlers::get_paginated_devices))
                     .route("/devices", web::post().to(handlers::create_device))
-                    .route("/devices/{id}", web::get().to(handlers::get_device))
+                    .route("/devices/{id}", web::get().to(handlers::get_device_by_id))
                     .route("/devices/{id}", web::put().to(handlers::update_device))
                     .route("/devices/{id}", web::delete().to(handlers::delete_device))
-                    .route("/tickets/{ticket_id}/device", web::get().to(handlers::get_device_by_ticket_id))
+                    // Note: Device-ticket association removed in favor of user-device associations
+                    .route("/users/{uuid}/devices", web::get().to(handlers::get_devices_by_user))
                     
                     // ===== DOCUMENTATION SYSTEM =====
                     // Core documentation operations

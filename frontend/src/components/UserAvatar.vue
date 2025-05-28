@@ -3,47 +3,25 @@
 import { computed, ref, onMounted, watch, defineExpose } from 'vue'
 import { useRouter } from 'vue-router'
 import userService from '@/services/userService'
+import LazyImage from '@/components/LazyImage.vue'
+import { useUserLookup } from '@/services/userLookupService'
 
-// Create a shared store for users to prevent multiple fetches
-// This will be shared across all instances of UserAvatar
-const sharedUsers = {
-  data: ref<any[]>([]),
-  loading: ref(false),
-  error: ref<string | null>(null),
-  initialized: ref(false),
-  
-  // Method to refresh a specific user's data or all users
-  refreshUser: async (userUuid?: string) => {
-    try {
-      if (userUuid) {
-        // Refresh just one user
-        const userData = await userService.getUserByUuid(userUuid);
-        if (userData) {
-          // Find and update the user in the existing array
-          const index = sharedUsers.data.value.findIndex(u => u.uuid === userUuid);
-          if (index !== -1) {
-            // Update existing user
-            sharedUsers.data.value[index] = userData;
-          } else {
-            // Add the user if not found
-            sharedUsers.data.value.push(userData);
-          }
-        }
-      } else {
-        // Refresh all users
-        const allUsers = await userService.getUsers();
-        if (Array.isArray(allUsers)) {
-          sharedUsers.data.value = allUsers;
-        }
-      }
-    } catch (err) {
-      console.error('Error refreshing user data:', err);
+// Method to refresh a specific user's data
+const refreshUser = async (userUuid: string) => {
+  try {
+    const userData = await userService.getUserByUuid(userUuid);
+    if (userData) {
+      // Add to lookup cache
+      addUsersToCache([userData]);
     }
+  } catch (err) {
+    console.error('Error refreshing user data:', err);
   }
 }
 
 interface Props {
   name: string;
+  userName?: string; // Optional pre-loaded user name
   showName?: boolean;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
   avatar?: string | null;
@@ -58,10 +36,12 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const router = useRouter()
-// Use the shared store instead of local refs
-const users = sharedUsers.data
-const loading = sharedUsers.loading
-const error = sharedUsers.error
+
+// User lookup service for efficient lookups
+const { getUserName, getUserAvatar, lookupUser, addUsersToCache } = useUserLookup()
+
+// Simple ref for the element
+const elementRef = ref<HTMLElement | null>(null)
 
 // Check if a string is a UUID
 const isUuid = (str: string) => {
@@ -69,70 +49,47 @@ const isUuid = (str: string) => {
   return uuidPattern.test(str)
 }
 
-// Fetch users from the API - Define this function before using it in watchers or lifecycle hooks
-const fetchUsers = async () => {
-  // If we already have users or are currently loading, don't fetch again
-  if (sharedUsers.data.value.length > 0 || sharedUsers.loading.value) {
-    sharedUsers.initialized.value = true
-    return
-  }
-  
-  sharedUsers.loading.value = true
-  sharedUsers.error.value = null
-  
-  try {
-    // Initialize as an empty array first to ensure it's always an array
-    sharedUsers.data.value = []
-    const userData = await userService.getUsers()
-    
-    // Ensure userData is an array
-    if (Array.isArray(userData)) {
-      sharedUsers.data.value = userData
-    } else {
-      console.error('User data is not an array:', userData)
-      sharedUsers.data.value = []
-    }
-    
-    sharedUsers.initialized.value = true
-  } catch (err) {
-    console.error('Error fetching users in UserAvatar:', err)
-    sharedUsers.error.value = 'Failed to load user data'
-    // Ensure users is an array even after errors
-    sharedUsers.data.value = []
-  } finally {
-    sharedUsers.loading.value = false
-  }
-}
-
-// Fetch users on component mount
+// Fetch user data only if not available in cache and no userName prop provided
 onMounted(async () => {
-  if (isUuid(props.name)) {
-    await fetchUsers()
+  if (isUuid(props.name) && !props.userName) {
+    // Check if user is in cache first
+    const cachedName = getUserName(props.name)
+    if (!cachedName) {
+      // Try to fetch individual user instead of all users
+      await lookupUser(props.name)
+    }
   }
 })
 
 // Watch for changes to props.name
 watch(() => props.name, async (newName) => {
-  if (isUuid(newName) && !sharedUsers.initialized.value) {
-    await fetchUsers()
+  if (isUuid(newName) && !props.userName) {
+    const cachedName = getUserName(newName)
+    if (!cachedName) {
+      await lookupUser(newName)
+    }
   }
 }, { immediate: true })
 
 // Check if the name is a UUID and get the actual name if it is
 const displayName = computed(() => {
-  // console.log(`UserAvatar: Processing name prop: "${props.name}" (type: ${typeof props.name})`);
+  // If we have a pre-loaded user name, use it immediately
+  if (props.userName) {
+    return props.userName;
+  }
   
   // Check if the name looks like a UUID
   if (isUuid(props.name)) {
-    if (loading.value) return 'Loading...';
+    // Try to get name from lookup service cache
+    const cachedName = getUserName(props.name);
+    if (cachedName) {
+      return cachedName;
+    }
     
-    // Make sure users.value is an array before using find
-    const userList = Array.isArray(users.value) ? users.value : [];
-    const user = userList.find(u => u.uuid === props.name);
-    
-    // console.log(`UserAvatar: UUID match found:`, user || 'No match');
-    return user ? user.name : props.name;
+    // Fallback to UUID if no cached name available
+    return props.name;
   }
+  
   return props.name;
 })
 
@@ -143,37 +100,22 @@ const effectiveAvatarUrl = computed(() => {
     return props.avatar;
   }
   
-  // If name is a UUID, try to find user's avatar from user data
-  if (isUuid(props.name) && !loading.value) {
-    const userList = Array.isArray(users.value) ? users.value : [];
-    const user = userList.find(u => u.uuid === props.name);
-    
-    if (user && user.avatar_url) {
-      return user.avatar_url;
-    }
+  // If name is a UUID, try to get avatar from lookup service
+  if (isUuid(props.name)) {
+    const preferThumb = props.size !== 'full';
+    return getUserAvatar(props.name, preferThumb);
   }
-  
-  // Otherwise, return null (no avatar)
+
   return null;
 })
 
 const getInitials = (name: string) => {
-  // console.log(`UserAvatar.getInitials: Input name: "${name}" (type: ${typeof name})`);
-  
   if (!name) {
-    // console.log('UserAvatar.getInitials: Empty name, returning "?"');
     return '?';
-  }
-  
-  // If we're loading a UUID, just return a placeholder
-  if (loading.value && isUuid(props.name)) {
-    // console.log('UserAvatar.getInitials: Loading UUID, returning empty string');
-    return '';
   }
   
   // Split by space or hyphen to better handle formats like "User-123"
   const parts = name.split(/[\s-]+/);
-  // console.log(`UserAvatar.getInitials: Name parts:`, parts);
   
   const initials = parts
     .filter(part => part.length > 0)
@@ -182,14 +124,10 @@ const getInitials = (name: string) => {
     .toUpperCase()
     .slice(0, 2);
     
-  // console.log(`UserAvatar.getInitials: Calculated initials: "${initials}"`);
   return initials;
 }
 
 const getBackgroundColor = (name: string) => {
-  // Return transparent background when loading a UUID
-  if (loading.value && isUuid(props.name)) return 'transparent';
-  
   if (!name) return 'hsl(0, 70%, 35%)';
   
   // Get the first letter and convert to uppercase
@@ -274,46 +212,66 @@ const navigateToProfile = () => {
   }
 }
 
+// Track image loading state
+const imageLoaded = ref(false)
+
+// Reset image loaded state when avatar URL changes
+watch(effectiveAvatarUrl, () => {
+  imageLoaded.value = false
+})
+
 // Export the refreshUser method for external components to use
 defineExpose({
-  refreshUser: sharedUsers.refreshUser
+  refreshUser
 })
 </script>
 
 <template>
   <div 
-    class="flex items-center gap-2"
+    ref="elementRef"
+    class="flex items-center"
     :class="[
       { 'cursor-pointer hover:opacity-80': clickable },
-      size === 'full' ? 'h-full aspect-square' : ''
+      size === 'full' ? 'h-full aspect-square' : '',
+      showName ? 'gap-2' : ''
     ]"
     @click="navigateToProfile"
   >
+    <!-- Avatar container -->
     <div 
       :class="[
         sizeClasses.base, 
-        sizeClasses.responsive,
-        { 'animate-pulse bg-transparent': loading && isUuid(props.name) }
+        sizeClasses.responsive
       ]"
-      class="rounded-full flex items-center justify-center flex-shrink-0 font-medium text-white transition-all duration-300"
+      class="rounded-full flex items-center justify-center flex-shrink-0 font-medium text-white relative overflow-hidden"
       :style="{ backgroundColor: getBackgroundColor(displayName) }"
     >
-      <img 
-        v-if="effectiveAvatarUrl" 
-        :src="effectiveAvatarUrl" 
+      <!-- Avatar image with lazy loading -->
+      <LazyImage
+        v-if="effectiveAvatarUrl"
+        :src="effectiveAvatarUrl"
         :alt="displayName"
-        class="w-full h-full rounded-full object-cover transition-opacity duration-300"
-        :class="{ 'opacity-0': loading && isUuid(props.name) }"
+        class="w-full h-full rounded-full"
+        loading="lazy"
+        @load="imageLoaded = true"
+        @error="imageLoaded = false"
       />
-      <span v-else-if="!loading || !isUuid(props.name)" :class="sizeClasses.text">{{ getInitials(displayName) }}</span>
-      <span v-else class="opacity-0">...</span>
+      
+      <!-- Fallback initials (hidden when image loads) -->
+      <span 
+        v-show="!imageLoaded"
+        :class="sizeClasses.text"
+        class="absolute inset-0 flex items-center justify-center"
+      >
+        {{ getInitials(displayName) }}
+      </span>
     </div>
+    
+    <!-- Text container with consistent spacing to prevent layout shift -->
     <span 
       v-if="showName" 
-      :class="[
-        nameTextClasses,
-        { 'animate-pulse text-slate-400': loading && isUuid(props.name) }
-      ]"
+      :class="nameTextClasses"
+      class="transition-all duration-500 ease-out truncate"
     >
       {{ displayName }}
     </span>
@@ -321,16 +279,20 @@ defineExpose({
 </template>
 
 <style scoped>
-@keyframes pulse {
-  0%, 100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 0.1;
-  }
+/* Smooth transitions */
+img {
+  transition: opacity 0.3s ease-out;
 }
 
-.animate-pulse {
-  animation: pulse 1.5s ease-in-out infinite;
+/* Smooth background color transitions */
+div {
+  transition: background-color 0.3s ease-out, opacity 0.3s ease-out;
+}
+
+/* Ensure text doesn't cause layout shifts */
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

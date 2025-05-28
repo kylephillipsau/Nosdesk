@@ -21,7 +21,7 @@ pub use devices::*;
 pub use documentation::*;
 pub use auth_providers::*;
 pub use microsoft_graph::*;
-pub use msgraph_integration::{get_connection_status, test_connection, sync_data, sync_profile_photos};
+pub use msgraph_integration::{get_connection_status, test_connection, sync_data, get_sync_progress_endpoint, get_active_syncs, cancel_sync_session, get_last_sync, get_entra_object_id};
 
 // Import necessary types for placeholders
 use actix_web::{web, HttpResponse, Responder, HttpRequest};

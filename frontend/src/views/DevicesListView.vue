@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import BaseListView from '@/components/common/BaseListView.vue'
+import DebouncedSearchInput from '@/components/common/DebouncedSearchInput.vue'
+import PaginationControls from '@/components/common/PaginationControls.vue'
 import Modal from '@/components/Modal.vue'
 import DeviceForm from '@/components/DeviceForm.vue'
-import { getDevices, createDevice } from '@/services/deviceService'
+import UserAvatar from '@/components/UserAvatar.vue'
+import { getPaginatedDevices, createDevice } from '@/services/deviceService'
 import type { Device, DeviceFormData } from '@/types/device'
+import type { PaginatedResponse } from '@/services/deviceService'
 
 const router = useRouter()
 const devices = ref<Device[]>([])
@@ -25,17 +29,25 @@ const sortDirection = ref<"asc" | "desc">("asc")
 
 // Search and filter state
 const searchQuery = ref("")
-const typeFilter = ref<string>("all")
+const manufacturerFilter = ref<string>("all")
 const warrantyFilter = ref<string>("all")
+
+// Pagination state
+const currentPage = ref(1)
+const pageSize = ref(25)
+const pageSizeOptions = [10, 25, 50, 100]
+const totalItems = ref(0)
+const totalPages = ref(1)
 
 // Define columns for the table
 const columns = [
-  { field: 'id', label: 'ID', width: 'w-20 flex-shrink-0' },
-  { field: 'name', label: 'Name', width: 'flex-1 min-w-0' },
-  { field: 'type', label: 'Type', width: 'w-32 flex-shrink-0' },
-  { field: 'model', label: 'Model', width: 'w-32 flex-shrink-0' },
-  { field: 'warranty_status', label: 'Warranty', width: 'w-32 flex-shrink-0' },
-  { field: 'lastSeen', label: 'Last Seen', width: 'w-40 flex-shrink-0' }
+  { field: 'id', label: 'ID', width: 'w-16 flex-shrink-0' },
+  { field: 'name', label: 'Device Name', width: 'flex-1 min-w-0' },
+  { field: 'manufacturer', label: 'Manufacturer', width: 'flex-1 min-w-0' },
+  { field: 'model', label: 'Model', width: 'flex-1 min-w-0' },
+  { field: 'primary_user', label: 'Primary User', width: 'flex-1 min-w-0' },
+  { field: 'warranty_status', label: 'Warranty', width: 'w-24 flex-shrink-0' },
+  { field: 'updated_at', label: 'Last Updated', width: 'flex-1 min-w-0' }
 ];
 
 // Function to format date in locale format
@@ -55,13 +67,29 @@ const formatDate = (dateString: string) => {
   }
 }
 
-// Fetch devices from API
+// Fetch devices from API with pagination
 const fetchDevices = async () => {
-  loading.value = true
+  // Don't show loading for subsequent searches to prevent input focus loss
+  if (devices.value.length === 0) {
+    loading.value = true
+  }
   error.value = null
 
   try {
-    devices.value = await getDevices()
+    // For server-side pagination
+    const response = await getPaginatedDevices({
+      page: currentPage.value,
+      pageSize: pageSize.value,
+      sortField: sortField.value,
+      sortDirection: sortDirection.value,
+      search: searchQuery.value,
+      type: manufacturerFilter.value !== 'all' ? manufacturerFilter.value : undefined,
+      warranty: warrantyFilter.value !== 'all' ? warrantyFilter.value : undefined
+    });
+    
+    devices.value = response.data;
+    totalItems.value = response.total;
+    totalPages.value = response.totalPages;
   } catch (err) {
     console.error("Failed to fetch devices:", err)
     error.value = "Failed to load devices. Please try again later."
@@ -75,94 +103,24 @@ onMounted(() => {
   fetchDevices()
 })
 
-// Filter devices based on search query and filters
-const filteredDevices = computed(() => {
-  if (!devices.value.length) return []
+// Watch for changes in pagination, sorting, or filtering to refetch data
+watch(
+  [currentPage, pageSize, sortField, sortDirection, searchQuery, manufacturerFilter, warrantyFilter],
+  () => {
+    fetchDevices();
+  }
+);
 
-  return devices.value.filter((device) => {
-    // Text search (case insensitive)
-    const searchLower = searchQuery.value.toLowerCase()
-    const matchesSearch =
-      searchQuery.value === "" ||
-      device.name.toLowerCase().includes(searchLower) ||
-      device.hostname.toLowerCase().includes(searchLower) ||
-      device.serial_number.toLowerCase().includes(searchLower) ||
-      device.model.toLowerCase().includes(searchLower) ||
-      (device.type && device.type.toLowerCase().includes(searchLower))
-
-    // Type filter
-    const matchesType =
-      typeFilter.value === "all" || 
-      (device.type && device.type === typeFilter.value)
-
-    // Warranty filter
-    const matchesWarranty =
-      warrantyFilter.value === "all" ||
-      device.warranty_status === warrantyFilter.value
-
-    return matchesSearch && matchesType && matchesWarranty
-  })
+// Get unique manufacturers from devices (for filter options)
+const availableManufacturers = computed(() => {
+  // Common manufacturers from Microsoft Intune data
+  return ['Microsoft Corporation', 'Dell Inc.', 'HP Inc.', 'Lenovo', 'Apple Inc.', 'ASUS', 'Acer'];
 })
 
-// Sort devices based on current sort field and direction
-const sortedDevices = computed(() => {
-  if (!filteredDevices.value.length) return []
-
-  return [...filteredDevices.value].sort((a, b) => {
-    let valueA, valueB
-
-    // Extract the values to compare based on the sort field
-    switch (sortField.value) {
-      case "id":
-        valueA = a.id
-        valueB = b.id
-        break
-      case "name":
-        valueA = a.name.toLowerCase()
-        valueB = b.name.toLowerCase()
-        break
-      case "type":
-        valueA = (a.type || '').toLowerCase()
-        valueB = (b.type || '').toLowerCase()
-        break
-      case "model":
-        valueA = a.model.toLowerCase()
-        valueB = b.model.toLowerCase()
-        break
-      case "warranty_status":
-        valueA = a.warranty_status.toLowerCase()
-        valueB = b.warranty_status.toLowerCase()
-        break
-      case "lastSeen":
-        valueA = a.lastSeen ? new Date(a.lastSeen).getTime() : 0
-        valueB = b.lastSeen ? new Date(b.lastSeen).getTime() : 0
-        break
-      default:
-        valueA = a.id
-        valueB = b.id
-    }
-
-    // Compare the values based on sort direction
-    if (sortDirection.value === "asc") {
-      return valueA > valueB ? 1 : valueA < valueB ? -1 : 0
-    } else {
-      return valueA < valueB ? 1 : valueA > valueB ? -1 : 0
-    }
-  })
-})
-
-// Get unique device types from devices
-const availableTypes = computed(() => {
-  if (!devices.value.length) return []
-  const types = new Set(devices.value.map((device) => device.type).filter(Boolean))
-  return Array.from(types) as string[]
-})
-
-// Get unique warranty statuses from devices
+// Get unique warranty statuses from devices (for filter options)
 const availableWarrantyStatuses = computed(() => {
-  if (!devices.value.length) return []
-  const statuses = new Set(devices.value.map((device) => device.warranty_status))
-  return Array.from(statuses) as string[]
+  // Based on our compliance state mapping
+  return ['Active', 'Warning', 'Expired', 'Unknown'];
 })
 
 // Prepare filter options for BaseListView
@@ -170,12 +128,12 @@ const filterOptions = computed(() => {
   return [
     {
       name: 'type',
-      value: typeFilter.value,
+      value: manufacturerFilter.value,
       options: [
-        { value: 'all', label: 'All Types' },
-        ...availableTypes.value.map(type => ({ value: type, label: type }))
+        { value: 'all', label: 'All Manufacturers' },
+        ...availableManufacturers.value.map(manufacturer => ({ value: manufacturer, label: manufacturer }))
       ],
-      width: 'w-[120px]'
+      width: 'w-[160px]'
     },
     {
       name: 'warranty',
@@ -192,23 +150,27 @@ const filterOptions = computed(() => {
 // Reset all filters
 const resetFilters = () => {
   searchQuery.value = ""
-  typeFilter.value = "all"
+  manufacturerFilter.value = "all"
   warrantyFilter.value = "all"
+  currentPage.value = 1
+  fetchDevices()
 }
 
 // Handle filter updates from BaseListView
 const handleFilterUpdate = (name: string, value: string) => {
   if (name === 'type') {
-    typeFilter.value = value
+    manufacturerFilter.value = value
   } else if (name === 'warranty') {
     warrantyFilter.value = value
   }
+  currentPage.value = 1 // Reset to first page when filters change
 }
 
 // Handle sort update from BaseListView
 const handleSortUpdate = (field: string, direction: 'asc' | 'desc') => {
   sortField.value = field;
   sortDirection.value = direction;
+  currentPage.value = 1 // Reset to first page when sort changes
 };
 
 const toggleSelection = (event: Event, deviceId: number) => {
@@ -220,10 +182,10 @@ const toggleSelection = (event: Event, deviceId: number) => {
     event.shiftKey &&
     lastSelectedDeviceId.value !== null
   ) {
-    const currentIndex = sortedDevices.value.findIndex(
+    const currentIndex = devices.value.findIndex(
       (device) => device.id === deviceId
     )
-    const lastIndex = sortedDevices.value.findIndex(
+    const lastIndex = devices.value.findIndex(
       (device) => device.id === lastSelectedDeviceId.value
     )
 
@@ -231,7 +193,7 @@ const toggleSelection = (event: Event, deviceId: number) => {
       const startIndex = Math.min(currentIndex, lastIndex)
       const endIndex = Math.max(currentIndex, lastIndex)
 
-      const devicesToSelect = sortedDevices.value
+      const devicesToSelect = devices.value
         .slice(startIndex, endIndex + 1)
         .map((device) => device.id)
 
@@ -277,7 +239,7 @@ const toggleAllDevices = (event: Event) => {
   
   // If we're checking the box, select all visible devices
   if (checkbox.checked) {
-    selectedDevices.value = sortedDevices.value.map((device) => device.id)
+    selectedDevices.value = devices.value.map((device) => device.id)
   } 
   // If unchecking, clear all selections
   else {
@@ -313,44 +275,110 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
     isCreatingDevice.value = false
   }
 }
+
+// Handle page change
+const handlePageChange = (page: number) => {
+  currentPage.value = page;
+};
+
+// Handle page size change
+const handlePageSizeChange = (size: number) => {
+  pageSize.value = size;
+  currentPage.value = 1; // Reset to first page when changing page size
+};
 </script>
 
 <template>
-  <div>
-    <BaseListView
+  <div class="flex flex-col h-full overflow-hidden">
+    <!-- Search and filter bar - OUTSIDE of BaseListView -->
+    <div class="sticky top-0 z-20 bg-slate-800 border-b border-slate-700 shadow-md">
+      <div class="p-2 flex items-center gap-2 flex-wrap">
+        <!-- Search input - completely isolated -->
+        <DebouncedSearchInput
+          v-model="searchQuery"
+          :placeholder="`Search devices...`"
+        />
+
+        <!-- Filters -->
+        <template v-if="filterOptions.length > 0">
+          <div 
+            v-for="filter in filterOptions" 
+            :key="filter.name"
+            :class="[filter.width || 'w-[120px]']"
+          >
+            <select
+              :value="filter.value"
+              @change="e => handleFilterUpdate(filter.name, (e.target as HTMLSelectElement).value)"
+              class="bg-slate-700 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full py-1 px-2"
+            >
+              <option
+                v-for="option in filter.options"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Reset filters button -->
+          <button
+            @click="resetFilters"
+            class="px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800"
+          >
+            Reset
+          </button>
+        </template>
+
+        <!-- Add button -->
+        <button
+          @click="handleAddDevice"
+          class="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:ring-2 focus:outline-none focus:ring-green-800 ml-auto"
+        >
+          Add Device
+        </button>
+
+        <!-- Results count -->
+        <div class="text-xs text-gray-400">
+          {{ totalItems }} result{{ totalItems !== 1 ? "s" : "" }}
+        </div>
+      </div>
+    </div>
+
+    <!-- List View - WITHOUT search - flex-1 to take remaining space -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <BaseListView
       title="Devices"
-      :search-query="searchQuery"
+      :search-query="''" 
       :is-loading="loading"
-      :is-empty="sortedDevices.length === 0"
+      :is-empty="devices.length === 0 && !loading"
       :error="error"
-      :filters="filterOptions"
-      :results-count="sortedDevices.length"
+      :filters="[]"
+      :results-count="totalItems"
       :selected-items="selectedDevices.map(id => id.toString())"
-      :visible-items="sortedDevices"
+      :visible-items="devices"
       :item-id-field="'id'"
       :enable-selection="true"
       :sort-field="sortField"
       :sort-direction="sortDirection"
       :columns="columns"
-      @update:search-query="value => searchQuery = value"
+      :show-add-button="false"
       @update:filter="handleFilterUpdate"
       @update:sort="handleSortUpdate"
       @toggle-selection="(event, id) => toggleSelection(event, parseInt(id, 10))"
       @toggle-all="toggleAllDevices"
-      @reset-filters="resetFilters"
-      @add="handleAddDevice"
       @retry="fetchDevices"
     >
       <!-- Desktop Table View -->
       <template #default>
-        <div class="min-w-[960px]">
+        <div class="min-w-[700px]">
           <div
-            v-for="device in sortedDevices"
+            v-for="device in devices"
             :key="device.id"
-            class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-1"
+            class="flex items-center h-12 border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer"
             @click="navigateToDevice(device.id)"
           >
-            <div class="flex items-center p-3 w-10 flex-shrink-0">
+            <div class="flex items-center justify-center px-3 w-16 flex-shrink-0">
               <input
                 type="checkbox"
                 class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
@@ -358,31 +386,39 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
                 @click.stop="(event) => toggleSelection(event, device.id)"
               />
             </div>
-            <div class="flex items-center p-3 w-20 flex-shrink-0">
+            <div class="flex items-center px-3 w-16 flex-shrink-0 text-xs text-gray-400">
               #{{ device.id }}
             </div>
-            <div class="flex items-center p-3 flex-1 min-w-0">
-              <div class="truncate">{{ device.name }}</div>
+            <div class="flex items-center px-3 flex-1 min-w-0">
+              <div class="truncate font-medium">{{ device.name }}</div>
             </div>
-            <div class="flex items-center p-3 w-32 flex-shrink-0">
-              {{ device.type || 'N/A' }}
+            <div class="flex items-center px-3 flex-1 min-w-0">
+              <div class="truncate text-sm">{{ device.manufacturer || 'Unknown' }}</div>
             </div>
-            <div class="flex items-center p-3 w-32 flex-shrink-0">
-              {{ device.model }}
+            <div class="flex items-center px-3 flex-1 min-w-0">
+              <div class="truncate text-sm">{{ device.model }}</div>
             </div>
-            <div class="flex items-center p-3 w-32 flex-shrink-0">
+            <div class="flex items-center px-3 flex-1 min-w-0">
+              <UserAvatar v-if="device.primary_user" :name="device.primary_user.uuid" size="sm" />
+              <span v-else class="text-sm text-gray-500">Unassigned</span>
+            </div>
+            <div class="flex items-center justify-center px-3 w-24 flex-shrink-0">
               <span 
+                class="text-xs px-2 py-1 rounded-full whitespace-nowrap"
                 :class="{
-                  'text-green-400': device.warranty_status === 'active',
-                  'text-yellow-400': device.warranty_status === 'expiring',
-                  'text-red-400': device.warranty_status === 'expired'
+                  'text-green-400 bg-green-900/20': device.warranty_status === 'Active',
+                  'text-yellow-400 bg-yellow-900/20': device.warranty_status === 'Warning',
+                  'text-red-400 bg-red-900/20': device.warranty_status === 'Expired',
+                  'text-gray-400 bg-gray-900/20': device.warranty_status === 'Unknown'
                 }"
               >
                 {{ device.warranty_status }}
               </span>
             </div>
-            <div class="flex items-center p-3 w-40 flex-shrink-0">
-              {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+            <div class="flex items-center px-3 flex-1 min-w-0">
+              <div class="truncate text-sm text-gray-400">
+                {{ device.updated_at ? formatDate(device.updated_at) : 'Never' }}
+              </div>
             </div>
           </div>
         </div>
@@ -392,12 +428,12 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
       <template #mobile-view>
         <div class="space-y-2 p-2">
           <div
-            v-for="device in sortedDevices"
+            v-for="device in devices"
             :key="device.id"
             @click="navigateToDevice(device.id)"
             class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
           >
-            <div class="flex items-start gap-3">
+            <div class="flex items-center gap-3">
               <div class="flex-shrink-0">
                 <input
                   type="checkbox"
@@ -407,37 +443,58 @@ const handleCreateDevice = async (deviceData: DeviceFormData) => {
                 />
               </div>
               <div class="flex-1 min-w-0">
-                <div class="flex items-center justify-between">
-                  <div class="font-medium truncate">{{ device.name }}</div>
+                <div class="flex items-center justify-between mb-2">
+                  <div class="font-medium truncate text-white">{{ device.name }}</div>
                   <div class="text-xs text-gray-400 ml-2">#{{ device.id }}</div>
                 </div>
-                <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                  <div class="bg-slate-700/50 px-2 py-1 rounded">
-                    {{ device.type || 'N/A' }}
-                  </div>
-                  <div class="bg-slate-700/50 px-2 py-1 rounded">
+                <div class="flex flex-wrap gap-1 mb-2">
+                  <span class="bg-slate-700/50 px-2 py-1 rounded text-xs">
+                    {{ device.manufacturer || 'Unknown' }}
+                  </span>
+                  <span class="bg-slate-700/50 px-2 py-1 rounded text-xs">
                     {{ device.model }}
-                  </div>
-                  <div 
-                    class="px-2 py-1 rounded"
+                  </span>
+                  <span 
+                    class="px-2 py-1 rounded text-xs"
                     :class="{
-                      'bg-green-900/30 text-green-400': device.warranty_status === 'active',
-                      'bg-yellow-900/30 text-yellow-400': device.warranty_status === 'expiring',
-                      'bg-red-900/30 text-red-400': device.warranty_status === 'expired'
+                      'bg-green-900/30 text-green-400': device.warranty_status === 'Active',
+                      'bg-yellow-900/30 text-yellow-400': device.warranty_status === 'Warning',
+                      'bg-red-900/30 text-red-400': device.warranty_status === 'Expired',
+                      'bg-gray-900/30 text-gray-400': device.warranty_status === 'Unknown'
                     }"
                   >
                     {{ device.warranty_status }}
-                  </div>
+                  </span>
                 </div>
-                <div class="mt-2 text-xs text-gray-400">
-                  Last seen: {{ device.lastSeen ? formatDate(device.lastSeen) : 'Never' }}
+                <div class="flex items-center justify-between text-xs">
+                  <div v-if="device.primary_user" class="flex items-center gap-2">
+                    <span class="text-gray-400">Assigned to:</span>
+                    <UserAvatar :name="device.primary_user.uuid" size="xs" />
+                  </div>
+                  <div v-else class="text-gray-500">Unassigned</div>
+                  <div class="text-gray-400">
+                    {{ device.updated_at ? formatDate(device.updated_at) : 'Never' }}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </template>
-    </BaseListView>
+              </template>
+      </BaseListView>
+    </div>
+
+    <!-- Pagination Controls -->
+    <PaginationControls
+      :current-page="currentPage"
+      :total-pages="totalPages"
+      :page-size="pageSize"
+      :page-size-options="pageSizeOptions"
+      :show-import="true"
+      @update:current-page="handlePageChange"
+      @update:page-size="handlePageSizeChange"
+      @import="() => {}"
+    />
 
     <!-- Add Device Modal -->
     <Modal
