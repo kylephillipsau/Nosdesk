@@ -1,106 +1,101 @@
 <!-- components/DeviceDetails.vue -->
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue';
+import { computed } from 'vue';
 import type { Device } from '@/types/ticket';
 
 const props = defineProps<Device>();
-
-type DeviceFieldKey = 'hostname' | 'serial_number' | 'model' | 'warranty_status';
-
-const editableDevice = reactive({
-  hostname: props.hostname,
-  serial_number: props.serial_number,
-  model: props.model,
-  warranty_status: props.warranty_status
-});
-
-const isEditing = ref(false); // Start in view mode
 
 const emit = defineEmits<{
   (e: 'remove'): void;
   (e: 'view', deviceId: number): void;
 }>();
 
-// Define device fields with their display labels
-const deviceFields = [
-  { key: 'hostname' as DeviceFieldKey, label: 'Hostname' },
-  { key: 'serial_number' as DeviceFieldKey, label: 'Serial Number' },
-  { key: 'model' as DeviceFieldKey, label: 'Model' },
-  { key: 'warranty_status' as DeviceFieldKey, label: 'Warranty Status' }
-];
-
-// Function to start editing
-const startEditing = () => {
-  isEditing.value = true;
-};
-
-// Function to stop editing when clicking outside
-const stopEditing = () => {
-  isEditing.value = false;
-};
-
-// Handle clicks outside of the editable inputs
-const handleClickOutside = (event: MouseEvent) => {
-  if (!(event.target instanceof HTMLElement) || !event.target.closest('.input-wrapper')) {
-    stopEditing();
-  }
-};
-
 // Function to handle view button click
 const handleViewClick = () => {
   emit('view', props.id);
 };
 
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside);
-});
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside);
+// Computed property for warranty status styling
+const warrantyStatusClass = computed(() => {
+  switch (props.warranty_status) {
+    case 'Active':
+      return 'bg-green-900/30 text-green-400 border-green-700/30';
+    case 'Warning':
+      return 'bg-yellow-900/30 text-yellow-400 border-yellow-700/30';
+    case 'Expired':
+      return 'bg-red-900/30 text-red-400 border-red-700/30';
+    default:
+      return 'bg-gray-900/30 text-gray-400 border-gray-700/30';
+  }
 });
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-lg overflow-hidden">
-    <div class="px-4 py-3 bg-slate-700/50 flex items-center justify-between">
-      <h2 class="text-lg font-medium text-slate-100">Device</h2>
-      <div class="flex items-center gap-2">
-        <button
-          @click="handleViewClick"
-          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
-          title="View device details"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-            <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
-          </svg>
-        </button>
-        <button
-          @click="emit('remove')"
-          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors"
-          title="Remove device"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-          </svg>
-        </button>
+  <div class="bg-slate-800 rounded-xl border border-slate-700/50 overflow-hidden hover:border-slate-600/50 transition-colors">
+    <!-- Header with device name and actions -->
+    <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <div class="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></div>
+          <h3 class="font-medium text-white truncate">{{ hostname || 'Unknown Device' }}</h3>
+          <div v-if="warranty_status" 
+               class="px-2 py-1 rounded-md text-xs font-medium border flex-shrink-0"
+               :class="warrantyStatusClass">
+            {{ warranty_status }}
+          </div>
+        </div>
+        
+        <!-- Action buttons -->
+        <div class="flex items-center gap-1 ml-2">
+          <button
+            @click="handleViewClick"
+            class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded-md transition-colors"
+            title="View device details"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </button>
+          <button
+            @click="emit('remove')"
+            class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-900/20 rounded-md transition-colors"
+            title="Remove device"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
-    <div class="p-2">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <!-- Use v-for to iterate through device fields -->
-        <div 
-          v-for="field in deviceFields" 
-          :key="field.key"
-          class="flex flex-col gap-1 bg-slate-700 p-2 rounded-xl shadow-inner input-wrapper"
-        >
-          <dt class="text-sm text-slate-400">{{ field.label }}</dt>
-          <input 
-            v-model="editableDevice[field.key]" 
-            :class="{'focus:bg-slate-600': isEditing}" 
-            @click="startEditing" 
-            class="text-slate-200 bg-slate-600 border-none p-2 rounded transition-colors duration-150" 
-          />
+    
+    <!-- Compact device information -->
+    <div class="p-4">
+      <div class="flex flex-col gap-3">
+        <!-- Primary info row -->
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Serial</span>
+            <span class="text-slate-200 font-mono text-xs">{{ serial_number || 'N/A' }}</span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Model</span>
+            <span class="text-slate-200 text-xs truncate">{{ model || 'Unknown' }}</span>
+          </div>
+        </div>
+        
+        <!-- Quick action button -->
+        <div class="pt-2 border-t border-slate-700/50">
+          <button
+            @click="handleViewClick"
+            class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/10 text-blue-400 rounded-lg hover:bg-blue-600/20 transition-colors text-sm font-medium"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            View Details
+          </button>
         </div>
       </div>
     </div>

@@ -10,6 +10,7 @@ pub mod linked_tickets;
 pub mod document_updates;
 pub mod article_content;
 pub mod user_auth_identities;
+pub mod sync_history;
 
 // Re-export from domain-specific modules
 pub use documentation::*;
@@ -22,6 +23,7 @@ pub use linked_tickets::*;
 pub use document_updates::*;
 pub use article_content::*;
 pub use auth_providers::*;
+pub use sync_history::*;
 
 // Note: We've completed the transition to a fully modular structure
 // by removing the base.rs file and keeping only domain-specific modules.

@@ -98,21 +98,7 @@ const transformDevice = (backendDevice: Device): TicketDevice => {
   };
 };
 
-// Add function to fetch users from the backend
-const fetchUsers = async () => {
-  loadingUsers.value = true;
-  usersError.value = null;
-  
-  try {
-    users.value = await userService.getUsers();
-    console.log('Users loaded:', users.value);
-  } catch (err) {
-    console.error('Error fetching users:', err);
-    usersError.value = 'Failed to load users. Using fallback data if available.';
-  } finally {
-    loadingUsers.value = false;
-  }
-};
+// Remove the fetchUsers function - we'll use the lookup service instead
 
 const fetchTicket = async (ticketId: string | string[]) => {
   const id = Number(ticketId);
@@ -130,6 +116,7 @@ const fetchTicket = async (ticketId: string | string[]) => {
     }
 
     console.log(`Received ticket data from server:`, fetchedTicket);
+    console.log(`Devices from server:`, fetchedTicket.devices);
     console.log(`Linked tickets from server:`, fetchedTicket.linked_tickets);
     console.log(`Projects from server:`, fetchedTicket.projects);
 
@@ -171,9 +158,21 @@ const fetchTicket = async (ticketId: string | string[]) => {
     });
 
     // Transform devices to match the frontend Device type
-    const transformedDevices = fetchedTicket.device 
-      ? [transformDevice(fetchedTicket.device)] 
-      : [];
+    let transformedDevices: TicketDevice[] = [];
+    
+    // Handle devices from backend (now supports multiple devices)
+    if (fetchedTicket.devices && fetchedTicket.devices.length > 0) {
+      transformedDevices = fetchedTicket.devices.map(device => ({
+        id: device.id,
+        name: device.name,
+        hostname: device.hostname,
+        serial_number: device.serial_number,
+        model: device.model,
+        warranty_status: device.warranty_status
+      }));
+    }
+    
+    console.log('Transformed devices:', transformedDevices);
 
     // Update the ticket with the fetched data
     ticket.value = {
@@ -270,13 +269,9 @@ const refreshTicket = async () => {
   }
 };
 
-// Format users for the UserSelection component
+// Format users for the UserSelection component - now empty since we use lookup service
 const formattedUsers = computed(() => {
-  return users.value.map(user => ({
-    id: user.uuid,
-    name: user.name,
-    email: user.email
-  }));
+  return []; // UserSelection component will be updated to use lookup service
 });
 
 const formattedDate = (dateString: string | undefined) => {
@@ -294,9 +289,8 @@ const formattedDate = (dateString: string | undefined) => {
 const formattedCreatedDate = computed(() => formattedDate(ticket.value?.created));
 const formattedModifiedDate = computed(() => formattedDate(ticket.value?.modified));
 
-// Fetch users and ticket data when component mounts
+// Fetch ticket data when component mounts
 onMounted(async () => {
-  await fetchUsers();
   if (route.params.id) {
     fetchTicket(route.params.id);
   }
@@ -532,81 +526,41 @@ const updateTicketTitle = async (newTitle: string) => {
 
 const handleAddDevice = async (device: Device) => {
   if (ticket.value) {
-    if (!ticket.value.devices) {
-      ticket.value.devices = [];
-    }
-    
     try {
       console.log(`Adding device ${device.id} to ticket ${ticket.value.id}`);
       
-      // Create a new object with the correct types for the API
-      const deviceUpdate = {
-        name: device.name,
-        hostname: device.hostname,
-        serial_number: device.serial_number,
-        model: device.model,
-        warranty_status: device.warranty_status,
-        ticket_id: ticket.value.id
-      };
+      // Use the new ticket service to add device to ticket
+      await ticketService.addDeviceToTicket(ticket.value.id, device.id);
+      console.log(`Device ${device.id} added to ticket ${ticket.value.id}`);
       
-      // Update the device's ticket_id
-      const updatedDevice = await deviceService.updateDevice(device.id, deviceUpdate);
-      
-      // Add the device to the local state
-      ticket.value.devices.push(transformDevice(updatedDevice));
+      // Close the modal
       showDeviceModal.value = false;
       
-      // Refresh the ticket data to ensure it's up to date
+      // Refresh the ticket data to get the updated device information
       await refreshTicket();
       
       console.log(`Successfully added device ${device.id} to ticket ${ticket.value.id}`);
     } catch (err) {
       console.error(`Error adding device to ticket:`, err);
-      // Revert UI if update fails
-      if (ticket.value.devices) {
-        ticket.value.devices = ticket.value.devices.filter(d => d.id !== device.id);
-      }
     }
   }
 };
 
 const removeDevice = async (deviceId: number) => {
-  if (ticket.value && ticket.value.devices) {
-    const originalDevices = [...ticket.value.devices];
+  if (ticket.value) {
     try {
       console.log(`Removing device ${deviceId} from ticket ${ticket.value.id}`);
       
-      // Find the device to remove
-      const deviceToRemove = ticket.value.devices.find(d => d.id === deviceId);
-      if (!deviceToRemove) {
-        console.error(`Device ${deviceId} not found in ticket ${ticket.value.id}`);
-        return;
-      }
+      // Use the new ticket service to remove device from ticket
+      await ticketService.removeDeviceFromTicket(ticket.value.id, deviceId);
+      console.log(`Device ${deviceId} removed from ticket ${ticket.value.id}`);
       
-      // Create a new object with the correct types for the API
-      const deviceUpdate = {
-        name: deviceToRemove.name,
-        hostname: deviceToRemove.hostname,
-        serial_number: deviceToRemove.serial_number,
-        model: deviceToRemove.model,
-        warranty_status: deviceToRemove.warranty_status,
-        ticket_id: null
-      };
-      
-      // Update the device to remove the ticket_id
-      await deviceService.updateDevice(deviceId, deviceUpdate);
-      
-      // Remove the device from the local state
-      ticket.value.devices = ticket.value.devices.filter(d => d.id !== deviceId);
-      
-      // Refresh the ticket data to ensure it's up to date
+      // Refresh the ticket data to get the updated device information
       await refreshTicket();
       
       console.log(`Successfully removed device ${deviceId} from ticket ${ticket.value.id}`);
     } catch (err) {
       console.error(`Error removing device from ticket:`, err);
-      // Revert UI if update fails
-      ticket.value.devices = originalDevices;
     }
   }
 };
@@ -984,6 +938,7 @@ const navigateToDeviceView = (deviceId: number) => {
                 :show="showDeviceModal"
                 :current-ticket-id="ticket?.id"
                 :existing-device-ids="ticket?.devices?.map(d => d.id) || []"
+                :requester-uuid="ticket?.requester"
                 @close="showDeviceModal = false"
                 @select-device="handleAddDevice"
               />

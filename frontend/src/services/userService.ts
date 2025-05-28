@@ -11,6 +11,28 @@ export interface User {
   pronouns?: string | null;
   avatar_url?: string | null;
   banner_url?: string | null;
+  avatar_thumb?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Pagination interface
+export interface PaginationParams {
+  page: number;
+  pageSize: number;
+  sortField?: string;
+  sortDirection?: 'asc' | 'desc';
+  search?: string;
+  role?: string;
+}
+
+// Paginated response interface
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 // Auth Identity interface
@@ -21,6 +43,37 @@ export interface AuthIdentity {
   email: string | null;
   created_at: string;
 }
+
+// Request cancellation manager
+class RequestManager {
+  private activeRequests = new Map<string, AbortController>();
+
+  createRequest(key: string): AbortController {
+    // Cancel any existing request with the same key
+    this.cancelRequest(key);
+    
+    // Create new abort controller
+    const controller = new AbortController();
+    this.activeRequests.set(key, controller);
+    
+    return controller;
+  }
+
+  cancelRequest(key: string): void {
+    const controller = this.activeRequests.get(key);
+    if (controller) {
+      controller.abort();
+      this.activeRequests.delete(key);
+    }
+  }
+
+  cancelAllRequests(): void {
+    this.activeRequests.forEach(controller => controller.abort());
+    this.activeRequests.clear();
+  }
+}
+
+const requestManager = new RequestManager();
 
 // Service for user-related API calls
 const userService = {
@@ -40,6 +93,32 @@ const userService = {
       console.error('Error fetching users:', error);
       // Return empty array instead of throwing to prevent component failures
       return [];
+    }
+  },
+
+  // Get paginated users with cancellation support
+  async getPaginatedUsers(params: PaginationParams, requestKey: string = 'paginated-users'): Promise<PaginatedResponse<User>> {
+    try {
+      // Create cancellable request
+      const controller = requestManager.createRequest(requestKey);
+      
+      const response = await apiClient.get(`/users/paginated`, { 
+        params,
+        signal: controller.signal 
+      });
+      
+      // Remove from active requests on success
+      requestManager.cancelRequest(requestKey);
+      
+      return response.data;
+    } catch (error: any) {
+      // Don't throw if request was cancelled
+      if (error.name === 'AbortError' || error.name === 'CanceledError') {
+        console.log('Request cancelled:', requestKey);
+        throw new Error('REQUEST_CANCELLED');
+      }
+      console.error('Error fetching paginated users:', error);
+      throw error;
     }
   },
 
@@ -319,6 +398,11 @@ const userService = {
       console.error(`Error uploading ${type} image:`, error);
       return null;
     }
+  },
+
+  // Cancel all active requests
+  cancelAllRequests(): void {
+    requestManager.cancelAllRequests();
   }
 };
 

@@ -181,8 +181,8 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     let ticket = get_ticket_by_id(conn, ticket_id)?;
     println!("Found ticket: {} - {}", ticket.id, ticket.title);
     
-    // Get device for this ticket
-    let device = crate::repository::devices::get_device_by_ticket_id(conn, ticket_id).ok();
+    // Get devices associated with this ticket through the junction table
+    let devices = get_devices_for_ticket(conn, ticket_id).unwrap_or_default();
     
     // Get comments for this ticket
     let comments = crate::repository::comments::get_comments_by_ticket_id(conn, ticket_id)?;
@@ -223,7 +223,7 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     
     Ok(CompleteTicket {
         ticket,
-        device,
+        devices,
         comments: comments_with_attachments,
         article_content,
         linked_tickets,
@@ -272,7 +272,7 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
     
     let ticket = create_ticket(conn, new_ticket)?;
     
-    // Create device if present
+    // Create device if present (without ticket association)
     if let Some(device_json) = &ticket_json.device {
         let new_device = NewDevice {
             name: device_json.name.clone(),
@@ -280,7 +280,10 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
             serial_number: device_json.serial_number.clone(),
             model: device_json.model.clone(),
             warranty_status: device_json.warranty_status.clone(),
-            ticket_id: ticket.id,
+            manufacturer: None, // Will be populated during Microsoft Entra sync
+            primary_user_uuid: None, // Will be populated during Microsoft Entra sync
+            intune_device_id: None,
+            entra_device_id: None,
         };
         
         crate::repository::devices::create_device(conn, new_device)?;
@@ -367,7 +370,7 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     
     let ticket = create_ticket(conn, new_ticket)?;
     
-    // Create device if present
+    // Create device if present (without ticket association)
     if let Some(device_json) = &ticket_json.device {
         let new_device = NewDevice {
             name: device_json.name.clone(),
@@ -375,7 +378,10 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
             serial_number: device_json.serial_number.clone(),
             model: device_json.model.clone(),
             warranty_status: device_json.warranty_status.clone(),
-            ticket_id: ticket.id,
+            manufacturer: None, // Will be populated during Microsoft Entra sync
+            primary_user_uuid: None, // Will be populated during Microsoft Entra sync
+            intune_device_id: None,
+            entra_device_id: None,
         };
         
         crate::repository::devices::create_device(conn, new_device)?;
@@ -420,4 +426,40 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     }
     
     Ok(ticket)
+}
+
+// Ticket-Device relationship functions
+pub fn add_device_to_ticket(conn: &mut DbConnection, ticket_id: i32, device_id: i32) -> QueryResult<TicketDevice> {
+    let new_ticket_device = NewTicketDevice {
+        ticket_id,
+        device_id,
+    };
+    
+    diesel::insert_into(ticket_devices::table)
+        .values(&new_ticket_device)
+        .get_result(conn)
+}
+
+pub fn remove_device_from_ticket(conn: &mut DbConnection, ticket_id: i32, device_id: i32) -> QueryResult<usize> {
+    diesel::delete(
+        ticket_devices::table
+            .filter(ticket_devices::ticket_id.eq(ticket_id))
+            .filter(ticket_devices::device_id.eq(device_id))
+    ).execute(conn)
+}
+
+pub fn get_devices_for_ticket(conn: &mut DbConnection, ticket_id: i32) -> QueryResult<Vec<Device>> {
+    ticket_devices::table
+        .inner_join(devices::table)
+        .filter(ticket_devices::ticket_id.eq(ticket_id))
+        .select(devices::all_columns)
+        .load(conn)
+}
+
+pub fn get_tickets_for_device(conn: &mut DbConnection, device_id: i32) -> QueryResult<Vec<Ticket>> {
+    ticket_devices::table
+        .inner_join(tickets::table)
+        .filter(ticket_devices::device_id.eq(device_id))
+        .select(tickets::all_columns)
+        .load(conn)
 } 

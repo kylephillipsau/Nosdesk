@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
 import BackButton from "@/components/common/BackButton.vue";
@@ -19,6 +19,22 @@ const graphApiResults = ref<any>(null);
 const permissionTestResults = ref<any>(null);
 const syncResults = ref<any>(null);
 
+// Progress tracking state
+const syncProgress = ref<any>(null);
+const currentSessionId = ref<string | null>(null);
+const progressPollingInterval = ref<number | null>(null);
+const isSyncing = ref(false);
+
+// Active syncs management
+const activeSyncs = ref<any[]>([]);
+const isLoadingActiveSyncs = ref(false);
+
+// Last sync details
+const lastSyncDetails = ref<any>(null);
+const isLoadingLastSync = ref(false);
+
+
+
 // Connection details
 const graphConfig = ref({
   clientId: "",
@@ -32,22 +48,22 @@ const microsoftAuthProviderFound = ref(false);
 const microsoftAuthProviderId = ref<string | null>(null);
 
 // Import options
-const selectedEntities = ref(["devices", "users"]);
+const selectedEntities = ref(["users", "devices"]);
 const availableEntities = [
-  {
-    id: "devices",
-    name: "Devices",
-    description: "Import device information from Intune",
-  },
   {
     id: "users",
     name: "Users",
-    description: "Import user information from Azure AD",
+    description: "Import user accounts and profiles from Microsoft Entra ID",
+  },
+  {
+    id: "devices",
+    name: "Devices",
+    description: "Import managed devices from Microsoft Intune with user assignments",
   },
   {
     id: "groups",
     name: "Groups",
-    description: "Import security and distribution groups",
+    description: "Import security and distribution groups from Microsoft Entra ID",
   },
 ];
 
@@ -168,49 +184,90 @@ const syncData = () => {
   showSyncModal.value = true;
 };
 
-// Sync profile photos
-const syncProfilePhotos = async () => {
-  isLoading.value = true;
-  errorMessage.value = null;
-  syncResults.value = null;
 
-  try {
-    const response = await axios.post("/api/integrations/graph/sync-photos");
 
-    if (response.data.success) {
-      successMessage.value = response.data.message || "Profile photos synced successfully";
-      
-      // Store detailed sync results
-      syncResults.value = {
-        success: true,
-        message: response.data.message,
-        results: [{
-          entity: "profile_photos",
-          processed: response.data.photos_synced,
-          total: response.data.total_users,
-          status: response.data.photos_failed > 0 ? "completed_with_errors" : "completed",
-          errors: response.data.errors || []
-        }],
-        total_processed: response.data.photos_synced,
-        total_errors: response.data.photos_failed
-      };
-      
-      console.log("Profile photo sync results:", response.data);
-    } else {
-      errorMessage.value = response.data.message || "Failed to sync profile photos";
-    }
-
-    setTimeout(() => {
-      successMessage.value = null;
-    }, 5000);
-  } catch (error: any) {
-    console.error("Failed to sync profile photos:", error);
-    errorMessage.value =
-      error.response?.data?.message || "Failed to sync profile photos";
-  } finally {
-    isLoading.value = false;
+// Toggle entity selection
+const toggleEntity = (entityId: string) => {
+  if (selectedEntities.value.includes(entityId)) {
+    selectedEntities.value = selectedEntities.value.filter(
+      (id) => id !== entityId
+    );
+  } else {
+    selectedEntities.value.push(entityId);
   }
 };
+
+// Progress polling functions
+const startProgressPolling = (sessionId: string) => {
+  currentSessionId.value = sessionId;
+  isSyncing.value = true;
+  syncProgress.value = null;
+  
+  // Poll every 1 second
+  progressPollingInterval.value = setInterval(async () => {
+    try {
+      const response = await axios.get(`/api/integrations/graph/progress/${sessionId}`);
+      syncProgress.value = response.data;
+      
+      // Stop polling if sync is completed or failed
+      if (response.data.status === 'completed' || response.data.status === 'error' || response.data.status === 'cancelled') {
+        stopProgressPolling();
+      }
+    } catch (error: any) {
+      console.error("Failed to fetch sync progress:", error);
+      // If we get a 404, the session might be completed or expired
+      if (error?.response?.status === 404) {
+        stopProgressPolling();
+      }
+    }
+  }, 1000);
+};
+
+const stopProgressPolling = () => {
+  if (progressPollingInterval.value) {
+    clearInterval(progressPollingInterval.value);
+    progressPollingInterval.value = null;
+  }
+  isSyncing.value = false;
+  currentSessionId.value = null;
+  
+  // Refresh last sync details when polling stops
+  fetchLastSyncDetails();
+};
+
+
+
+// Cancel a sync session
+const cancelSync = async (sessionId: string) => {
+  try {
+    const response = await axios.post(`/api/integrations/graph/cancel/${sessionId}`);
+    
+    if (response.data.success) {
+      successMessage.value = response.data.message || "Sync cancellation requested";
+      
+      // If this is the current session, stop polling
+      if (currentSessionId.value === sessionId) {
+        stopProgressPolling();
+      }
+    } else {
+      errorMessage.value = response.data.message || "Failed to cancel sync";
+    }
+    
+    setTimeout(() => {
+      successMessage.value = null;
+      errorMessage.value = null;
+    }, 3000);
+  } catch (error: any) {
+    console.error("Failed to cancel sync:", error);
+    errorMessage.value = error.response?.data?.message || "Failed to cancel sync";
+    
+    setTimeout(() => {
+      errorMessage.value = null;
+    }, 3000);
+  }
+};
+
+
 
 // Start sync process
 const startSync = async () => {
@@ -226,26 +283,21 @@ const startSync = async () => {
 
     showSyncModal.value = false;
 
-    if (response.data.success) {
-      successMessage.value = response.data.message || "Sync completed successfully";
-      lastSync.value = new Date().toLocaleString();
+    if (response.data.success && response.data.session_id) {
+      successMessage.value = response.data.message || "Sync started successfully";
       
-      // Store detailed sync results
-      syncResults.value = response.data;
+      // Start progress polling
+      startProgressPolling(response.data.session_id);
       
-      // Log sync details for debugging
-      console.log("Sync results:", response.data);
+      // Log session details for debugging
+      console.log("Sync started with session ID:", response.data.session_id);
     } else {
       errorMessage.value = response.data.message || "Failed to start sync";
-      // Store failed sync results too for debugging
-      if (response.data.results) {
-        syncResults.value = response.data;
-      }
     }
 
     setTimeout(() => {
       successMessage.value = null;
-    }, 5000); // Show success message longer for sync operations
+    }, 3000);
   } catch (error: any) {
     console.error("Failed to start sync:", error);
     errorMessage.value =
@@ -255,16 +307,10 @@ const startSync = async () => {
   }
 };
 
-// Toggle entity selection
-const toggleEntity = (entityId: string) => {
-  if (selectedEntities.value.includes(entityId)) {
-    selectedEntities.value = selectedEntities.value.filter(
-      (id) => id !== entityId
-    );
-  } else {
-    selectedEntities.value.push(entityId);
-  }
-};
+// Cleanup on component unmount
+onUnmounted(() => {
+  stopProgressPolling();
+});
 
 // Format status for display
 const getStatusDisplay = (status: string) => {
@@ -303,8 +349,103 @@ const handleConfigured = async () => {
   await fetchConnectionStatus();
 };
 
-onMounted(() => {
-  fetchConnectionStatus();
+// Format sync type for display
+const formatSyncType = (syncType: string) => {
+  switch (syncType) {
+    case 'users':
+      return 'User Accounts';
+    case 'profile_photos':
+      return 'Profile Photos';
+    case 'devices':
+      return 'Managed Devices';
+    case 'groups':
+      return 'Security Groups';
+    default:
+      return syncType.charAt(0).toUpperCase() + syncType.slice(1);
+  }
+};
+
+// Format time ago
+const formatTimeAgo = (dateString: string) => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+};
+
+// Format duration between two dates
+const formatDuration = (startDate: string, endDate: string) => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const diffMs = end.getTime() - start.getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  
+  if (diffSeconds < 60) return `${diffSeconds}s`;
+  
+  const diffMins = Math.floor(diffSeconds / 60);
+  if (diffMins < 60) return `${diffMins}m ${diffSeconds % 60}s`;
+  
+  const diffHours = Math.floor(diffMins / 60);
+  return `${diffHours}h ${diffMins % 60}m`;
+};
+
+// Fetch active syncs
+const fetchActiveSyncs = async () => {
+  isLoadingActiveSyncs.value = true;
+  try {
+    const response = await axios.get("/api/integrations/graph/active-syncs");
+    activeSyncs.value = response.data.active_syncs || [];
+    
+    // If there are active syncs and we're not currently monitoring one, start monitoring the first one
+    if (activeSyncs.value.length > 0 && !isSyncing.value) {
+      const activeSync = activeSyncs.value[0];
+      console.log("Found active sync, resuming monitoring:", activeSync.session_id);
+      startProgressPolling(activeSync.session_id);
+    }
+  } catch (error: any) {
+    console.error("Failed to fetch active syncs:", error);
+    // Don't show error message for this as it's a background operation
+  } finally {
+    isLoadingActiveSyncs.value = false;
+  }
+};
+
+// Resume monitoring an active sync
+const resumeSync = (sessionId: string) => {
+  if (currentSessionId.value !== sessionId) {
+    stopProgressPolling();
+    startProgressPolling(sessionId);
+  }
+};
+
+// Fetch last sync details
+const fetchLastSyncDetails = async () => {
+  isLoadingLastSync.value = true;
+  try {
+    const response = await axios.get("/api/integrations/graph/last-sync");
+    lastSyncDetails.value = response.data;
+  } catch (error: any) {
+    console.error("Failed to fetch last sync details:", error);
+    // Don't show error message for this as it's a background operation
+    lastSyncDetails.value = null;
+  } finally {
+    isLoadingLastSync.value = false;
+  }
+};
+
+onMounted(async () => {
+  await fetchConnectionStatus();
+  await fetchActiveSyncs();
+  await fetchLastSyncDetails();
 });
 </script>
 
@@ -431,7 +572,7 @@ onMounted(() => {
             <button
               @click="syncData"
               class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
-              :disabled="connectionStatus !== 'connected' || isLoading"
+              :disabled="connectionStatus !== 'connected' || isLoading || isSyncing"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -447,30 +588,11 @@ onMounted(() => {
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>
-              Sync Data
+              <span v-if="isSyncing">Syncing...</span>
+              <span v-else>Sync Data</span>
             </button>
 
-            <button
-              @click="syncProfilePhotos"
-              class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
-              :disabled="connectionStatus !== 'connected' || isLoading"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                />
-              </svg>
-              Sync Profile Photos (64x64)
-            </button>
+
           </div>
         </div>
       </div>
@@ -521,6 +643,316 @@ onMounted(() => {
           </div>
         </div>
       </div>
+
+      <!-- Sync Progress / Active Synchronizations -->
+      <div 
+        v-if="(isSyncing && syncProgress) || (activeSyncs.length > 0 && !isSyncing) || isLoadingActiveSyncs" 
+        class="bg-slate-800 border border-slate-700 rounded-lg p-6"
+      >
+        <!-- Show real-time progress when actively monitoring a sync -->
+        <div v-if="isSyncing && syncProgress">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-medium text-white">
+              Sync Progress
+            </h2>
+            <button
+              v-if="syncProgress.can_cancel && (syncProgress.status === 'running' || syncProgress.status === 'starting') && currentSessionId"
+              @click="cancelSync(currentSessionId!)"
+              class="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm flex items-center gap-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Cancel
+            </button>
+          </div>
+          
+          <div class="flex flex-col gap-2">
+            <!-- Header with operation and status -->
+            <div class="flex items-center justify-between">
+              <div class="flex flex-col gap-2">
+                <h3 class="text-lg font-medium text-white">
+                  {{ formatSyncType(syncProgress.sync_type || syncProgress.entity) }}
+                </h3>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="px-2 py-1 text-xs rounded-full" :class="{
+                    'bg-blue-900/50 text-blue-400 border border-blue-700': syncProgress.status === 'running' || syncProgress.status === 'starting',
+                    'bg-green-900/50 text-green-400 border border-green-700': syncProgress.status === 'completed',
+                    'bg-red-900/50 text-red-400 border border-red-700': syncProgress.status === 'error',
+                    'bg-yellow-900/50 text-yellow-400 border border-yellow-700': syncProgress.status === 'cancelling',
+                    'bg-orange-900/50 text-orange-400 border border-orange-700': syncProgress.status === 'cancelled'
+                  }">
+                    {{ syncProgress.status }}
+                  </span>
+                </div>
+              </div>
+              
+              <!-- Progress stats -->
+              <div class="text-right">
+                <div class="text-lg font-medium text-white">
+                  {{ syncProgress.current }} / {{ syncProgress.total }}
+                </div>
+                <div v-if="syncProgress.total > 0" class="text-sm text-slate-400">
+                  {{ Math.round((syncProgress.current / syncProgress.total) * 100) }}% complete
+                </div>
+              </div>
+            </div>
+            
+            <!-- Progress Bar -->
+            <div class="space-y-2">
+              <div class="w-full bg-slate-600 rounded-full h-3">
+                <div 
+                  class="h-3 rounded-full transition-all duration-300" 
+                  :class="{
+                    'bg-blue-500': syncProgress.status === 'running' || syncProgress.status === 'starting',
+                    'bg-green-500': syncProgress.status === 'completed',
+                    'bg-red-500': syncProgress.status === 'error',
+                    'bg-yellow-500': syncProgress.status === 'cancelling',
+                    'bg-orange-500': syncProgress.status === 'cancelled'
+                  }"
+                  :style="{ 
+                    width: syncProgress.total > 0 
+                      ? `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` 
+                      : '0%' 
+                  }"
+                ></div>
+              </div>
+            </div>
+            
+            <!-- Status message -->
+            <div class="bg-slate-700/50 rounded-lg p-3">
+              <div class="text-sm text-slate-300">
+                {{ syncProgress.message }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Show active syncs when not actively monitoring -->
+        <div v-else>
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-medium text-white">
+              Active Synchronizations
+            </h2>
+            <button
+              @click="fetchActiveSyncs"
+              class="px-3 py-1 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors text-sm flex items-center gap-1"
+              :disabled="isLoadingActiveSyncs"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+          
+          <div v-if="isLoadingActiveSyncs" class="text-center py-4">
+            <div class="inline-flex items-center text-slate-400">
+              <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Loading active syncs...
+            </div>
+          </div>
+          
+          <div v-else-if="activeSyncs.length === 0" class="text-center py-4 text-slate-400">
+            No active synchronizations
+          </div>
+          
+          <div v-else class="space-y-3">
+            <div 
+              v-for="sync in activeSyncs" 
+              :key="sync.session_id"
+              class="p-4 bg-slate-700 rounded-lg border border-slate-600"
+            >
+              <div class="flex justify-between items-start">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2 mb-2">
+                    <h3 class="font-medium text-white">{{ formatSyncType(sync.sync_type) }}</h3>
+                    <span class="px-2 py-1 text-xs rounded-full" :class="{
+                      'bg-blue-900/50 text-blue-400 border border-blue-700': sync.status === 'running' || sync.status === 'starting',
+                      'bg-yellow-900/50 text-yellow-400 border border-yellow-700': sync.status === 'cancelling',
+                      'bg-green-900/50 text-green-400 border border-green-700': sync.status === 'completed',
+                      'bg-red-900/50 text-red-400 border border-red-700': sync.status === 'error'
+                    }">
+                      {{ sync.status }}
+                    </span>
+                  </div>
+                  
+                  <div class="text-sm text-slate-300 mb-2">
+                    {{ sync.message }}
+                  </div>
+                  
+                  <div class="flex items-center gap-4 text-xs text-slate-400">
+                    <span>Started {{ formatTimeAgo(sync.started_at) }}</span>
+                    <span>{{ sync.current }} / {{ sync.total }}</span>
+                    <span v-if="sync.total > 0">
+                      {{ Math.round((sync.current / sync.total) * 100) }}%
+                    </span>
+                  </div>
+                  
+                  <!-- Progress bar for each sync -->
+                  <div class="w-full bg-slate-600 rounded-full h-2 mt-2">
+                    <div 
+                      class="h-2 rounded-full transition-all duration-300" 
+                      :class="{
+                        'bg-blue-500': sync.status === 'running' || sync.status === 'starting',
+                        'bg-yellow-500': sync.status === 'cancelling',
+                        'bg-green-500': sync.status === 'completed',
+                        'bg-red-500': sync.status === 'error'
+                      }"
+                      :style="{ 
+                        width: sync.total > 0 
+                          ? `${Math.round((sync.current / sync.total) * 100)}%` 
+                          : '0%' 
+                      }"
+                    ></div>
+                  </div>
+                </div>
+                
+                <div class="flex gap-2 ml-4">
+                  <button
+                    v-if="currentSessionId !== sync.session_id"
+                    @click="resumeSync(sync.session_id)"
+                    class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition-colors flex items-center gap-1"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Monitor
+                  </button>
+                  
+                  <button
+                    v-if="sync.can_cancel && (sync.status === 'running' || sync.status === 'starting')"
+                    @click="cancelSync(sync.session_id)"
+                    class="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition-colors flex items-center gap-1"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Last Sync Details -->
+      <div 
+        v-if="lastSyncDetails || isLoadingLastSync" 
+        class="flex flex-col gap-2 bg-slate-800 border border-slate-700 rounded-lg p-6 mb-4"
+      >
+        <h2 class="text-xl font-medium text-white mb-4">Last Synchronization</h2>
+        
+        <div v-if="isLoadingLastSync" class="text-center py-4">
+          <div class="inline-flex items-center text-slate-400">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Loading last sync details...
+          </div>
+        </div>
+        
+        <div v-else-if="lastSyncDetails" class="flex flex-col gap-4">
+          <!-- Sync Overview -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-slate-700 rounded-lg p-4">
+              <div>
+                
+              </div>
+              <div class="text-slate-400 text-sm">Sync Type</div>
+              <div class="text-white font-medium">{{ formatSyncType(lastSyncDetails.sync_type) }}</div>
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-xs capitalize" :class="{
+                  'text-green-400': lastSyncDetails.status === 'completed',
+                  'text-yellow-400': lastSyncDetails.status === 'completed_with_errors',
+                  'text-red-400': lastSyncDetails.status === 'error',
+                  'text-orange-400': lastSyncDetails.status === 'cancelled'
+                }">
+                  {{ lastSyncDetails.status === 'completed_with_errors' ? 'completed with errors' : lastSyncDetails.status }}
+                </span>
+              </div>
+            </div>
+            
+            <div class="bg-slate-700 rounded-lg p-4">
+              <div class="text-slate-400 text-sm">Started</div>
+              <div class="text-white font-medium">{{ formatTimeAgo(lastSyncDetails.started_at) }}</div>
+              <div class="text-slate-400 text-xs">{{ new Date(lastSyncDetails.started_at).toLocaleString() }}</div>
+            </div>
+            
+                         <div class="bg-slate-700 rounded-lg p-4">
+               <div class="text-slate-400 text-sm">Duration</div>
+               <div class="text-white font-medium">{{ formatDuration(lastSyncDetails.started_at, lastSyncDetails.updated_at) }}</div>
+               <div class="text-slate-400 text-xs">
+                 <span v-if="lastSyncDetails.total > 0">
+                   {{ lastSyncDetails.current }} / {{ lastSyncDetails.total }} items
+                 </span>
+                 <span v-else-if="lastSyncDetails.status === 'cancelled'">
+                   Cancelled
+                 </span>
+                 <span v-else-if="lastSyncDetails.status === 'error'">
+                   Failed
+                 </span>
+                 <span v-else>
+                   No items processed
+                 </span>
+               </div>
+             </div>
+          </div>
+          
+          <!-- Progress Bar -->
+          <div class="w-full bg-slate-600 rounded-full h-3">
+            <div 
+              class="h-3 rounded-full transition-all duration-300" 
+              :class="{
+                'bg-green-500': lastSyncDetails.status === 'completed',
+                'bg-yellow-500': lastSyncDetails.status === 'completed_with_errors',
+                'bg-red-500': lastSyncDetails.status === 'error',
+                'bg-orange-500': lastSyncDetails.status === 'cancelled'
+              }"
+                             :style="{ 
+                 width: lastSyncDetails.total > 0 
+                   ? `${Math.round((lastSyncDetails.current / lastSyncDetails.total) * 100)}%` 
+                   : lastSyncDetails.status === 'completed' ? '100%' : '0%'
+               }"
+            ></div>
+          </div>
+          
+          <!-- Sync Message -->
+          <div class="bg-slate-700 rounded-lg p-4">
+            <div class="text-slate-400 text-sm mb-1">Message</div>
+            <div class="text-white">{{ lastSyncDetails.message }}</div>
+          </div>
+          
+          <!-- Refresh Button -->
+          <div class="flex justify-end">
+            <button
+              @click="fetchLastSyncDetails"
+              class="px-3 py-1 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors text-sm flex items-center gap-1"
+              :disabled="isLoadingLastSync"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+        
+                 <div v-else class="text-center py-8 text-slate-400">
+           <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+           </svg>
+           <p class="text-lg font-medium">No Previous Synchronizations</p>
+           <p class="text-sm mt-1">Run your first sync to see details here</p>
+         </div>
+      </div>
+
+
     </div>
 
     <!-- Configure Connection Modal -->
@@ -545,16 +977,16 @@ onMounted(() => {
       contentClass="max-w-lg"
       @close="showSyncModal = false"
     >
-      <div class="space-y-4">
+      <div class="flex flex-col gap-4">
         <p class="text-slate-300">
           Select the data entities you want to import from Microsoft Graph:
         </p>
 
-        <div class="space-y-2">
+        <div class="flex flex-col gap-2">
           <div
             v-for="entity in availableEntities"
             :key="entity.id"
-            class="flex items-center p-3 rounded-md border border-slate-600 bg-slate-700/50"
+            class="flex gap-1 items-center p-3 rounded-md border border-slate-600 bg-slate-700/50"
           >
             <input
               type="checkbox"
@@ -575,7 +1007,7 @@ onMounted(() => {
         <div
           class="bg-blue-900/20 border border-blue-800/50 rounded-md p-3 text-sm text-blue-300"
         >
-          <p class="flex items-start">
+          <p class="flex gap-2 items-center">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5 mr-2 flex-shrink-0"
@@ -661,23 +1093,24 @@ onMounted(() => {
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="flex justify-end gap-3 mt-6">
-        <button
-          @click="showSyncModal = false"
-          class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
-        >
-          Cancel
-        </button>
-        <button
-          @click="startSync"
-          class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-          :disabled="isLoading || selectedEntities.length === 0"
-        >
-          <span v-if="isLoading">Starting Sync...</span>
-          <span v-else>Start Sync</span>
-        </button>
+        <div class="flex justify-end gap-3 mt-6">
+          <button
+            @click="showSyncModal = false"
+            class="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600"
+          >
+            Cancel
+          </button>
+          <button
+            @click="startSync"
+            class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+            :disabled="isLoading || isSyncing || selectedEntities.length === 0"
+          >
+            <span v-if="isLoading">Starting Sync...</span>
+            <span v-else-if="isSyncing">Syncing...</span>
+            <span v-else>Start Sync</span>
+          </button>
+        </div>
       </div>
     </Modal>
   </div>

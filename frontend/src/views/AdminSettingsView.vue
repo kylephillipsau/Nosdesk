@@ -15,9 +15,9 @@ const adminMenuItems = [
   },
   {
     title: 'System Settings',
-    description: 'Configure global system behaviors and defaults',
+    description: 'Manage storage, cleanup stale files, and system maintenance',
     icon: 'cog',
-    route: '/admin/settings/system'
+    route: '/admin/system-settings'
   },
   {
     title: 'Branding',

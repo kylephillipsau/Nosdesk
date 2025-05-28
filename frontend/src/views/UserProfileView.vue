@@ -7,21 +7,17 @@ import BackButton from '@/components/common/BackButton.vue';
 import { RouterLink } from 'vue-router';
 import ticketService from '@/services/ticketService';
 import userService from '@/services/userService';
+import { getDevicesByUser } from '@/services/deviceService';
 import type { Ticket } from '@/services/ticketService';
 import type { User } from '@/services/userService';
+import type { Device } from '@/types/device';
 
 interface UserProfile extends User {
   department?: string;
   joinedDate?: string;
-  created_at?: string;
 }
 
-interface Device {
-  id: string;
-  name: string;
-  type: string;
-  lastSeen: string;
-}
+// Remove the local Device interface since we're importing it from types
 
 const route = useRoute();
 const router = useRouter();
@@ -64,7 +60,7 @@ const fetchUserData = async () => {
     userProfile.value = {
       ...user,
       department: 'IT Support', // Default department (could be added to backend later)
-      joinedDate: new Date().toISOString() // Default to current date
+      joinedDate: user.created_at // Use the actual created_at from the database
     };
 
     // Load tickets from the API
@@ -78,21 +74,14 @@ const fetchUserData = async () => {
       t.requester === userUuid
     );
 
-    // Mock devices data - this could be replaced with real API data later
-    devices.value = [
-      {
-        id: '1',
-        name: 'MacBook Pro',
-        type: 'Laptop',
-        lastSeen: new Date().toISOString()
-      },
-      {
-        id: '2',
-        name: 'iPhone 13',
-        type: 'Mobile',
-        lastSeen: new Date(Date.now() - 3600000).toISOString()
-      }
-    ];
+    // Load devices from the API
+    try {
+      devices.value = await getDevicesByUser(userUuid);
+    } catch (deviceError) {
+      console.error('Error loading devices for user:', deviceError);
+      // Don't fail the whole page if devices can't be loaded
+      devices.value = [];
+    }
   } catch (e) {
     error.value = 'Failed to load user profile';
     console.error('Error loading user profile:', e);
@@ -168,7 +157,7 @@ onMounted(() => {
                 <!-- Avatar that overlaps the banner -->
                 <div class="absolute -top-16 left-6 w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800">
                   <UserAvatar
-                    :name="userProfile.name"
+                    :name="userProfile.uuid"
                     size="full"
                     :avatar="userProfile.avatar_url || null"
                     :showName="false"
@@ -212,10 +201,23 @@ onMounted(() => {
                   class="block bg-slate-700/50 p-3 rounded-lg hover:bg-slate-700 transition-colors"
                 >
                   <div class="flex items-start justify-between">
-                    <div>
+                    <div class="flex-1">
                       <h3 class="font-medium text-white">{{ device.name }}</h3>
-                      <p class="text-sm text-slate-400">{{ device.type }}</p>
-                      <p class="text-xs text-slate-500">Last seen {{ formatDate(device.lastSeen) }}</p>
+                      <p class="text-sm text-slate-400">{{ device.manufacturer || 'Unknown' }} {{ device.model }}</p>
+                      <p class="text-xs text-slate-500">Last updated {{ formatDate(device.updated_at) }}</p>
+                    </div>
+                    <div class="flex-shrink-0 ml-3">
+                      <span 
+                        class="text-xs px-2 py-1 rounded-full"
+                        :class="{
+                          'text-green-400 bg-green-900/20': device.warranty_status === 'Active',
+                          'text-yellow-400 bg-yellow-900/20': device.warranty_status === 'Warning',
+                          'text-red-400 bg-red-900/20': device.warranty_status === 'Expired',
+                          'text-gray-400 bg-gray-900/20': device.warranty_status === 'Unknown'
+                        }"
+                      >
+                        {{ device.warranty_status }}
+                      </span>
                     </div>
                   </div>
                 </RouterLink>

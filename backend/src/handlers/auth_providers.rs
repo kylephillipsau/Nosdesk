@@ -817,11 +817,7 @@ pub async fn oauth_callback(
                                     "uuid": user.uuid,
                                     "name": user.name,
                                     "email": user.email,
-                                    "role": match user.role {
-                                        crate::models::UserRole::Admin => "admin",
-                                        crate::models::UserRole::Technician => "technician",
-                                        crate::models::UserRole::User => "user",
-                                    }
+                                    "role": user.role.clone(),
                                 },
                                 "redirect": state_data.redirect_uri
                             }))
@@ -1164,6 +1160,8 @@ async fn find_or_create_oauth_user(
         pronouns: None,
         avatar_url: None,
         banner_url: None,
+        avatar_thumb: None,
+        microsoft_uuid: None, // OAuth users don't have Microsoft UUID initially
     };
     
     match crate::repository::create_user(new_user, conn) {
@@ -1200,11 +1198,7 @@ fn generate_app_jwt_token(user: &crate::models::User) -> Result<String, String> 
         sub: user.uuid.clone(),
         name: user.name.clone(),
         email: user.email.clone(),
-        role: match user.role {
-            crate::models::UserRole::Admin => "admin".to_string(),
-            crate::models::UserRole::Technician => "technician".to_string(),
-            crate::models::UserRole::User => "user".to_string(),
-        },
+        role: user.role.clone(),
         exp: now + 24 * 60 * 60, // 24 hours from now
         iat: now,
     };

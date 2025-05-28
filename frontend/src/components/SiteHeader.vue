@@ -332,7 +332,7 @@ defineExpose({
           >
             <!-- User Info -->
             <div
-              class="px-4 py-3 border-b border-slate-700 hover:bg-slate-700 cursor-pointer flex items-center gap-3"
+              class="px-4 py-3 border-b border-slate-700 hover:bg-slate-700 cursor-pointer flex items-center gap-3 min-w-0"
               @click="authStore.user ? router.push(`/users/${authStore.user.uuid}`) : {}"
             >
               <UserAvatar
@@ -341,10 +341,10 @@ defineExpose({
                 size="xl" 
                 :showName="false"
                 :clickable="false"
+                class="flex-shrink-0"
               />
-              <div>
-                <div class="text-sm font-medium text-white">{{ user.name }}</div>
-                <div class="text-xs text-slate-400">{{ user.email }}</div>
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium text-white truncate">{{ user.name }}</div>
                 <div class="text-xs text-blue-400 mt-1">View Profile</div>
               </div>
             </div>

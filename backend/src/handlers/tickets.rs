@@ -391,4 +391,45 @@ pub async fn unlink_tickets(
             HttpResponse::InternalServerError().json("Failed to unlink tickets")
         }
     }
+}
+
+// Add device to ticket
+pub async fn add_device_to_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (ticket_id, device_id) = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::add_device_to_ticket(&mut conn, ticket_id, device_id) {
+        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Err(e) => {
+            println!("Error adding device {} to ticket {}: {:?}", device_id, ticket_id, e);
+            HttpResponse::InternalServerError().json("Failed to add device to ticket")
+        }
+    }
+}
+
+// Remove device from ticket
+pub async fn remove_device_from_ticket(
+    pool: web::Data<crate::db::Pool>,
+    path: web::Path<(i32, i32)>,
+) -> impl Responder {
+    let (ticket_id, device_id) = path.into_inner();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    match repository::remove_device_from_ticket(&mut conn, ticket_id, device_id) {
+        Ok(0) => HttpResponse::NotFound().json("Device not associated with ticket"),
+        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Err(e) => {
+            println!("Error removing device {} from ticket {}: {:?}", device_id, ticket_id, e);
+            HttpResponse::InternalServerError().json("Failed to remove device from ticket")
+        }
+    }
 } 

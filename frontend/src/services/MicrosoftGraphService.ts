@@ -310,4 +310,20 @@ export default class MicrosoftGraphService {
 
     return results;
   }
+
+  /**
+   * Get Entra Object ID from Azure AD Device ID
+   * 
+   * @param azureAdDeviceId - The Azure AD Device ID
+   * @returns Promise with Object ID and Entra URL
+   */
+  static async getEntraObjectId(azureAdDeviceId: string) {
+    try {
+      const response = await axios.get(`/api/integrations/graph/entra-object-id/${azureAdDeviceId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching Entra Object ID:', error);
+      throw error;
+    }
+  }
 } 

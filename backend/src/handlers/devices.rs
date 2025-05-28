@@ -1,10 +1,107 @@
 use actix_web::{web, HttpResponse, Responder};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use diesel::result::Error;
 
 use crate::db::Pool;
-use crate::models::NewDevice;
+use crate::models::{NewDevice, DeviceUpdate, Device, User};
 use crate::repository;
+
+// Pagination query parameters
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    page: Option<i64>,
+    #[serde(rename = "pageSize")]
+    page_size: Option<i64>,
+    #[serde(rename = "sortField")]
+    sort_field: Option<String>,
+    #[serde(rename = "sortDirection")]
+    sort_direction: Option<String>,
+    search: Option<String>,
+    #[serde(rename = "type")]
+    device_type: Option<String>,
+    warranty: Option<String>,
+}
+
+// Paginated response
+#[derive(Serialize)]
+pub struct PaginatedResponse<T> {
+    data: Vec<T>,
+    total: i64,
+    page: i64,
+    #[serde(rename = "pageSize")]
+    page_size: i64,
+    #[serde(rename = "totalPages")]
+    total_pages: i64,
+}
+
+// Enhanced device response with joined user data
+#[derive(Serialize)]
+pub struct DeviceResponse {
+    pub id: i32,
+    pub name: String,
+    pub hostname: String,
+    pub serial_number: String,
+    pub model: String,
+    pub warranty_status: String,
+    pub manufacturer: Option<String>,
+    pub primary_user_uuid: Option<String>,
+    pub intune_device_id: Option<String>,
+    pub entra_device_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub primary_user: Option<UserInfo>,
+}
+
+#[derive(Serialize)]
+pub struct UserInfo {
+    pub uuid: String,
+    pub name: String,
+    pub email: String,
+    pub avatar_url: Option<String>,
+    pub avatar_thumb: Option<String>,
+}
+
+impl DeviceResponse {
+    pub fn from_device_and_user(device: Device, user: Option<User>) -> Self {
+        Self {
+            id: device.id,
+            name: device.name,
+            hostname: device.hostname,
+            serial_number: device.serial_number,
+            model: device.model,
+            warranty_status: device.warranty_status,
+            manufacturer: device.manufacturer,
+            primary_user_uuid: device.primary_user_uuid.clone(),
+            intune_device_id: device.intune_device_id,
+            entra_device_id: device.entra_device_id,
+            created_at: device.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            updated_at: device.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            primary_user: user.map(|u| UserInfo {
+                uuid: u.uuid,
+                name: u.name,
+                email: u.email,
+                avatar_url: u.avatar_url,
+                avatar_thumb: u.avatar_thumb,
+            }),
+        }
+    }
+}
+
+// Helper function to get user by UUID
+fn get_user_by_uuid(conn: &mut crate::db::DbConnection, uuid: &str) -> Option<User> {
+    use crate::repository::users as user_repo;
+    user_repo::get_user_by_uuid(uuid, conn).ok()
+}
+
+// Helper function to convert devices to device responses with user data
+fn devices_to_responses(conn: &mut crate::db::DbConnection, devices: Vec<Device>) -> Vec<DeviceResponse> {
+    devices.into_iter().map(|device| {
+        let user = device.primary_user_uuid.as_ref()
+            .and_then(|uuid| get_user_by_uuid(conn, uuid));
+        DeviceResponse::from_device_and_user(device, user)
+    }).collect()
+}
 
 /// Get all devices
 pub async fn get_all_devices(pool: web::Data<Pool>) -> impl Responder {
@@ -14,7 +111,11 @@ pub async fn get_all_devices(pool: web::Data<Pool>) -> impl Responder {
     };
 
     match repository::get_all_devices(&mut conn) {
-        Ok(devices) => HttpResponse::Ok().json(devices),
+        Ok(devices) => {
+            // Convert devices to enhanced responses with user data
+            let device_responses = devices_to_responses(&mut conn, devices);
+            HttpResponse::Ok().json(device_responses)
+        },
         Err(e) => {
             eprintln!("Database error getting all devices: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to get devices")
@@ -22,8 +123,54 @@ pub async fn get_all_devices(pool: web::Data<Pool>) -> impl Responder {
     }
 }
 
-/// Get a device by ID
-pub async fn get_device(
+// Get paginated devices
+pub async fn get_paginated_devices(
+    pool: web::Data<Pool>,
+    query: web::Query<PaginationParams>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(25).clamp(1, 100);
+
+    match repository::get_paginated_devices(
+        &mut conn,
+        page,
+        page_size,
+        query.sort_field.clone(),
+        query.sort_direction.clone(),
+        query.search.clone(),
+        query.device_type.clone(),
+        query.warranty.clone(),
+    ) {
+        Ok((devices, total)) => {
+            let total_pages = (total as f64 / page_size as f64).ceil() as i64;
+            
+            // Convert devices to enhanced responses with user data
+            let device_responses = devices_to_responses(&mut conn, devices);
+            
+            let response = PaginatedResponse {
+                data: device_responses,
+                total,
+                page,
+                page_size,
+                total_pages,
+            };
+            
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            eprintln!("Database error getting paginated devices: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get devices")
+        }
+    }
+}
+
+/// Get a single device by ID
+pub async fn get_device_by_id(
     pool: web::Data<Pool>,
     path: web::Path<i32>,
 ) -> impl Responder {
@@ -32,35 +179,48 @@ pub async fn get_device(
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
-
+    
     match repository::get_device_by_id(&mut conn, device_id) {
-        Ok(device) => HttpResponse::Ok().json(device),
-        Err(e) => match e {
-            Error::NotFound => HttpResponse::NotFound().json(format!("Device {} not found", device_id)),
-            _ => {
-                eprintln!("Database error getting device {}: {:?}", device_id, e);
-                HttpResponse::InternalServerError().json(format!("Failed to get device {}", device_id))
-            }
+        Ok(device) => {
+            // Get user data if device has a primary user
+            let user = device.primary_user_uuid.as_ref()
+                .and_then(|uuid| get_user_by_uuid(&mut conn, uuid));
+            
+            let device_response = DeviceResponse::from_device_and_user(device, user);
+            HttpResponse::Ok().json(device_response)
         },
+        Err(e) => {
+            match e {
+                Error::NotFound => HttpResponse::NotFound().json(format!("Device {} not found", device_id)),
+                _ => {
+                    eprintln!("Database error getting device {}: {:?}", device_id, e);
+                    HttpResponse::InternalServerError().json(format!("Failed to get device {}", device_id))
+                }
+            }
+        }
     }
 }
 
-/// Get a device by ticket ID
-pub async fn get_device_by_ticket_id(
+/// Get devices by user UUID
+pub async fn get_devices_by_user(
     pool: web::Data<Pool>,
-    path: web::Path<i32>,
+    path: web::Path<String>,
 ) -> impl Responder {
-    let ticket_id = path.into_inner();
+    let user_uuid = path.into_inner();
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
     
-    match repository::get_device_by_ticket_id(&mut conn, ticket_id) {
-        Ok(device) => HttpResponse::Ok().json(device),
+    match repository::get_devices_by_user(&mut conn, &user_uuid) {
+        Ok(devices) => {
+            // Convert devices to enhanced responses with user data
+            let device_responses = devices_to_responses(&mut conn, devices);
+            HttpResponse::Ok().json(device_responses)
+        },
         Err(e) => {
-            eprintln!("Database error getting device for ticket {}: {:?}", ticket_id, e);
-            HttpResponse::InternalServerError().json(format!("Failed to get device for ticket {}", ticket_id))
+            eprintln!("Database error getting devices for user {}: {:?}", user_uuid, e);
+            HttpResponse::InternalServerError().json(format!("Failed to get devices for user {}", user_uuid))
         }
     }
 }
@@ -76,7 +236,14 @@ pub async fn create_device(
     };
     
     match repository::create_device(&mut conn, device.into_inner()) {
-        Ok(device) => HttpResponse::Created().json(device),
+        Ok(device) => {
+            // Get user data if device has a primary user
+            let user = device.primary_user_uuid.as_ref()
+                .and_then(|uuid| get_user_by_uuid(&mut conn, uuid));
+            
+            let device_response = DeviceResponse::from_device_and_user(device, user);
+            HttpResponse::Created().json(device_response)
+        },
         Err(e) => {
             eprintln!("Database error creating device: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to create device")
@@ -88,7 +255,7 @@ pub async fn create_device(
 pub async fn update_device(
     pool: web::Data<Pool>,
     path: web::Path<i32>,
-    device: web::Json<NewDevice>,
+    device_update: web::Json<DeviceUpdate>,
 ) -> impl Responder {
     let device_id = path.into_inner();
     let mut conn = match pool.get() {
@@ -96,8 +263,15 @@ pub async fn update_device(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
     
-    match repository::update_device(&mut conn, device_id, device.into_inner()) {
-        Ok(device) => HttpResponse::Ok().json(device),
+    match repository::update_device(&mut conn, device_id, device_update.into_inner()) {
+        Ok(device) => {
+            // Get user data if device has a primary user
+            let user = device.primary_user_uuid.as_ref()
+                .and_then(|uuid| get_user_by_uuid(&mut conn, uuid));
+            
+            let device_response = DeviceResponse::from_device_and_user(device, user);
+            HttpResponse::Ok().json(device_response)
+        },
         Err(e) => {
             match e {
                 Error::NotFound => HttpResponse::NotFound().json(format!("Device {} not found", device_id)),
@@ -122,13 +296,15 @@ pub async fn delete_device(
     };
     
     match repository::delete_device(&mut conn, device_id) {
-        Ok(count) => {
-            if count > 0 {
-                HttpResponse::NoContent().finish()
+        Ok(rows_affected) => {
+            if rows_affected > 0 {
+                HttpResponse::Ok().json(json!({
+                    "message": format!("Device {} deleted successfully", device_id)
+                }))
             } else {
-                HttpResponse::NotFound().json(format!("Device with ID {} not found", device_id))
+                HttpResponse::NotFound().json(format!("Device {} not found", device_id))
             }
-        },
+        }
         Err(e) => {
             eprintln!("Database error deleting device {}: {:?}", device_id, e);
             HttpResponse::InternalServerError().json(format!("Failed to delete device {}", device_id))

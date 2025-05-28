@@ -4,6 +4,37 @@ import type { TicketStatus, TicketPriority } from '@/constants/ticketOptions';
 // Define the API base URL - use relative URL to work from any device
 const API_BASE_URL = '/api';
 
+// Request cancellation manager
+class RequestManager {
+  private activeRequests = new Map<string, AbortController>();
+
+  createRequest(key: string): AbortController {
+    // Cancel any existing request with the same key
+    this.cancelRequest(key);
+    
+    // Create new abort controller
+    const controller = new AbortController();
+    this.activeRequests.set(key, controller);
+    
+    return controller;
+  }
+
+  cancelRequest(key: string): void {
+    const controller = this.activeRequests.get(key);
+    if (controller) {
+      controller.abort();
+      this.activeRequests.delete(key);
+    }
+  }
+
+  cancelAllRequests(): void {
+    this.activeRequests.forEach(controller => controller.abort());
+    this.activeRequests.clear();
+  }
+}
+
+const requestManager = new RequestManager();
+
 // Define interfaces for our data models
 export interface Device {
   id: number;
@@ -52,7 +83,7 @@ export interface Ticket {
   assignee: string;
   requester: string;
   closed_at?: string;
-  device?: Device;
+  devices?: Device[];
   comments?: Comment[];
   article_content?: string;
   linkedTickets?: number[];
@@ -105,11 +136,26 @@ export const getTickets = async (): Promise<Ticket[]> => {
 };
 
 // Get paginated tickets
-export const getPaginatedTickets = async (params: PaginationParams): Promise<PaginatedResponse<Ticket>> => {
+export const getPaginatedTickets = async (params: PaginationParams, requestKey: string = 'paginated-tickets'): Promise<PaginatedResponse<Ticket>> => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/tickets/paginated`, { params });
+    // Create cancellable request
+    const controller = requestManager.createRequest(requestKey);
+    
+    const response = await axios.get(`${API_BASE_URL}/tickets/paginated`, { 
+      params,
+      signal: controller.signal 
+    });
+    
+    // Remove from active requests on success
+    requestManager.cancelRequest(requestKey);
+    
     return response.data;
-  } catch (error) {
+  } catch (error: any) {
+    // Don't throw if request was cancelled
+    if (error.name === 'AbortError' || error.name === 'CanceledError') {
+      console.log('Request cancelled:', requestKey);
+      throw new Error('REQUEST_CANCELLED');
+    }
     console.error('Error fetching paginated tickets:', error);
     throw error;
   }
@@ -253,6 +299,31 @@ export const getCommentsByTicketId = async (ticketId: number): Promise<CommentWi
   }
 };
 
+// Add device to ticket
+export const addDeviceToTicket = async (ticketId: number, deviceId: number): Promise<void> => {
+  try {
+    await axios.post(`${API_BASE_URL}/tickets/${ticketId}/devices/${deviceId}`);
+  } catch (error) {
+    console.error(`Error adding device ${deviceId} to ticket ${ticketId}:`, error);
+    throw error;
+  }
+};
+
+// Remove device from ticket
+export const removeDeviceFromTicket = async (ticketId: number, deviceId: number): Promise<void> => {
+  try {
+    await axios.delete(`${API_BASE_URL}/tickets/${ticketId}/devices/${deviceId}`);
+  } catch (error) {
+    console.error(`Error removing device ${deviceId} from ticket ${ticketId}:`, error);
+    throw error;
+  }
+};
+
+// Cancel all active requests
+export const cancelAllRequests = (): void => {
+  requestManager.cancelAllRequests();
+};
+
 // Export default object with all functions
 export default {
   getTickets,
@@ -268,5 +339,8 @@ export default {
   addAttachmentToComment,
   deleteComment,
   deleteAttachment,
-  getCommentsByTicketId
+  getCommentsByTicketId,
+  addDeviceToTicket,
+  removeDeviceFromTicket,
+  cancelAllRequests
 }; 

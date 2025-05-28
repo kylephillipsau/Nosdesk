@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import UserAvatar from './UserAvatar.vue'
-import { computed } from 'vue'
-import userService from '@/services/userService'
+import { useUserLookup } from '@/services/userLookupService'
 
 interface TicketDetails {
   title: string
@@ -30,58 +29,28 @@ const props = defineProps<{
 const container = ref<HTMLElement | null>(null)
 const tooltipTop = ref(0)
 const isHovering = ref(false)
-const users = ref<any[]>([])
-const loading = ref(false)
 const tooltipVisible = ref(false)
 const hoverTimer = ref<number | null>(null)
 const hideTimer = ref<number | null>(null)
 
-// Fetch users when component is mounted
-onMounted(async () => {
-  if (props.details?.requester || props.details?.assignee) {
-    await fetchUsers()
-  }
-})
+// Use the user lookup service for efficient user name resolution
+const { getUserName } = useUserLookup()
 
-// Also fetch users when hovering starts (as a backup)
-watch(isHovering, async (newValue) => {
-  if (newValue && (props.details?.requester || props.details?.assignee)) {
-    await fetchUsers()
-  }
-})
-
-// Fetch users from the API - this is now just a backup
-// as UserAvatar will handle most of the loading
-const fetchUsers = async () => {
-  if (users.value.length > 0 || loading.value) return // Don't fetch if we already have users or are loading
-  
-  loading.value = true
-  try {
-    users.value = await userService.getUsers()
-  } catch (err) {
-    console.error('Error fetching users in QuickTooltip:', err)
-  } finally {
-    loading.value = false
-  }
-}
-
-// Get user name from UUID
-const getUserName = (uuid: string | undefined) => {
+// Get user name from UUID using the lookup service
+const getDisplayName = (uuid: string | undefined) => {
   if (!uuid) return 'Unassigned'
   
   // Check if it looks like a UUID
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   if (!uuidPattern.test(uuid)) return uuid // If not a UUID, return as is
   
-  if (loading.value) return 'Loading...'
-  
-  const user = users.value.find(u => u.uuid === uuid)
-  return user ? user.name : uuid
+  const cachedName = getUserName(uuid)
+  return cachedName || uuid // Return UUID if name not cached yet
 }
 
 // Computed properties for user names
-const requesterName = computed(() => getUserName(props.details?.requester))
-const assigneeName = computed(() => getUserName(props.details?.assignee))
+const requesterName = computed(() => getDisplayName(props.details?.requester))
+const assigneeName = computed(() => getDisplayName(props.details?.assignee))
 
 watch(isHovering, (newValue) => {
   if (newValue) {
@@ -186,14 +155,14 @@ watch(tooltipVisible, (newValue) => {
               <UserAvatar :name="details.requester" :showName="false" size="xs" />
               <span class="flex flex-row gap-1 truncate">
                 <span class="text-gray-500">Requester:</span> 
-                <span :class="{ 'text-gray-500 italic': loading }">{{ requesterName }}</span>
+                <span>{{ requesterName }}</span>
               </span>
             </div>
             <div v-if="details.assignee" class="flex items-center gap-2">
               <UserAvatar :name="details.assignee" :showName="false" size="xs" />
               <span class="flex flex-row gap-1 truncate">
                 <span class="text-gray-500">Assignee:</span> 
-                <span :class="{ 'text-gray-500 italic': loading }">{{ assigneeName }}</span>
+                <span>{{ assigneeName }}</span>
               </span>
             </div>
           </div>

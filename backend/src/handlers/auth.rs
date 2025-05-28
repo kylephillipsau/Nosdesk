@@ -130,11 +130,7 @@ pub async fn login(
         sub: user.uuid.clone(),
         name: user.name.clone(),
         email: user.email.clone(),
-        role: match user.role {
-            UserRole::Admin => "admin".to_string(),
-            UserRole::Technician => "technician".to_string(),
-            UserRole::User => "user".to_string(),
-        },
+        role: user.role.clone(),
         exp: now + 24 * 60 * 60, // 24 hours from now
         iat: now,
     };
@@ -199,6 +195,8 @@ pub async fn register(
         pronouns: user_data.pronouns.clone(),
         avatar_url: user_data.avatar_url.clone(),
         banner_url: user_data.banner_url.clone(),
+        avatar_thumb: user_data.avatar_thumb.clone(),
+        microsoft_uuid: None,
     };
 
     // Save user to database
