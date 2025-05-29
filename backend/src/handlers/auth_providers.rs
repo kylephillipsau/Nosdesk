@@ -812,13 +812,7 @@ pub async fn oauth_callback(
                             // Instead of redirecting, return a JSON response with the token and user info
                             HttpResponse::Ok().json(json!({
                                 "token": token,
-                                "user": {
-                                    "id": user.id,
-                                    "uuid": user.uuid,
-                                    "name": user.name,
-                                    "email": user.email,
-                                    "role": user.role.clone(),
-                                },
+                                "user": crate::models::UserResponse::from(user),
                                 "redirect": state_data.redirect_uri
                             }))
                         },

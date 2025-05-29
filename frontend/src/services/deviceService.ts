@@ -294,4 +294,45 @@ const getDeviceSpecs = (model: string): Device['specs'] => {
 // Cancel all active requests
 export const cancelAllRequests = (): void => {
   requestManager.cancelAllRequests();
+};
+
+// Get devices for a specific user (prioritized devices)
+export const getUserDevices = async (userUuid: string): Promise<Device[]> => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/users/${userUuid}/devices`);
+    return response.data.map(transformDeviceResponse);
+  } catch (error) {
+    console.error('Error fetching user devices:', error);
+    throw error;
+  }
+};
+
+// Get paginated devices excluding specific IDs
+export const getPaginatedDevicesExcluding = async (params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  excludeIds?: number[];
+}): Promise<PaginatedResponse<Device>> => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/devices/paginated/excluding`, {
+      params: {
+        page: params.page,
+        pageSize: params.pageSize,
+        search: params.search,
+        excludeIds: params.excludeIds?.join(',')
+      }
+    });
+
+    return {
+      data: response.data.data.map(transformDeviceResponse),
+      total: response.data.total,
+      page: response.data.page,
+      pageSize: response.data.pageSize,
+      totalPages: response.data.totalPages,
+    };
+  } catch (error) {
+    console.error('Error fetching paginated devices:', error);
+    throw error;
+  }
 }; 127

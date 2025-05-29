@@ -1,10 +1,11 @@
 <!-- components/ticketComponents/DeviceSelectionModal.vue -->
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import Modal from '@/components/Modal.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
-import * as deviceService from '@/services/deviceService';
+import { getPaginatedDevices } from '@/services/deviceService';
+import { getUserDevices, getPaginatedDevicesExcluding } from '@/services/deviceService';
 import type { Device } from '@/types/device';
 
 const router = useRouter();
@@ -20,91 +21,198 @@ const emit = defineEmits<{
   (e: 'select-device', device: Device): void;
 }>();
 
+// State management
 const searchQuery = ref('');
 const devices = ref<Device[]>([]);
+const requesterDevices = ref<Device[]>([]);
 const loading = ref(false);
+const loadingMore = ref(false);
+const loadingRequesterDevices = ref(false);
 const error = ref<string | null>(null);
+const hasMore = ref(false);
+const currentPage = ref(1);
+const totalDevices = ref(0);
+const pageSize = 20; // Load devices in chunks of 20
 
-// Load devices from the API
-const loadDevices = async () => {
-  loading.value = true;
-  error.value = null;
+// Search debouncing
+let searchTimeout: number | null = null;
+const searchDebounceMs = 300;
+
+// Scroll container reference
+const scrollContainer = ref<HTMLElement | null>(null);
+
+// Load requester's devices first (for immediate display at top)
+const loadRequesterDevices = async () => {
+  if (!props.requesterUuid) return;
   
+  loadingRequesterDevices.value = true;
   try {
-    const allDevices = await deviceService.getDevices();
-    console.log(`Total devices fetched: ${allDevices.length}`);
+    const devices = await getUserDevices(props.requesterUuid);
     
-    // Filter out any already assigned devices
+    // Filter out already assigned devices
+    let filteredDevices = devices;
     if (props.existingDeviceIds && props.existingDeviceIds.length > 0) {
-      devices.value = allDevices.filter((device: Device) => 
+      filteredDevices = devices.filter(device => 
         !props.existingDeviceIds?.includes(device.id)
       );
-      console.log(`Filtered out ${allDevices.length - devices.value.length} already assigned devices`);
-    } else {
-      devices.value = allDevices;
     }
     
-    console.log(`Displaying ${devices.value.length} available devices for selection`);
+    requesterDevices.value = filteredDevices;
+    console.log(`Loaded ${filteredDevices.length} devices for requester ${props.requesterUuid}`);
   } catch (err) {
-    console.error('Error loading devices:', err);
-    error.value = 'Failed to load devices. Please try again.';
+    console.error('Error loading requester devices:', err);
+    // Don't show error for this as it's optional
+    requesterDevices.value = [];
   } finally {
-    loading.value = false;
+    loadingRequesterDevices.value = false;
   }
 };
 
-// Computed property for filtered and sorted devices
-const filteredDevices = computed(() => {
-  let filtered = devices.value;
+// Get IDs of devices that should be excluded from pagination (requester's devices + existing)
+const getExcludeIds = (): number[] => {
+  const excludeIds = [...(props.existingDeviceIds || [])];
   
-  // Apply search filter
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase();
-    filtered = filtered.filter((device: Device) => 
-      device.name.toLowerCase().includes(query) || 
-      device.hostname.toLowerCase().includes(query) ||
-      device.serial_number.toLowerCase().includes(query) ||
-      device.model.toLowerCase().includes(query) ||
-      device.manufacturer?.toLowerCase().includes(query) ||
-      device.primary_user?.name.toLowerCase().includes(query) ||
-      device.primary_user?.email.toLowerCase().includes(query) ||
-      String(device.id).includes(query)
-    );
+  // Add requester device IDs to exclude list
+  requesterDevices.value.forEach(device => {
+    if (!excludeIds.includes(device.id)) {
+      excludeIds.push(device.id);
+    }
+  });
+  
+  return excludeIds;
+};
+
+// Load devices with pagination and search (excluding requester's devices and existing)
+const loadDevices = async (page: number = 1, search: string = '', append: boolean = false) => {
+  if (page === 1) {
+    loading.value = true;
+  } else {
+    loadingMore.value = true;
+  }
+  error.value = null;
+  
+  try {
+    const excludeIds = getExcludeIds();
+    
+    const response = await getPaginatedDevicesExcluding({
+      page,
+      pageSize,
+      search: search.trim() || undefined,
+      excludeIds: excludeIds.length > 0 ? excludeIds : undefined
+    });
+    
+    if (append && page > 1) {
+      devices.value = [...devices.value, ...response.data];
+    } else {
+      devices.value = response.data;
+    }
+    
+    totalDevices.value = response.total;
+    hasMore.value = page < response.totalPages;
+    currentPage.value = page;
+    
+    console.log(`Loaded page ${page}: ${response.data.length} devices, total: ${response.total}`);
+  } catch (err) {
+    console.error('Error loading devices:', err);
+    error.value = 'Failed to load devices. Please try again.';
+    devices.value = [];
+    hasMore.value = false;
+  } finally {
+    loading.value = false;
+    loadingMore.value = false;
+  }
+};
+
+// Debounced search function
+const performSearch = (query: string) => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout);
   }
   
-  // Sort devices with prioritization
-  return filtered.sort((a, b) => {
-    // Priority 1: Intune-managed devices where primary user matches requester
-    const aIsRequesterIntune = a.intune_device_id && a.primary_user_uuid === props.requesterUuid;
-    const bIsRequesterIntune = b.intune_device_id && b.primary_user_uuid === props.requesterUuid;
-    
-    if (aIsRequesterIntune && !bIsRequesterIntune) return -1;
-    if (!aIsRequesterIntune && bIsRequesterIntune) return 1;
-    
-    // Priority 2: Any Intune-managed devices
-    const aIsIntune = !!a.intune_device_id;
-    const bIsIntune = !!b.intune_device_id;
-    
-    if (aIsIntune && !bIsIntune) return -1;
-    if (!aIsIntune && bIsIntune) return 1;
-    
-    // Priority 3: Devices with assigned users
-    const aHasUser = !!a.primary_user;
-    const bHasUser = !!b.primary_user;
-    
-    if (aHasUser && !bHasUser) return -1;
-    if (!aHasUser && bHasUser) return 1;
-    
-    // Final sort: alphabetical by name
-    return a.name.localeCompare(b.name);
-  });
+  searchTimeout = setTimeout(() => {
+    currentPage.value = 1;
+    if (query.trim()) {
+      // When searching, load all devices (including requester's) in search results
+      devices.value = [];
+      requesterDevices.value = [];
+      loadDevices(1, query, false);
+    } else {
+      // When clearing search, reload requester devices separately
+      loadRequesterDevices();
+      loadDevices(1, '', false);
+    }
+  }, searchDebounceMs);
+};
+
+// Watch for search query changes
+watch(searchQuery, (newQuery) => {
+  performSearch(newQuery);
+});
+
+// Load more devices when scrolling near bottom
+const handleScroll = () => {
+  if (!scrollContainer.value || loadingMore.value || !hasMore.value) return;
+  
+  const { scrollTop, scrollHeight, clientHeight } = scrollContainer.value;
+  const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
+  
+  // Load more when 80% scrolled
+  if (scrollPercentage > 0.8) {
+    loadMore();
+  }
+};
+
+// Load next page
+const loadMore = async () => {
+  if (!hasMore.value || loadingMore.value) return;
+  
+  await loadDevices(currentPage.value + 1, searchQuery.value, true);
+};
+
+// Computed properties for device sorting and display
+const allDevicesForDisplay = computed(() => {
+  // Combine requester devices (at top) with paginated devices
+  const combinedDevices = [
+    ...requesterDevices.value.map(device => ({ ...device, isRequesterDevice: true })),
+    ...devices.value.map(device => ({ ...device, isRequesterDevice: false }))
+  ];
+  
+  return combinedDevices;
+});
+
+// Get total count including requester devices
+const totalDevicesCount = computed(() => {
+  return totalDevices.value + requesterDevices.value.length;
+});
+
+// Check if we have any devices to show
+const hasDevicesToShow = computed(() => {
+  return requesterDevices.value.length > 0 || devices.value.length > 0;
 });
 
 // Watch for modal visibility
 watch(() => props.show, (newValue) => {
   if (newValue) {
-    loadDevices();
+    // Reset state
+    devices.value = [];
+    requesterDevices.value = [];
     searchQuery.value = '';
+    currentPage.value = 1;
+    hasMore.value = false;
+    totalDevices.value = 0;
+    error.value = null;
+    
+    // Load initial data
+    nextTick(() => {
+      loadRequesterDevices();
+      loadDevices(1, '', false);
+    });
+  } else {
+    // Clear search timeout when modal closes
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+      searchTimeout = null;
+    }
   }
 });
 
@@ -167,11 +275,6 @@ const getWarrantyStatusClass = (status: string) => {
   }
 };
 
-// Check if device is prioritized
-const isPrioritizedDevice = (device: Device): boolean => {
-  return !!(device.intune_device_id && device.primary_user_uuid === props.requesterUuid);
-};
-
 // Format last updated date
 const formatLastUpdated = (dateString: string): string => {
   try {
@@ -213,10 +316,29 @@ const formatLastUpdated = (dateString: string): string => {
           class="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-600 bg-slate-700 text-white placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-colors"
           placeholder="Search devices by name, hostname, serial number, manufacturer, or user..."
         >
+        <div v-if="loading && searchQuery" class="absolute inset-y-0 right-0 pr-3 flex items-center">
+          <svg class="w-5 h-5 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
       </div>
 
-      <!-- Loading state -->
-      <div v-if="loading" class="text-center py-8 text-slate-400">
+      <!-- Search hint -->
+      <div v-if="!searchQuery && !loading && devices.length === 0" class="text-center py-12 text-slate-400">
+        <div class="inline-flex flex-col items-center gap-3">
+          <svg class="w-12 h-12 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <div class="text-center">
+            <p class="text-lg font-medium text-slate-300">Search for devices</p>
+            <p class="text-sm">Start typing to find devices by name, serial number, or user</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Loading state (initial load) -->
+      <div v-else-if="loading && devices.length === 0" class="text-center py-8 text-slate-400">
         <div class="inline-flex items-center gap-3">
           <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -235,24 +357,38 @@ const formatLastUpdated = (dateString: string): string => {
             </svg>
             {{ error }}
           </p>
+          <button 
+            @click="loadDevices(1, searchQuery, false)"
+            class="mt-3 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
+          >
+            Try Again
+          </button>
         </div>
       </div>
 
-      <!-- Devices list -->
-      <div v-else class="max-h-[500px] overflow-y-auto">
-        <div v-if="filteredDevices.length === 0" class="text-center py-8 text-slate-400">
-          <div class="inline-flex flex-col items-center gap-3">
-            <svg class="w-12 h-12 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            <span>No devices found</span>
+      <!-- No results -->
+      <div v-else-if="!loading && allDevicesForDisplay.length === 0 && searchQuery" class="text-center py-8 text-slate-400">
+        <div class="inline-flex flex-col items-center gap-3">
+          <svg class="w-12 h-12 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+          <div class="text-center">
+            <p class="text-lg font-medium text-slate-300">No devices found</p>
+            <p class="text-sm">Try adjusting your search criteria</p>
           </div>
         </div>
-        
-        <!-- Compact table-like layout -->
-        <div v-else class="bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden">
+      </div>
+
+      <!-- Devices list with virtual scrolling -->
+      <div 
+        v-else-if="hasDevicesToShow"
+        ref="scrollContainer"
+        @scroll="handleScroll"
+        class="max-h-[500px] overflow-y-auto"
+      >
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden">
           <!-- Table header -->
-          <div class="bg-slate-700/50 px-4 py-3 border-b border-slate-600/50">
+          <div class="bg-slate-700/50 px-4 py-3 border-b border-slate-600/50 sticky top-0 z-10">
             <div class="grid grid-cols-12 gap-3 text-xs font-medium text-slate-300 uppercase tracking-wide">
               <div class="col-span-3">Device</div>
               <div class="col-span-2">Type & Status</div>
@@ -266,14 +402,14 @@ const formatLastUpdated = (dateString: string): string => {
           <!-- Device rows -->
           <div class="divide-y divide-slate-700/30">
             <div 
-              v-for="device in filteredDevices" 
+              v-for="device in allDevicesForDisplay" 
               :key="device.id"
               class="group relative hover:bg-slate-700/30 transition-colors duration-150 cursor-pointer"
-              :class="{ 'bg-blue-900/20 border-l-4 border-blue-500': isPrioritizedDevice(device) }"
+              :class="{ 'bg-blue-900/20 border-l-4 border-blue-500': device.isRequesterDevice }"
               @click="selectDevice(device)"
             >
               <!-- Priority indicator -->
-              <div v-if="isPrioritizedDevice(device)" class="absolute -top-1 right-2 z-10">
+              <div v-if="device.isRequesterDevice" class="absolute -top-1 right-2 z-10">
                 <div class="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-b-md shadow-sm">
                   Requester's Device
                 </div>
@@ -319,7 +455,7 @@ const formatLastUpdated = (dateString: string): string => {
                   <!-- Primary User -->
                   <div class="col-span-3 min-w-0">
                     <div v-if="device.primary_user" class="flex items-center gap-2">
-                      <UserAvatar :name="device.primary_user.uuid" size="sm" />
+                      <UserAvatar :name="device.primary_user.uuid" size="sm" :show-name="false" />
                       <div class="flex-1 min-w-0">
                         <div class="text-sm font-medium text-slate-200 truncate">{{ device.primary_user.name }}</div>
                         <div class="text-xs text-slate-400 truncate">{{ device.primary_user.email }}</div>
@@ -350,6 +486,22 @@ const formatLastUpdated = (dateString: string): string => {
               </div>
             </div>
           </div>
+          
+          <!-- Load more indicator -->
+          <div v-if="loadingMore" class="p-4 text-center border-t border-slate-700/30">
+            <div class="inline-flex items-center gap-3 text-slate-400">
+              <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Loading more devices...</span>
+            </div>
+          </div>
+          
+          <!-- End of results indicator -->
+          <div v-else-if="!hasMore && allDevicesForDisplay.length > 0" class="p-3 text-center border-t border-slate-700/30">
+            <span class="text-xs text-slate-500">End of results</span>
+          </div>
         </div>
       </div>
     </div>
@@ -368,7 +520,9 @@ const formatLastUpdated = (dateString: string): string => {
       </button>
       
       <div class="flex items-center gap-3">
-        <span class="text-sm text-slate-400">{{ filteredDevices.length }} device{{ filteredDevices.length !== 1 ? 's' : '' }} available</span>
+        <span class="text-sm text-slate-400">
+          {{ totalDevicesCount }} device{{ totalDevicesCount !== 1 ? 's' : '' }}
+        </span>
         <button 
           type="button"
           class="px-4 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-700 rounded-md transition-colors"

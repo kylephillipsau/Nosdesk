@@ -1,285 +1,94 @@
 // views/TicketsListView.vue
 <script setup lang="ts">
 import ticketService from "@/services/ticketService";
-import { ref, onMounted, computed, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed } from "vue";
 import BaseListView from "@/components/common/BaseListView.vue";
+import DataTable from "@/components/common/DataTable.vue";
 import DebouncedSearchInput from "@/components/common/DebouncedSearchInput.vue";
 import PaginationControls from "@/components/common/PaginationControls.vue";
-import UserAvatar from "@/components/UserAvatar.vue";
+import { IdCell, TextCell, StatusBadgeCell, UserAvatarCell, DateCell } from "@/components/common/cells";
 import StatusBadge from "@/components/StatusBadge.vue";
-import type { Ticket, PaginatedResponse } from "@/services/ticketService";
+import UserAvatar from "@/components/UserAvatar.vue";
+import { useListManagement } from "@/composables/useListManagement";
+import type { Ticket } from "@/services/ticketService";
 
-const tickets = ref<Ticket[]>([]);
-const loading = ref(true);
-const error = ref<string | null>(null);
-const selectedTickets = ref<number[]>([]);
-const lastSelectedTicketId = ref<number | null>(null);
-
-// Sorting state
-const sortField = ref<string>("id");
-const sortDirection = ref<"asc" | "desc">("asc");
-
-// Search and filter state
-const searchQuery = ref("");
-const statusFilter = ref<string>("all");
-const priorityFilter = ref<string>("all");
-
-// Pagination state
-const currentPage = ref(1);
-const pageSize = ref(25);
-const pageSizeOptions = [10, 25, 50, 100];
-const totalItems = ref(0);
-const totalPages = ref(1);
-
-// Function to format date in locale format
-const formatDate = (dateString: string) => {
-  try {
-    const date = new Date(dateString);
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      return dateString;
-    }
-
-    // Format date in user's locale with date only (no time)
-    return date.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
+// Use the composable for all common functionality
+const listManager = useListManagement<Ticket>({
+  itemIdField: 'id',
+  defaultSortField: 'id',
+  defaultSortDirection: 'asc',
+  fetchFunction: async (params) => {
+    return await ticketService.getPaginatedTickets({
+      page: params.page,
+      pageSize: params.pageSize,
+      sortField: params.sortField,
+      sortDirection: params.sortDirection,
+      search: params.search,
+      status: params.status,
+      priority: params.priority
     });
-  } catch (error) {
-    console.error("Error formatting date:", error);
-    return dateString;
-  }
-};
-
-// Fetch tickets from API with pagination
-const fetchTickets = async () => {
-  loading.value = true;
-  error.value = null;
-
-  try {
-    // For server-side pagination
-    const response = await ticketService.getPaginatedTickets({
-      page: currentPage.value,
-      pageSize: pageSize.value,
-      sortField: sortField.value,
-      sortDirection: sortDirection.value,
-      search: searchQuery.value,
-      status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
-      priority: priorityFilter.value !== 'all' ? priorityFilter.value : undefined
-    });
-    
-    tickets.value = response.data;
-    totalItems.value = response.total;
-    totalPages.value = response.totalPages;
-  } catch (err) {
-    console.error("Failed to fetch tickets:", err);
-    error.value = "Failed to load tickets. Please try again later.";
-  } finally {
-    loading.value = false;
-  }
-};
-
-// Load tickets when component mounts
-onMounted(() => {
-  fetchTickets();
+  },
+  routeBuilder: (ticket) => `/tickets/${ticket.id}`
 });
 
-// Watch for changes in pagination, sorting, or filtering to refetch data
-watch(
-  [currentPage, pageSize, sortField, sortDirection, searchQuery, statusFilter, priorityFilter],
-  () => {
-    fetchTickets();
-  }
-);
+// Define table columns with responsive behavior
+const columns = [
+  { field: 'id', label: 'ID', width: 'minmax(60px,auto)', sortable: true, responsive: 'md' as const },
+  { field: 'title', label: 'Title', width: '1fr', sortable: true, responsive: 'always' as const },
+  { field: 'status', label: 'Status', width: 'minmax(100px,auto)', sortable: true, responsive: 'always' as const },
+  { field: 'priority', label: 'Priority', width: 'minmax(100px,auto)', sortable: true, responsive: 'md' as const },
+  { field: 'created', label: 'Created', width: 'minmax(120px,auto)', sortable: true, responsive: 'lg' as const },
+  { field: 'requester', label: 'Requester', width: 'minmax(120px,auto)', sortable: false, responsive: 'lg' as const },
+  { field: 'assignee', label: 'Assignee', width: 'minmax(120px,auto)', sortable: false, responsive: 'lg' as const }
+];
 
-// Get unique status values from tickets
+// Get available filter options
 const availableStatuses = computed(() => {
-  if (!tickets.value.length) return [];
-  const statuses = new Set(tickets.value.map((ticket) => ticket.status));
+  if (!listManager.items.value.length) return [];
+  const statuses = new Set(listManager.items.value.map((ticket) => ticket.status));
   return Array.from(statuses) as string[];
 });
 
-// Get unique priority values from tickets
 const availablePriorities = computed(() => {
-  if (!tickets.value.length) return [];
-  const priorities = new Set(tickets.value.map((ticket) => ticket.priority));
+  if (!listManager.items.value.length) return [];
+  const priorities = new Set(listManager.items.value.map((ticket) => ticket.priority));
   return Array.from(priorities) as string[];
 });
 
-// Prepare filter options for BaseListView
+// Build filter options
 const filterOptions = computed(() => {
-  return [
-    {
-      name: 'status',
-      value: statusFilter.value,
-      options: [
-        { value: 'all', label: 'All Statuses' },
-        ...availableStatuses.value.map(status => ({ 
-          value: status, 
-          label: status.charAt(0).toUpperCase() + status.slice(1) 
-        }))
-      ],
-      width: 'w-[120px]'
+  return listManager.buildFilterOptions({
+    status: {
+      options: availableStatuses.value.map(status => ({ 
+        value: status.toLowerCase(), 
+        label: status.charAt(0).toUpperCase() + status.slice(1) 
+      })),
+      width: 'w-[120px]',
+      allLabel: 'All Statuses'
     },
-    {
-      name: 'priority',
-      value: priorityFilter.value,
-      options: [
-        { value: 'all', label: 'All Priorities' },
-        ...availablePriorities.value.map(priority => ({ 
-          value: priority, 
-          label: priority.charAt(0).toUpperCase() + priority.slice(1) 
-        }))
-      ],
-      width: 'w-[120px]'
+    priority: {
+      options: availablePriorities.value.map(priority => ({ 
+        value: priority.toLowerCase(), 
+        label: priority.charAt(0).toUpperCase() + priority.slice(1) 
+      })),
+      width: 'w-[120px]',
+      allLabel: 'All Priorities'
     }
-  ];
+  });
 });
 
-// Reset all filters
-const resetFilters = () => {
-  searchQuery.value = "";
-  statusFilter.value = "all";
-  priorityFilter.value = "all";
-  currentPage.value = 1;
-  fetchTickets();
-};
-
-// Handle filter updates from BaseListView
-const handleFilterUpdate = (name: string, value: string) => {
-  if (name === 'status') {
-    statusFilter.value = value;
-  } else if (name === 'priority') {
-    priorityFilter.value = value;
-  }
-  currentPage.value = 1; // Reset to first page when filters change
-};
-
-// Handle sort update from BaseListView
-const handleSortUpdate = (field: string, direction: 'asc' | 'desc') => {
-  sortField.value = field;
-  sortDirection.value = direction;
-  currentPage.value = 1; // Reset to first page when sort changes
-};
-
-const toggleSelection = (event: Event, ticketIdStr: string) => {
-  event.stopPropagation();
-  const ticketId = parseInt(ticketIdStr, 10);
-
-  // Handle shift key for range selection
-  if (
-    event instanceof MouseEvent &&
-    event.shiftKey &&
-    lastSelectedTicketId.value !== null
-  ) {
-    const currentIndex = tickets.value.findIndex(
-      (ticket) => ticket.id === ticketId
-    );
-    const lastIndex = tickets.value.findIndex(
-      (ticket) => ticket.id === lastSelectedTicketId.value
-    );
-
-    if (currentIndex !== -1 && lastIndex !== -1) {
-      const startIndex = Math.min(currentIndex, lastIndex);
-      const endIndex = Math.max(currentIndex, lastIndex);
-
-      const ticketsToSelect = tickets.value
-        .slice(startIndex, endIndex + 1)
-        .map((ticket) => ticket.id);
-
-      // Add all tickets in range to selection if they're not already selected
-      ticketsToSelect.forEach((id) => {
-        if (!selectedTickets.value.includes(id)) {
-          selectedTickets.value.push(id);
-        }
-      });
-    }
-  } 
-  // Handle Ctrl/Cmd key for toggling individual items without affecting others
-  else if (event instanceof MouseEvent && (event.ctrlKey || event.metaKey)) {
-    const index = selectedTickets.value.indexOf(ticketId);
-    if (index === -1) {
-      selectedTickets.value.push(ticketId);
-    } else {
-      selectedTickets.value.splice(index, 1);
-    }
-    
-    // Update last selected ticket
-    lastSelectedTicketId.value = ticketId;
-  }
-  // Regular click - toggle the selection without clearing others
-  else {
-    const index = selectedTickets.value.indexOf(ticketId);
-    if (index === -1) {
-      // Add to selection without clearing others
-      selectedTickets.value.push(ticketId);
-    } else {
-      // Remove from selection
-      selectedTickets.value.splice(index, 1);
-    }
-
-    // Update last selected ticket
-    lastSelectedTicketId.value = ticketId;
-  }
-};
-
-const toggleAllTickets = (event: Event) => {
-  event.stopPropagation();
-  const checkbox = event.target as HTMLInputElement;
-  
-  // If we're checking the box, select all visible tickets
-  if (checkbox.checked) {
-    selectedTickets.value = tickets.value.map((ticket) => ticket.id);
-  } 
-  // If unchecking, clear all selections
-  else {
-    selectedTickets.value = [];
-  }
-  
-  // Reset last selected ticket
-  lastSelectedTicketId.value = null;
-};
-
-const router = useRouter();
-
-const openTicket = (ticketId: number) => {
-  router.push(`/tickets/${ticketId}`);
-};
-
-// Define columns for the table
-const columns = [
-  { field: 'id', label: 'ID', width: 'w-20 flex-shrink-0' },
-  { field: 'title', label: 'Title', width: 'flex-1 min-w-0' },
-  { field: 'status', label: 'Status', width: 'w-24 flex-shrink-0' },
-  { field: 'priority', label: 'Priority', width: 'w-24 flex-shrink-0' },
-  { field: 'created', label: 'Created', width: 'w-32 flex-shrink-0' },
-  { field: 'requester', label: 'Requester', width: 'w-32 flex-shrink-0' },
-  { field: 'assignee', label: 'Assignee', width: 'w-32 flex-shrink-0' }
-];
-
-// Handle page change
-const handlePageChange = (page: number) => {
-  currentPage.value = page;
-};
-
-// Handle page size change
-const handlePageSizeChange = (size: number) => {
-  pageSize.value = size;
-  currentPage.value = 1; // Reset to first page when changing page size
-};
+// Custom grid template for responsive layout
+const gridClass = "grid-cols-[auto_1fr_minmax(80px,auto)] md:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(80px,auto)_minmax(80px,auto)] lg:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(100px,auto)_minmax(100px,auto)_minmax(120px,auto)_minmax(120px,auto)_minmax(120px,auto)]";
 </script>
 
 <template>
   <div class="flex flex-col h-full overflow-hidden">
-    <!-- Search and filter bar - OUTSIDE of BaseListView -->
+    <!-- Search and filter bar -->
     <div class="sticky top-0 z-20 bg-slate-800 border-b border-slate-700 shadow-md">
       <div class="p-2 flex items-center gap-2 flex-wrap">
-        <!-- Search input - completely isolated -->
         <DebouncedSearchInput
-          v-model="searchQuery"
-          :placeholder="`Search tickets...`"
+          v-model="listManager.searchQuery.value"
+          placeholder="Search tickets..."
         />
 
         <!-- Filters -->
@@ -291,7 +100,7 @@ const handlePageSizeChange = (size: number) => {
           >
             <select
               :value="filter.value"
-              @change="e => handleFilterUpdate(filter.name, (e.target as HTMLSelectElement).value)"
+              @change="e => listManager.handleFilterUpdate(filter.name, (e.target as HTMLSelectElement).value)"
               class="bg-slate-700 border border-slate-600 text-white text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-full py-1 px-2"
             >
               <option
@@ -304,170 +113,180 @@ const handlePageSizeChange = (size: number) => {
             </select>
           </div>
 
-          <!-- Reset filters button -->
           <button
-            @click="resetFilters"
+            @click="listManager.resetFilters"
             class="px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-2 focus:outline-none focus:ring-blue-800"
           >
             Reset
           </button>
         </template>
 
-        <!-- Results count -->
-        <div class="text-xs text-gray-400 ml-auto">
-          {{ totalItems }} result{{ totalItems !== 1 ? "s" : "" }}
+        <div class="text-xs text-slate-400 ml-auto">
+          {{ listManager.totalItems.value }} result{{ listManager.totalItems.value !== 1 ? "s" : "" }}
         </div>
       </div>
     </div>
 
-    <!-- List View - WITHOUT search - flex-1 to take remaining space -->
+    <!-- Main content -->
     <div class="flex-1 flex flex-col overflow-hidden">
       <BaseListView
-      title="Tickets"
-      :search-query="''"
-      :is-loading="loading"
-      :is-empty="tickets.length === 0 && !loading"
-      :error="error"
-      :filters="[]"
-      :results-count="totalItems"
-      :selected-items="selectedTickets.map(id => id.toString())"
-      :visible-items="tickets"
-      :item-id-field="'id'"
-      :enable-selection="true"
-      :sort-field="sortField"
-      :sort-direction="sortDirection"
-      :columns="columns"
-      :show-add-button="false"
-      @update:filter="handleFilterUpdate"
-      @update:sort="handleSortUpdate"
-      @toggle-selection="toggleSelection"
-      @toggle-all="toggleAllTickets"
-      @retry="fetchTickets"
-    >
-    <!-- Desktop Table View -->
-    <template #default>
-      <div class="min-w-[960px]">
-        <div
-          v-for="ticket in tickets"
-          :key="ticket.id"
-          class="flex border-b border-slate-800 text-sm text-gray-200 hover:bg-slate-800/50 transition-colors cursor-pointer gap-1"
-          @click="openTicket(ticket.id)"
-        >
-          <div class="flex items-center p-3 w-10 flex-shrink-0">
-            <input
-              type="checkbox"
-              class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-              :checked="selectedTickets.includes(ticket.id)"
-              @click.stop="(event) => toggleSelection(event, ticket.id.toString())"
-            />
-          </div>
-          <div class="flex items-center p-3 w-20 flex-shrink-0">
-            #{{ ticket.id }}
-          </div>
-          <div class="flex items-center p-3 flex-1 min-w-0">
-            <div class="truncate">{{ ticket.title }}</div>
-          </div>
-          <div class="flex items-center w-24 flex-shrink-0 whitespace-nowrap">
-            <StatusBadge type="status" :value="ticket.status" :short="true" />
-          </div>
-          <div class="flex items-center p-2 w-24 flex-shrink-0">
-            <StatusBadge type="priority" :value="ticket.priority" :short="true" />
-          </div>
-          <div class="flex items-center p-3 w-32 flex-shrink-0">
-            {{ formatDate(ticket.created) }}
-          </div>
-          <div class="flex items-center p-1 w-32 flex-shrink-0">
-            <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="sm" />
-            <span v-else class="text-xs text-gray-500">Unassigned</span>
-          </div>
-          <div class="flex items-center p-1 w-32 flex-shrink-0">
-            <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="sm" />
-            <span v-else class="text-xs text-gray-500">Unassigned</span>
-          </div>
-        </div>
-      </div>
-    </template>
-
-    <!-- Mobile Card View -->
-    <template #mobile-view>
-      <div class="flex flex-col gap-2 p-2">
-        <div
-          v-for="ticket in tickets"
-          :key="ticket.id"
-          @click="openTicket(ticket.id)"
-          class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
-        >
-          <div class="flex items-start gap-3">
-            <div class="flex-grow-0">
-              <input
-                type="checkbox"
-                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
-                :checked="selectedTickets.includes(ticket.id)"
-                @click.stop="(event) => toggleSelection(event, ticket.id.toString())"
+        title=""
+        :search-query="''"
+        :is-loading="listManager.loading.value"
+        :is-empty="listManager.items.value.length === 0 && !listManager.loading.value"
+        :error="listManager.error.value"
+        :filters="[]"
+        :results-count="listManager.totalItems.value"
+        :selected-items="listManager.selectedItems.value"
+        :visible-items="listManager.items.value"
+        :item-id-field="'id'"
+        :enable-selection="false"
+        :sort-field="listManager.sortField.value"
+        :sort-direction="listManager.sortDirection.value"
+        :columns="[]"
+        :show-add-button="false"
+        @retry="listManager.fetchItems"
+      >
+        <!-- Desktop Table View -->
+        <template #default>
+          <DataTable
+            :columns="columns"
+            :data="listManager.items.value"
+            :selected-items="listManager.selectedItems.value"
+            :sort-field="listManager.sortField.value"
+            :sort-direction="listManager.sortDirection.value"
+            :grid-class="gridClass"
+            @update:sort="listManager.handleSortUpdate"
+            @toggle-selection="listManager.toggleSelection"
+            @toggle-all="listManager.toggleAllItems"
+            @row-click="listManager.navigateToItem"
+          >
+            <!-- Custom cell templates -->
+            <template #cell-id="{ value }">
+              <IdCell :id="value" />
+            </template>
+            
+            <template #cell-title="{ value }">
+              <TextCell :value="value" font-weight="medium" />
+            </template>
+            
+            <template #cell-status="{ value }">
+              <StatusBadge type="status" :value="value" :short="true" />
+            </template>
+            
+            <template #cell-priority="{ value }">
+              <StatusBadge type="priority" :value="value" :short="true" />
+            </template>
+            
+            <template #cell-created="{ value }">
+              <DateCell :value="value" />
+            </template>
+            
+            <template #cell-requester="{ item }">
+              <UserAvatarCell 
+                :user-id="item.requester" 
+                :show-name="true" 
               />
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center justify-between">
-                <div class="font-medium truncate text-gray-200">{{ ticket.title }}</div>
-                <div class="text-xs text-gray-400 ml-2">#{{ ticket.id }}</div>
-              </div>
-              <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                <StatusBadge type="status" :value="ticket.status" :short="true" :compact="true" />
-                <StatusBadge type="priority" :value="ticket.priority" :short="true" :compact="true" />
-              </div>
-              <div class="mt-2 flex items-center gap-2 text-xs">
-                <div class="flex items-center gap-1">
-                  <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="xs" />
-                  <span v-else class="text-gray-500">No requester</span>
-                  <span class="text-gray-400">Requester</span>
+            </template>
+            
+            <template #cell-assignee="{ item }">
+              <UserAvatarCell 
+                :user-id="item.assignee" 
+                :show-name="true"
+              />
+            </template>
+          </DataTable>
+        </template>
+
+        <!-- Mobile Card View -->
+        <template #mobile-view>
+          <div class="flex flex-col gap-2 p-2">
+            <div
+              v-for="ticket in listManager.items.value"
+              :key="ticket.id"
+              @click="listManager.navigateToItem(ticket)"
+              class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
+            >
+              <div class="flex items-start gap-3">
+                <div class="flex-grow-0">
+                  <input
+                    type="checkbox"
+                    class="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
+                    :checked="listManager.selectedItems.value.includes(ticket.id.toString())"
+                    @click.stop="(event) => listManager.toggleSelection(event, ticket.id.toString())"
+                  />
                 </div>
-                <div class="flex items-center gap-1">
-                  <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="xs" />
-                  <span v-else class="text-gray-500">Unassigned</span>
-                  <span class="text-gray-400">Assignee</span>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between">
+                    <div class="font-medium truncate text-slate-200">{{ ticket.title }}</div>
+                    <div class="text-xs text-slate-400 ml-2">#{{ ticket.id }}</div>
+                  </div>
+                  <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                    <StatusBadge type="status" :value="ticket.status" :short="true" :compact="true" />
+                    <StatusBadge type="priority" :value="ticket.priority" :short="true" :compact="true" />
+                  </div>
+                  <div class="mt-2 flex items-center gap-2 text-xs">
+                    <div class="flex items-center gap-1">
+                      <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="xs" />
+                      <span v-else class="text-slate-500">No requester</span>
+                      <span class="text-slate-400">Requester</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="xs" />
+                      <span v-else class="text-slate-500">Unassigned</span>
+                      <span class="text-slate-400">Assignee</span>
+                    </div>
+                  </div>
+                  <div class="mt-2 text-xs text-slate-400">
+                    Created: {{ listManager.formatDate(ticket.created) }}
+                  </div>
                 </div>
-              </div>
-              <div class="mt-2 text-xs text-gray-400">
-                Created: {{ formatDate(ticket.created) }}
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </template>
-  </BaseListView>
-  </div>
+        </template>
+      </BaseListView>
+    </div>
 
-  <!-- Pagination Controls -->
-  <PaginationControls
-    :current-page="currentPage"
-    :total-pages="totalPages"
-    :page-size="pageSize"
-    :page-size-options="pageSizeOptions"
-    :show-import="true"
-    @update:current-page="handlePageChange"
-    @update:page-size="handlePageSizeChange"
-    @import="() => {}"
-  />
+    <!-- Pagination Controls -->
+    <PaginationControls
+      :current-page="listManager.currentPage.value"
+      :total-pages="listManager.totalPages.value"
+      :page-size="listManager.pageSize.value"
+      :page-size-options="listManager.pageSizeOptions"
+      :show-import="true"
+      @update:current-page="listManager.handlePageChange"
+      @update:page-size="listManager.handlePageSizeChange"
+      @import="() => {}"
+    />
   </div>
 </template>
 
 <style scoped>
-/* Optional: Custom scrollbar styling */
-.overflow-y-auto::-webkit-scrollbar {
+/* Custom scrollbar styling */
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-x-auto::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
-.overflow-y-auto::-webkit-scrollbar-track {
-  background: #1e293b;
+.overflow-y-auto::-webkit-scrollbar-track,
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: #0f172a; /* slate-900 */
 }
 
-.overflow-y-auto::-webkit-scrollbar-thumb {
-  background: #475569;
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: #475569; /* slate-600 */
   border-radius: 4px;
 }
 
-.overflow-y-auto::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background: #64748b; /* slate-500 */
+}
+
+.overflow-x-auto::-webkit-scrollbar-corner {
+  background: #0f172a; /* slate-900 */
 }
 </style>

@@ -168,7 +168,15 @@ diesel::table! {
         started_at -> Timestamp,
         updated_at -> Timestamp,
         completed_at -> Nullable<Timestamp>,
-        can_cancel -> Bool,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    ticket_assignees (ticket_id, user_uuid) {
+        ticket_id -> Int4,
+        #[max_length = 36]
+        user_uuid -> Varchar,
         created_at -> Timestamp,
     }
 }
@@ -219,6 +227,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    user_emails (id) {
+        id -> Int4,
+        user_id -> Int4,
+        #[max_length = 255]
+        email -> Varchar,
+        #[max_length = 50]
+        email_type -> Varchar,
+        is_primary -> Bool,
+        verified -> Bool,
+        #[max_length = 50]
+        source -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     users (id) {
         id -> Int4,
         #[max_length = 36]
@@ -250,10 +275,12 @@ diesel::joinable!(comments -> tickets (ticket_id));
 diesel::joinable!(documentation_pages -> tickets (ticket_id));
 diesel::joinable!(project_tickets -> projects (project_id));
 diesel::joinable!(project_tickets -> tickets (ticket_id));
+diesel::joinable!(ticket_assignees -> tickets (ticket_id));
 diesel::joinable!(ticket_devices -> devices (device_id));
 diesel::joinable!(ticket_devices -> tickets (ticket_id));
 diesel::joinable!(user_auth_identities -> auth_providers (auth_provider_id));
 diesel::joinable!(user_auth_identities -> users (user_id));
+diesel::joinable!(user_emails -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     article_contents,
@@ -267,8 +294,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     project_tickets,
     projects,
     sync_history,
+    ticket_assignees,
     ticket_devices,
     tickets,
     user_auth_identities,
+    user_emails,
     users,
 );
