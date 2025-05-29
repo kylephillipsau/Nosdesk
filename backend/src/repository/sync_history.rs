@@ -107,7 +107,6 @@ pub fn complete_sync(
         total_count: Some(total_count),
         updated_at: Some(now),
         completed_at: Some(Some(now)),
-        can_cancel: Some(false),
     };
     
     update_sync_history(conn, session_id, update)
@@ -129,7 +128,6 @@ pub fn cancel_sync(
         total_count: Some(total_count),
         updated_at: Some(now),
         completed_at: Some(Some(now)),
-        can_cancel: Some(false),
     };
     
     update_sync_history(conn, session_id, update)
@@ -147,13 +145,12 @@ pub fn fail_sync(
         message: Some(message.to_string()),
         updated_at: Some(now),
         completed_at: Some(Some(now)),
-        can_cancel: Some(false),
         current_count: None,
         total_count: None,
     };
     
     update_sync_history(conn, session_id, update)
-} 
+}
 
 /// Delete a sync history record by ID
 pub fn delete_sync_history(

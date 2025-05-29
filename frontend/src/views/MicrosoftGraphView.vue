@@ -656,14 +656,11 @@ onMounted(async () => {
               Sync Progress
             </h2>
             <button
-              v-if="syncProgress.can_cancel && (syncProgress.status === 'running' || syncProgress.status === 'starting') && currentSessionId"
               @click="cancelSync(currentSessionId!)"
-              class="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm flex items-center gap-1"
+              v-if="(syncProgress.status === 'running' || syncProgress.status === 'starting') && currentSessionId"
+              class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-              Cancel
+              Cancel Sync
             </button>
           </div>
           
@@ -824,13 +821,10 @@ onMounted(async () => {
                   </button>
                   
                   <button
-                    v-if="sync.can_cancel && (sync.status === 'running' || sync.status === 'starting')"
+                    v-if="sync.status === 'running' || sync.status === 'starting'"
                     @click="cancelSync(sync.session_id)"
-                    class="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition-colors flex items-center gap-1"
+                    class="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
                     Cancel
                   </button>
                 </div>

@@ -71,85 +71,89 @@ onMounted(() => {
 
 <template>
   <div class="w-full">
-    <div class="bg-slate-800 rounded-2xl p-6">
-      <h2 class="text-lg font-medium text-white mb-6">Ticket Details</h2>
+    <div class="bg-slate-800 rounded-xl border border-slate-700/50">
+      <!-- Header -->
+      <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+        <h2 class="text-lg font-medium text-white">Ticket Details</h2>
+      </div>
       
-      <div class="flex flex-col gap-6">
-        <!-- Assignment Section -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Requester -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Requester</h3>
-            <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
-              <UserAutocomplete
-                v-model="selectedRequester"
-                placeholder="Search or select Requester..."
-                type="requester"
-                class="w-full"
-              />
+      <!-- Content -->
+      <div class="p-4">
+        <div class="flex flex-col gap-4">
+          <!-- Assignment Section -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Requester -->
+            <div class="flex flex-col gap-1.5">
+              <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Requester</h3>
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+                <UserAutocomplete
+                  v-model="selectedRequester"
+                  placeholder="Search or select Requester..."
+                  type="requester"
+                  class="w-full"
+                />
+              </div>
+            </div>
+
+            <!-- Assignee -->
+            <div class="flex flex-col gap-1.5">
+              <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Assignee</h3>
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+                <UserAutocomplete
+                  v-model="selectedAssignee"
+                  placeholder="Search or select Assignee..."
+                  type="assignee"
+                  class="w-full"
+                />
+              </div>
             </div>
           </div>
 
-          <!-- Assignee -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Assignee</h3>
-            <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
-              <UserAutocomplete
-                v-model="selectedAssignee"
-                placeholder="Search or select Assignee..."
-                type="assignee"
-                class="w-full"
-              />
+          <!-- Status and Priority Section -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Status -->
+            <div class="flex flex-col gap-1.5">
+              <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Status</h3>
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+                <CustomDropdown
+                  :value="selectedStatus"
+                  :options="statusOptions"
+                  type="status"
+                  @update:value="emit('update:selectedStatus', $event)"
+                  class="w-full"
+                />
+              </div>
             </div>
-          </div>
-        </div>
 
-        <!-- Status and Priority Section -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Status -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Status</h3>
-            <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
-              <CustomDropdown
-                :value="selectedStatus"
-                :options="statusOptions"
-                type="status"
-                @update:value="emit('update:selectedStatus', $event)"
-                class="w-full"
-              />
-            </div>
-          </div>
-
-          <!-- Priority -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Priority</h3>
-            <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
-              <CustomDropdown
-                :value="selectedPriority"
-                :options="priorityOptions"
-                type="priority"
-                @update:value="emit('update:selectedPriority', $event)"
-                class="w-full"
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Timestamps Section -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Created Date -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Created</h3>
-            <div class="bg-slate-700/50 rounded-lg p-3 border border-slate-600/30">
-              <span class="text-white text-sm">{{ createdDate }}</span>
+            <!-- Priority -->
+            <div class="flex flex-col gap-1.5">
+              <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Priority</h3>
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+                <CustomDropdown
+                  :value="selectedPriority"
+                  :options="priorityOptions"
+                  type="priority"
+                  @update:value="emit('update:selectedPriority', $event)"
+                  class="w-full"
+                />
+              </div>
             </div>
           </div>
 
-          <!-- Modified Date -->
-          <div class="flex flex-col gap-2">
-            <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Last Modified</h3>
-            <div class="bg-slate-700/50 rounded-lg p-3 border border-slate-600/30">
-              <span class="text-white text-sm">{{ modifiedDate }}</span>
+          <!-- Timestamps Section -->
+          <div class="pt-2 border-t border-slate-700/50">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <!-- Created Date -->
+              <div class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400 uppercase tracking-wide">Created</span>
+                <span class="text-slate-200 text-sm">{{ createdDate }}</span>
+              </div>
+
+              <!-- Modified Date -->
+              <div class="flex flex-col gap-1">
+                <span class="text-xs text-slate-400 uppercase tracking-wide">Last Modified</span>
+                <span class="text-slate-200 text-sm">{{ modifiedDate }}</span>
+              </div>
             </div>
           </div>
         </div>

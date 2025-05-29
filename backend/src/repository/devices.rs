@@ -220,4 +220,76 @@ pub fn upsert_device_by_entra_id(
             devices::updated_at.eq(Utc::now().naive_utc()),
         ))
         .get_result(conn)
+}
+
+pub fn get_devices_for_user(conn: &mut DbConnection, user_uuid: &str) -> QueryResult<Vec<Device>> {
+    use crate::schema::devices::dsl::*;
+    
+    devices
+        .filter(primary_user_uuid.eq(user_uuid))
+        .order(name.asc())
+        .load(conn)
+}
+
+pub fn get_paginated_devices_excluding_ids(
+    conn: &mut DbConnection, 
+    page: i64, 
+    page_size: i64, 
+    search: Option<&str>,
+    exclude_ids: &[i32]
+) -> QueryResult<(Vec<Device>, i64)> {
+    use crate::schema::devices::dsl::*;
+    
+    // Create count query
+    let mut count_query = devices.into_boxed();
+    
+    // Exclude specific device IDs
+    if !exclude_ids.is_empty() {
+        count_query = count_query.filter(id.ne_all(exclude_ids));
+    }
+    
+    // Apply search filter if provided
+    if let Some(search_term) = search {
+        if !search_term.trim().is_empty() {
+            let search_pattern = format!("%{}%", search_term.trim());
+            count_query = count_query.filter(
+                name.ilike(search_pattern.clone())
+                    .or(hostname.ilike(search_pattern.clone()))
+                    .or(serial_number.ilike(search_pattern.clone()))
+                    .or(manufacturer.ilike(search_pattern.clone()))
+                    .or(model.ilike(search_pattern))
+            );
+        }
+    }
+    
+    let total_count = count_query.count().get_result::<i64>(conn)?;
+    
+    // Create data query
+    let mut data_query = devices.into_boxed();
+    
+    // Apply the same filters
+    if !exclude_ids.is_empty() {
+        data_query = data_query.filter(id.ne_all(exclude_ids));
+    }
+    
+    if let Some(search_term) = search {
+        if !search_term.trim().is_empty() {
+            let search_pattern = format!("%{}%", search_term.trim());
+            data_query = data_query.filter(
+                name.ilike(search_pattern.clone())
+                    .or(hostname.ilike(search_pattern.clone()))
+                    .or(serial_number.ilike(search_pattern.clone()))
+                    .or(manufacturer.ilike(search_pattern.clone()))
+                    .or(model.ilike(search_pattern))
+            );
+        }
+    }
+    
+    let results = data_query
+        .order(name.asc())
+        .limit(page_size)
+        .offset((page - 1) * page_size)
+        .load(conn)?;
+    
+    Ok((results, total_count))
 } 

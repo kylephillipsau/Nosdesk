@@ -148,7 +148,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // Handle external auth (Microsoft, etc.)
-  function setExternalAuth(tokenStr: string, userData: User | null, provider: string = 'microsoft') {
+  async function setExternalAuth(tokenStr: string, userData: User | null, provider: string = 'microsoft') {
     token.value = tokenStr;
     user.value = userData;
     authProvider.value = provider;
@@ -158,6 +158,16 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.setItem('authProvider', provider);
       axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`;
       axios.defaults.headers.common['X-Auth-Provider'] = provider;
+      
+      // If no user data was provided, fetch it from the backend
+      if (!userData) {
+        try {
+          await fetchUserData();
+        } catch (err) {
+          console.error('Failed to fetch user data after external auth:', err);
+          // Don't throw error here - authentication was successful
+        }
+      }
     }
     
     return true;

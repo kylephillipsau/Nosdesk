@@ -116,6 +116,11 @@ pub fn get_user_by_email(email: &str, conn: &mut DbConnection) -> Result<User, E
         .first::<User>(conn)
 }
 
+/// Get user by Microsoft UUID
+pub fn get_user_by_microsoft_uuid(conn: &mut DbConnection, microsoft_uuid: &str) -> QueryResult<User> {
+    users::table.filter(users::microsoft_uuid.eq(microsoft_uuid)).first(conn)
+}
+
 pub fn create_user(
     user: NewUser,
     conn: &mut DbConnection,

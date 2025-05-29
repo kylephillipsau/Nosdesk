@@ -21,6 +21,7 @@ use crate::repository::auth_providers as auth_provider_repo;
 use crate::repository::users as user_repo;
 use crate::repository::devices as device_repo;
 use crate::repository::user_auth_identities as identity_repo;
+use crate::repository::user_emails as user_emails_repo;
 use crate::repository::sync_history as sync_history_repo;
 use crate::config_utils;
 use crate::models::{NewUser, NewUserAuthIdentity, User, UserAuthIdentity, NewSyncHistory, SyncHistoryUpdate};
@@ -79,7 +80,6 @@ pub struct SyncProgressState {
     pub message: String,
     pub started_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub can_cancel: bool,
     pub sync_type: String, // "users", "profile_photos", "devices", "groups"
 }
 
@@ -135,6 +135,10 @@ pub struct MicrosoftGraphUser {
     pub mobile_phone: Option<String>,
     #[serde(rename = "businessPhones")]
     pub business_phones: Option<Vec<String>>,
+    #[serde(rename = "proxyAddresses")]
+    pub proxy_addresses: Option<Vec<String>>,
+    #[serde(rename = "otherMails")]
+    pub other_mails: Option<Vec<String>>,
 }
 
 // Microsoft Graph Device structure from API response (managedDevice)
@@ -210,10 +214,10 @@ struct UserSyncResult {
 
 // Helper functions for progress tracking
 fn update_sync_progress(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str) {
-    update_sync_progress_with_type(session_id, entity, current, total, status, message, entity, true);
+    update_sync_progress_with_type(session_id, entity, current, total, status, message, entity);
 }
 
-fn update_sync_progress_with_type(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str, can_cancel: bool) {
+fn update_sync_progress_with_type(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str) {
     let now = Utc::now();
     
     // Update in-memory progress for real-time tracking
@@ -229,99 +233,57 @@ fn update_sync_progress_with_type(session_id: &str, entity: &str, current: usize
                 .map(|p| p.started_at)
                 .unwrap_or(now),
             updated_at: now,
-            can_cancel,
             sync_type: sync_type.to_string(),
         };
         progress_map.insert(session_id.to_string(), progress);
     }
     
-    // Also persist to database for long-term storage
-    persist_sync_progress_to_db(session_id, entity, current, total, status, message, sync_type, can_cancel);
+    // Only persist to database for final states (completed, error, cancelled)
+    if status == "completed" || status == "error" || status == "cancelled" {
+        persist_final_sync_to_db(session_id, entity, current, total, status, message, sync_type);
+    }
 }
 
-fn persist_sync_progress_to_db(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str, can_cancel: bool) {
+fn persist_final_sync_to_db(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str) {
     let session_id = session_id.to_string();
     let entity = entity.to_string();
     let status = status.to_string();
     let message = message.to_string();
     let sync_type = sync_type.to_string();
-    let is_final_status = status == "completed" || status == "error" || status == "cancelled";
     
-         // For final states (completed, error, cancelled), use blocking operation to ensure it completes
-     if is_final_status {
-        let pool = crate::db::establish_connection_pool();
-        if let Ok(mut conn) = pool.get() {
-            let now = Utc::now().naive_utc();
-            
-            let update = SyncHistoryUpdate {
-                status: Some(status.clone()),
-                message: Some(message.clone()),
-                current_count: Some(current as i32),
-                total_count: Some(total as i32),
-                updated_at: Some(now),
-                completed_at: Some(Some(now)),
-                can_cancel: Some(can_cancel),
-            };
-            
-                         match sync_history_repo::update_sync_history(&mut conn, &session_id, update) {
-                 Ok(_) => {},
-                 Err(_) => {
-                                         // If update fails, try to create a new record
-                     let new_sync = NewSyncHistory {
-                         session_id: session_id.clone(),
-                         sync_type,
-                         entity,
-                         status: status.clone(),
-                         message,
-                         current_count: current as i32,
-                         total_count: total as i32,
-                         started_at: now,
-                         updated_at: now,
-                         completed_at: Some(now),
-                         can_cancel,
-                     };
-                     
-                     let _ = sync_history_repo::create_sync_history(&mut conn, new_sync);
-                }
-            }
-        }
-    } else {
-        // For non-final states, use async operation to avoid blocking
-        tokio::spawn(async move {
-            let pool = crate::db::establish_connection_pool();
-            if let Ok(mut conn) = pool.get() {
-                let now = Utc::now().naive_utc();
-                
-                let update = SyncHistoryUpdate {
-                    status: Some(status.clone()),
-                    message: Some(message.clone()),
-                    current_count: Some(current as i32),
-                    total_count: Some(total as i32),
-                    updated_at: Some(now),
-                    completed_at: None,
-                    can_cancel: Some(can_cancel),
+    let pool = crate::db::establish_connection_pool();
+    if let Ok(mut conn) = pool.get() {
+        let now = Utc::now().naive_utc();
+        
+        let update = SyncHistoryUpdate {
+            status: Some(status.clone()),
+            message: Some(message.clone()),
+            current_count: Some(current as i32),
+            total_count: Some(total as i32),
+            updated_at: Some(now),
+            completed_at: Some(Some(now)),
+        };
+        
+        match sync_history_repo::update_sync_history(&mut conn, &session_id, update) {
+            Ok(_) => {},
+            Err(_) => {
+                // If update fails, try to create a new record
+                let new_sync = NewSyncHistory {
+                    session_id: session_id.clone(),
+                    sync_type,
+                    entity,
+                    status: status.clone(),
+                    message,
+                    current_count: current as i32,
+                    total_count: total as i32,
+                    started_at: now,
+                    updated_at: now,
+                    completed_at: Some(now),
                 };
                 
-                if sync_history_repo::update_sync_history(&mut conn, &session_id, update).is_err() {
-                    // If update fails, try to create a new record
-                    let new_sync = NewSyncHistory {
-                        session_id,
-                        sync_type,
-                        entity,
-                        status,
-                        message,
-                        current_count: current as i32,
-                        total_count: total as i32,
-                        started_at: now,
-                        updated_at: now,
-                        completed_at: None,
-                        can_cancel,
-                    };
-                    
-                    let _ = sync_history_repo::create_sync_history(&mut conn, new_sync);
-                }
+                let _ = sync_history_repo::create_sync_history(&mut conn, new_sync);
             }
-        });
+        }
     }
 }
 
@@ -473,7 +435,6 @@ pub async fn get_last_sync(
                 message: sync_history.message,
                 started_at: DateTime::from_naive_utc_and_offset(sync_history.started_at, Utc),
                 updated_at: DateTime::from_naive_utc_and_offset(sync_history.updated_at, Utc),
-                can_cancel: sync_history.can_cancel,
                 sync_type: sync_history.sync_type,
             };
             HttpResponse::Ok().json(response)
@@ -534,9 +495,9 @@ pub async fn cancel_sync_session(
     
     // Check if the session exists and is cancellable
     if let Some(progress) = get_sync_progress(&session_id) {
-        if progress.can_cancel && (progress.status == "running" || progress.status == "starting") {
+        if progress.status == "running" || progress.status == "starting" {
             cancel_sync(&session_id);
-            update_sync_progress_with_type(&session_id, &progress.entity, progress.current, progress.total, "cancelling", "Cancellation requested", &progress.sync_type, false);
+            update_sync_progress_with_type(&session_id, &progress.entity, progress.current, progress.total, "cancelling", "Cancellation requested", &progress.sync_type);
             
             HttpResponse::Ok().json(json!({
                 "success": true,
@@ -545,7 +506,7 @@ pub async fn cancel_sync_session(
         } else {
             HttpResponse::BadRequest().json(json!({
                 "status": "error",
-                "message": "Sync cannot be cancelled or is not running"
+                "message": "Sync is not running"
             }))
         }
     } else {
@@ -713,7 +674,7 @@ pub async fn sync_data(
         "sync"
     };
     
-    update_sync_progress_with_type(&session_id, "initializing", 0, 0, "starting", "Initializing sync process", primary_sync_type, true);
+    update_sync_progress_with_type(&session_id, "initializing", 0, 0, "starting", "Initializing sync process", primary_sync_type);
 
     // Start the sync process in the background
     let provider_id = provider.id;
@@ -748,7 +709,6 @@ pub async fn sync_data(
                     total_count: Some(sync_result.total_processed as i32),
                     updated_at: Some(now),
                     completed_at: Some(Some(now)),
-                    can_cancel: Some(false),
                 };
                 let _ = sync_history_repo::update_sync_history(&mut conn, &session_id_clone, update);
                 }
@@ -767,7 +727,7 @@ pub async fn sync_data(
                     "sync"
                 };
                 
-                update_sync_progress_with_type(&session_id_clone, primary_sync_type, 0, 0, "error", &error_message, primary_sync_type, false);
+                update_sync_progress_with_type(&session_id_clone, primary_sync_type, 0, 0, "error", &error_message, primary_sync_type);
                 
                 // Also immediately update the database synchronously for errors
                 let now = Utc::now().naive_utc();
@@ -778,7 +738,6 @@ pub async fn sync_data(
                     total_count: Some(0),
                     updated_at: Some(now),
                     completed_at: Some(Some(now)),
-                    can_cancel: Some(false),
                 };
                 let _ = sync_history_repo::update_sync_history(&mut conn, &session_id_clone, update);
             }
@@ -936,7 +895,7 @@ async fn perform_sync(
             _ => {
                 total_errors += 1;
                 // Update progress with error for unsupported entity
-                update_sync_progress_with_type(session_id, entity, 0, 0, "error", &format!("Unsupported entity type: {}", entity), primary_sync_type, false);
+                update_sync_progress_with_type(session_id, entity, 0, 0, "error", &format!("Unsupported entity type: {}", entity), primary_sync_type);
                 SyncProgress {
                     entity: entity.clone(),
                     processed: 0,
@@ -1078,8 +1037,7 @@ async fn sync_users(
                     total_users, 
                     "cancelled", 
                     &cancel_message, 
-                    "users", 
-                    false
+                    "users"
                 );
                 
                 sync_was_cancelled = true;
@@ -1101,8 +1059,7 @@ async fn sync_users(
                 total_users, 
                 "running", 
                 &format!("Processing user: {}", ms_user.user_principal_name),
-                "users",
-                true
+                "users"
             );
 
             match process_microsoft_user_optimized_v2(conn, provider_id, ms_user, &mut stats, &access_token, &client).await {
@@ -1223,13 +1180,16 @@ async fn fetch_microsoft_graph_users_optimized(provider_id: i32) -> Result<(Vec<
 
     // Build the Microsoft Graph API request for users
     // Select the fields we need for our MicrosoftGraphUser struct
-    let select_fields = "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,officeLocation,mobilePhone,businessPhones";
+    // Important: Include proxyAddresses and otherMails for email aliases
+    let select_fields = "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,officeLocation,mobilePhone,businessPhones,proxyAddresses,otherMails";
     
     // Start with the first page
     let mut url = format!(
         "https://graph.microsoft.com/v1.0/users?$select={}",
         urlencoding::encode(select_fields)
     );
+
+    println!("Microsoft Graph API query with email alias fields: {}", url);
 
     let mut all_users = Vec::new();
     let mut page_count = 0;
@@ -1356,15 +1316,17 @@ async fn process_microsoft_user_optimized_v2(
         return update_existing_microsoft_user_optimized(conn, ms_user, existing_identity, stats, access_token, client).await;
     }
 
-    // Step 2: Check if a local user exists with matching email
-    let email = ms_user.mail.as_ref().unwrap_or(&ms_user.user_principal_name);
+    // Step 2: Extract all email addresses from Microsoft Graph user
+    let emails = extract_user_emails(ms_user);
+    let email_addresses: Vec<String> = emails.iter().map(|(email, _, _)| email.clone()).collect();
     
-    if let Ok(existing_user) = user_repo::get_user_by_email(email, conn) {
+    // Step 3: Check if any user exists with any of these email addresses
+    if let Ok(Some(existing_user)) = user_emails_repo::find_user_by_any_of_emails(conn, &email_addresses) {
         // Local user exists but no Microsoft identity - link them
         return link_existing_user_to_microsoft_optimized(conn, provider_id, ms_user, existing_user, stats, access_token, client).await;
     }
 
-    // Step 3: No existing user found - create new user with Microsoft identity
+    // Step 4: No existing user found - create new user with Microsoft identity
     create_new_user_from_microsoft_optimized(conn, provider_id, ms_user, stats, access_token, client).await
 }
 
@@ -1613,14 +1575,18 @@ async fn update_existing_microsoft_user_optimized(
     let user = user_repo::get_user_by_id(existing_identity.user_id, conn)
         .map_err(|e| format!("Failed to get user by ID {}: {}", existing_identity.user_id, e))?;
 
+    // Extract all email addresses from Microsoft Graph
+    let emails = extract_user_emails(ms_user);
+    let primary_email = emails.first().map(|(email, _, _)| email.clone())
+        .unwrap_or_else(|| ms_user.user_principal_name.clone());
+
     // Update user information with latest from Microsoft Graph
     let updated_name = ms_user.display_name.as_ref().unwrap_or(&user.name);
-    let updated_email = ms_user.mail.as_ref().unwrap_or(&ms_user.user_principal_name);
 
     // Only update core fields, preserve role/pronouns/avatars, but update timestamp and Microsoft UUID
     let user_update = crate::models::UserUpdate {
         name: if updated_name != &user.name { Some(updated_name.clone()) } else { None },
-        email: if updated_email != &user.email { Some(updated_email.clone()) } else { None },
+        email: if primary_email != user.email { Some(primary_email.clone()) } else { None },
         role: None, // Don't change role during sync
         pronouns: None, // Preserve pronouns
         avatar_url: None, // Preserve avatar
@@ -1635,6 +1601,46 @@ async fn update_existing_microsoft_user_optimized(
         user_repo::update_user(user.id, user_update, conn)
             .map_err(|e| format!("Failed to update user: {}", e))?;
         println!("Updated user information for: {}", user.name);
+    }
+
+    // Store all email addresses
+    let email_data: Vec<(String, String, bool, String)> = emails
+        .into_iter()
+        .map(|(email, email_type, verified)| (email, email_type, verified, "microsoft".to_string()))
+        .collect();
+
+    if !email_data.is_empty() {
+        println!("Storing {} email addresses for user: {}", email_data.len(), user.name);
+        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
+            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
+        }
+        
+        match user_emails_repo::add_multiple_emails(conn, user.id, email_data.clone()) {
+            Ok(stored_emails) => {
+                let added_count = stored_emails.len();
+                println!("Successfully stored {} email addresses for user: {}", added_count, user.name);
+                
+                // Clean up any Microsoft emails that are no longer present
+                let current_emails: Vec<String> = email_data.iter().map(|(email, _, _, _)| email.clone()).collect();
+                match user_emails_repo::cleanup_obsolete_emails(conn, user.id, &current_emails, "microsoft") {
+                    Ok(cleaned_count) => {
+                        if cleaned_count > 0 {
+                            println!("Cleaned up {} obsolete Microsoft email addresses for user: {}", cleaned_count, user.name);
+                        }
+                    },
+                    Err(e) => {
+                        println!("Warning: Failed to cleanup obsolete emails for user {}: {}", user.name, e);
+                    }
+                }
+            },
+            Err(e) => {
+                println!("Error: Failed to store email addresses for user {}: {}", user.name, e);
+                // Don't fail the entire user sync, but make sure the error is visible
+                stats.errors.push(format!("Failed to store emails for user {}: {}", user.name, e));
+            }
+        }
+    } else {
+        println!("No email addresses to store for user: {}", user.name);
     }
 
     // Update identity data with latest from Microsoft Graph
@@ -1683,11 +1689,16 @@ async fn link_existing_user_to_microsoft_optimized(
     identity_repo::create_identity(new_identity, conn)
         .map_err(|e| format!("Failed to create Microsoft identity: {}", e))?;
 
+    // Extract all email addresses from Microsoft Graph
+    let emails = extract_user_emails(ms_user);
+    let primary_email = emails.first().map(|(email, _, _)| email.clone())
+        .unwrap_or_else(|| ms_user.user_principal_name.clone());
+
     // Update user information with Microsoft data and store Microsoft UUID
     let updated_name = ms_user.display_name.as_ref().unwrap_or(&existing_user.name);
     let user_update = crate::models::UserUpdate {
         name: if updated_name != &existing_user.name { Some(updated_name.clone()) } else { None },
-        email: None, // Don't change email when linking
+        email: if primary_email != existing_user.email { Some(primary_email.clone()) } else { None },
         role: None,
         pronouns: None,
         avatar_url: None,
@@ -1700,6 +1711,33 @@ async fn link_existing_user_to_microsoft_optimized(
     // Always update to store the Microsoft UUID
     user_repo::update_user(existing_user.id, user_update, conn)
         .map_err(|e| format!("Failed to update user with Microsoft UUID: {}", e))?;
+
+    // Store all email addresses
+    let email_data: Vec<(String, String, bool, String)> = emails
+        .into_iter()
+        .map(|(email, email_type, verified)| (email, email_type, verified, "microsoft".to_string()))
+        .collect();
+
+    if !email_data.is_empty() {
+        println!("Storing {} email addresses for linked user: {}", email_data.len(), existing_user.name);
+        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
+            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
+        }
+        
+        match user_emails_repo::add_multiple_emails(conn, existing_user.id, email_data.clone()) {
+            Ok(stored_emails) => {
+                let added_count = stored_emails.len();
+                println!("Successfully stored {} email addresses for linked user: {}", added_count, existing_user.name);
+            },
+            Err(e) => {
+                println!("Error: Failed to store email addresses for linked user {}: {}", existing_user.name, e);
+                // Don't fail the entire user sync, but make sure the error is visible
+                stats.errors.push(format!("Failed to store emails for linked user {}: {}", existing_user.name, e));
+            }
+        }
+    } else {
+        println!("No email addresses to store for linked user: {}", existing_user.name);
+    }
 
     // Sync profile photo using optimized client
     if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &existing_user.uuid).await {
@@ -1726,6 +1764,11 @@ async fn create_new_user_from_microsoft_optimized(
     // Generate UUID for new user (this is our local UUID, different from Microsoft's)
     let user_uuid = Uuid::new_v4().to_string();
     
+    // Extract all email addresses from Microsoft Graph
+    let emails = extract_user_emails(ms_user);
+    let primary_email = emails.first().map(|(email, _, _)| email.clone())
+        .unwrap_or_else(|| ms_user.user_principal_name.clone());
+    
     // Determine name (prefer displayName, fallback to givenName + surname, fallback to userPrincipalName)
     let name = ms_user.display_name.clone()
         .or_else(|| {
@@ -1738,14 +1781,11 @@ async fn create_new_user_from_microsoft_optimized(
         })
         .unwrap_or_else(|| ms_user.user_principal_name.clone());
 
-    // Use mail if available, otherwise use userPrincipalName
-    let email = ms_user.mail.as_ref().unwrap_or(&ms_user.user_principal_name);
-
     // Create new user with default role 'user' and store Microsoft UUID
     let new_user = NewUser {
         uuid: user_uuid.clone(),
         name: name.clone(),
-        email: email.clone(),
+        email: primary_email.clone(),
         role: "user".to_string(),
         pronouns: None,
         avatar_url: None,
@@ -1756,6 +1796,33 @@ async fn create_new_user_from_microsoft_optimized(
 
     let created_user = user_repo::create_user(new_user, conn)
         .map_err(|e| format!("Failed to create user: {}", e))?;
+
+    // Store all email addresses
+    let email_data: Vec<(String, String, bool, String)> = emails
+        .into_iter()
+        .map(|(email, email_type, verified)| (email, email_type, verified, "microsoft".to_string()))
+        .collect();
+
+    if !email_data.is_empty() {
+        println!("Storing {} email addresses for new user: {}", email_data.len(), name);
+        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
+            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
+        }
+        
+        match user_emails_repo::add_multiple_emails(conn, created_user.id, email_data.clone()) {
+            Ok(stored_emails) => {
+                let added_count = stored_emails.len();
+                println!("Successfully stored {} email addresses for new user: {}", added_count, name);
+            },
+            Err(e) => {
+                println!("Error: Failed to store email addresses for new user {}: {}", name, e);
+                // Don't fail the entire user sync, but make sure the error is visible
+                stats.errors.push(format!("Failed to store emails for new user {}: {}", name, e));
+            }
+        }
+    } else {
+        println!("No email addresses to store for new user: {}", name);
+    }
 
     // Create Microsoft identity for the new user
     let identity_data = serde_json::to_value(ms_user)
@@ -1780,7 +1847,8 @@ async fn create_new_user_from_microsoft_optimized(
         }
     }
 
-    println!("Created new user: {} ({}) with Microsoft UUID: {}", name, email, ms_user.id);
+    println!("Created new user: {} ({}) with Microsoft UUID: {} and {} email addresses", 
+        name, primary_email, ms_user.id, email_data.len());
     stats.new_users_created += 1;
     Ok(())
 }
@@ -1798,13 +1866,13 @@ async fn sync_devices(
         errors: Vec::new(),
     };
 
-    update_sync_progress_with_type(session_id, "devices", 0, 0, "running", "Fetching devices from Microsoft Graph", "devices", true);
+    update_sync_progress_with_type(session_id, "devices", 0, 0, "running", "Fetching devices from Microsoft Graph", "devices");
 
     // Step 1: Fetch devices from Microsoft Graph
     let (microsoft_devices, _access_token) = match fetch_microsoft_graph_devices(provider_id).await {
         Ok(result) => result,
         Err(error) => {
-            update_sync_progress_with_type(session_id, "devices", 0, 0, "error", &format!("Failed to fetch devices: {}", error), "devices", false);
+            update_sync_progress_with_type(session_id, "devices", 0, 0, "error", &format!("Failed to fetch devices: {}", error), "devices");
             return SyncProgress {
                 entity: "devices".to_string(),
                 processed: 0,
@@ -1819,7 +1887,7 @@ async fn sync_devices(
     println!("Fetched {} devices from Microsoft Graph", total_devices);
 
     if total_devices == 0 {
-        update_sync_progress_with_type(session_id, "devices", 0, 0, "completed", "No devices found to sync", "devices", false);
+        update_sync_progress_with_type(session_id, "devices", 0, 0, "completed", "No devices found to sync", "devices");
         return SyncProgress {
         entity: "devices".to_string(),
         processed: 0,
@@ -1829,7 +1897,7 @@ async fn sync_devices(
         };
     }
 
-    update_sync_progress_with_type(session_id, "devices", 0, total_devices, "running", &format!("Processing {} devices", total_devices), "devices", true);
+    update_sync_progress_with_type(session_id, "devices", 0, total_devices, "running", &format!("Processing {} devices", total_devices), "devices");
 
     // Step 2: Process devices
     let mut processed_count = 0;
@@ -1848,8 +1916,7 @@ async fn sync_devices(
                 total_devices, 
                 "cancelled", 
                 &cancel_message, 
-                "devices", 
-                false
+                "devices"
             );
             
             return SyncProgress {
@@ -1870,8 +1937,7 @@ async fn sync_devices(
             total_devices, 
             "running", 
             &format!("Processing device: {}", ms_device.device_name.as_deref().unwrap_or(&ms_device.id)),
-            "devices",
-            true
+            "devices"
         );
 
         match process_microsoft_device(conn, provider_id, &ms_device, &mut stats).await {
@@ -1897,8 +1963,7 @@ async fn sync_devices(
                 &format!("Processed {}/{} devices ({} created, {} updated, {} assigned, {} errors)", 
                     processed_count, total_devices, stats.new_devices_created, stats.existing_devices_updated, 
                     stats.devices_assigned, stats.errors.len()),
-                "devices",
-                true
+                "devices"
             );
         }
 
@@ -1918,8 +1983,7 @@ async fn sync_devices(
         "completed", 
         &format!("Completed: {} created, {} updated, {} assigned, {} errors", 
             stats.new_devices_created, stats.existing_devices_updated, stats.devices_assigned, stats.errors.len()),
-        "devices",
-        false
+        "devices"
     );
 
     SyncProgress {
@@ -2501,19 +2565,51 @@ async fn process_microsoft_device(
     };
 
     // Step 3: Try to find the primary user for this device
-    let primary_user_uuid = if let Some(user_principal_name) = &ms_device.user_principal_name {
-        match user_repo::get_user_by_email(user_principal_name, conn) {
-            Ok(user) => {
-                println!("Found user {} for device {}", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
-                Some(user.uuid)
-            },
-            Err(_) => {
-                println!("User {} not found for device {}", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
-                None
+    let primary_user_uuid = {
+        // First, try to match by Microsoft UUID if available (most reliable)
+        if let Some(microsoft_user_id) = &ms_device.user_id {
+            match user_repo::get_user_by_microsoft_uuid(conn, microsoft_user_id) {
+                Ok(user) => {
+                    println!("Found user {} for device {} by Microsoft UUID", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                    Some(user.uuid)
+                },
+                Err(_) => {
+                    println!("User with Microsoft UUID {} not found for device {}", microsoft_user_id, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                    
+                    // Fallback to email matching if Microsoft UUID doesn't match
+                    if let Some(user_principal_name) = &ms_device.user_principal_name {
+                        match user_emails_repo::find_user_by_any_email(conn, user_principal_name) {
+                            Ok(user) => {
+                                println!("Found user {} for device {} by email fallback", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                                Some(user.uuid)
+                            },
+                            Err(_) => {
+                                println!("User {} not found for device {} (tried both Microsoft UUID and email)", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                }
             }
         }
-    } else {
-        None
+        // If no Microsoft UUID available, try email matching only
+        else if let Some(user_principal_name) = &ms_device.user_principal_name {
+            match user_emails_repo::find_user_by_any_email(conn, user_principal_name) {
+                Ok(user) => {
+                    println!("Found user {} for device {} by email", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                    Some(user.uuid)
+                },
+                Err(_) => {
+                    println!("User {} not found for device {}", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                    None
+                }
+            }
+        } else {
+            println!("No user information available for device {}", ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+            None
+        }
     };
 
     // Step 4: Prepare device data
@@ -2743,4 +2839,96 @@ async fn fetch_entra_object_id_from_graph(provider_id: i32, azure_ad_device_id: 
     println!("Successfully found Object ID {} for Azure AD Device ID {}", object_id, azure_ad_device_id);
     
     Ok(object_id.to_string())
+}
+
+/// Extract all email addresses from Microsoft Graph user data
+fn extract_user_emails(ms_user: &MicrosoftGraphUser) -> Vec<(String, String, bool)> {
+    let mut emails = Vec::new();
+    
+    println!("Extracting emails for user: {} (ID: {})", ms_user.user_principal_name, ms_user.id);
+    
+    // Primary email (mail field)
+    if let Some(mail) = &ms_user.mail {
+        if !mail.is_empty() && mail.contains('@') {
+            emails.push((mail.clone(), "primary".to_string(), true));
+            println!("  Added primary email: {}", mail);
+        }
+    }
+    
+    // User Principal Name (if different from mail)
+    if !ms_user.user_principal_name.is_empty() && 
+       ms_user.user_principal_name.contains('@') &&
+       !emails.iter().any(|(e, _, _)| e == &ms_user.user_principal_name) {
+        let email_type = if emails.is_empty() { "primary".to_string() } else { "upn".to_string() };
+        emails.push((ms_user.user_principal_name.clone(), email_type.clone(), true));
+        println!("  Added UPN email: {} (type: {})", ms_user.user_principal_name, email_type);
+    }
+    
+    // Proxy addresses (SMTP addresses from Exchange)
+    if let Some(proxy_addresses) = &ms_user.proxy_addresses {
+        println!("  Processing {} proxy addresses: {:?}", proxy_addresses.len(), proxy_addresses);
+        for proxy in proxy_addresses {
+            if let Some(email) = extract_smtp_address(proxy) {
+                if !emails.iter().any(|(e, _, _)| e == &email) {
+                    let email_type = if proxy.starts_with("SMTP:") {
+                        "primary".to_string() // SMTP: (uppercase) indicates primary
+                    } else {
+                        "alias".to_string() // smtp: (lowercase) indicates alias
+                    };
+                    emails.push((email.clone(), email_type.clone(), true));
+                    println!("  Added proxy email: {} (type: {}, original: {})", email, email_type, proxy);
+                } else {
+                    println!("  Skipped duplicate proxy email: {} (original: {})", email, proxy);
+                }
+            } else {
+                println!("  Failed to extract email from proxy address: {}", proxy);
+            }
+        }
+    } else {
+        println!("  No proxy addresses found");
+    }
+    
+    // Other mail addresses
+    if let Some(other_mails) = &ms_user.other_mails {
+        println!("  Processing {} other mail addresses: {:?}", other_mails.len(), other_mails);
+        for email in other_mails {
+            if !email.is_empty() && 
+               email.contains('@') && 
+               !emails.iter().any(|(e, _, _)| e == email) {
+                emails.push((email.clone(), "other".to_string(), true));
+                println!("  Added other email: {}", email);
+            } else {
+                println!("  Skipped invalid or duplicate other email: {}", email);
+            }
+        }
+    } else {
+        println!("  No other mail addresses found");
+    }
+    
+    // If no emails found, use the userPrincipalName as a fallback
+    if emails.is_empty() && !ms_user.user_principal_name.is_empty() {
+        emails.push((ms_user.user_principal_name.clone(), "primary".to_string(), true));
+        println!("  Added fallback UPN email: {}", ms_user.user_principal_name);
+    }
+    
+    println!("  Total emails extracted: {}", emails.len());
+    for (i, (email, email_type, verified)) in emails.iter().enumerate() {
+        println!("    {}: {} (type: {}, verified: {})", i + 1, email, email_type, verified);
+    }
+    
+    emails
+}
+
+/// Extract email address from Exchange proxy address format
+fn extract_smtp_address(proxy_address: &str) -> Option<String> {
+    if proxy_address.starts_with("SMTP:") {
+        Some(proxy_address[5..].to_string())
+    } else if proxy_address.starts_with("smtp:") {
+        Some(proxy_address[5..].to_string())
+    } else if proxy_address.contains('@') {
+        // Sometimes proxy addresses don't have the SMTP: prefix
+        Some(proxy_address.to_string())
+    } else {
+        None
+    }
 } 

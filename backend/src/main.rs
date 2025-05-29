@@ -205,12 +205,13 @@ async fn main() -> std::io::Result<()> {
                     // ===== DEVICE MANAGEMENT =====
                     .route("/devices", web::get().to(handlers::get_all_devices))
                     .route("/devices/paginated", web::get().to(handlers::get_paginated_devices))
+                    .route("/devices/paginated/excluding", web::get().to(handlers::get_paginated_devices_excluding))
                     .route("/devices", web::post().to(handlers::create_device))
                     .route("/devices/{id}", web::get().to(handlers::get_device_by_id))
                     .route("/devices/{id}", web::put().to(handlers::update_device))
                     .route("/devices/{id}", web::delete().to(handlers::delete_device))
                     // Note: Device-ticket association removed in favor of user-device associations
-                    .route("/users/{uuid}/devices", web::get().to(handlers::get_devices_by_user))
+                    .route("/users/{uuid}/devices", web::get().to(handlers::get_user_devices))
                     
                     // ===== DOCUMENTATION SYSTEM =====
                     // Core documentation operations
