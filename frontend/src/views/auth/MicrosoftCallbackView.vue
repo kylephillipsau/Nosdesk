@@ -61,12 +61,12 @@ onMounted(async () => {
     const data = response.data;
     
     if (data && data.token) {
-      message.value = 'Authentication successful, redirecting...';
+      message.value = 'Authentication successful, loading profile...';
       console.log('Authentication successful, token received');
       
       // Save token and user data in auth store using the new method
-      // This will set the X-Auth-Provider header too
-      authStore.setExternalAuth(data.token, data.user || null, 'microsoft');
+      // This will set the X-Auth-Provider header and fetch user data if needed
+      await authStore.setExternalAuth(data.token, data.user || null, 'microsoft');
       
       // Redirect to dashboard or original destination
       let redirectPath = data.redirect || sessionStorage.getItem('authRedirect') || '/';

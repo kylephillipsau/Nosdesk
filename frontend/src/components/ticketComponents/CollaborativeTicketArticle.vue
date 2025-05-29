@@ -94,12 +94,13 @@ const handleContentChange = async (newValue: string) => {
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-2xl p-2 pt-3 shadow-lg flex flex-col gap-2 w-full h-auto">
-    <div class="text-lg font-medium text-slate-100 px-2 flex justify-between items-center">
-      <h2 class="text-lg font-medium text-slate-100 px-2">Ticket Notes</h2>
+  <div class="bg-slate-800 rounded-xl border border-slate-700/50 flex flex-col w-full h-auto">
+    <!-- Header -->
+    <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex justify-between items-center">
+      <h2 class="text-lg font-medium text-white">Ticket Notes</h2>
       <button
         @click="handleExpand"
-        class="p-1.5 py-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+        class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded-md transition-colors"
         title="Open full editor"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -107,17 +108,21 @@ const handleContentChange = async (newValue: string) => {
         </svg>
       </button>
     </div>
-    <div v-if="isLoading" class="p-4 flex flex-grow justify-center items-center">
-      <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-    </div>
-    <div v-else class="flex-grow flex w-full">
-      <CollaborativeEditor
-        v-model="content"
-        :doc-id="`ticket-${ticketId}`"
-        :is-binary-update="true"
-        @update:model-value="handleContentChange"
-        class="flex-grow w-full"
-      />
+    
+    <!-- Content -->
+    <div class="flex-grow flex w-full">
+      <div v-if="isLoading" class="flex flex-grow justify-center items-center">
+        <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+      <div v-else class="flex-grow flex w-full">
+        <CollaborativeEditor
+          v-model="content"
+          :doc-id="`ticket-${ticketId}`"
+          :is-binary-update="true"
+          @update:model-value="handleContentChange"
+          class="flex-grow w-full"
+        />
+      </div>
     </div>
   </div>
 </template>

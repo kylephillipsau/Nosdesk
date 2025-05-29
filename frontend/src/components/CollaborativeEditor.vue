@@ -876,7 +876,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="collaborative-editor">
     <!-- Toolbar -->
-    <div class="toolbar">
+     <div class="toolbar">
       <!-- Type Dropdown -->
       <div class="relative">
         <button

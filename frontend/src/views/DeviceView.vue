@@ -322,7 +322,7 @@ onMounted(() => {
               
               <div v-if="device.primary_user">
                 <!-- Profile Content -->
-                <div class="p-6">
+                <div class="flex flex-col gap-4 pt-0 p-6">
                   <!-- User Card with Banner Background -->
                   <div class="relative rounded-xl overflow-hidden mb-6">
                     <!-- Faded Banner Background -->

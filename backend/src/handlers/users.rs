@@ -13,6 +13,7 @@ use std::collections::HashSet;
 
 use crate::models::{NewUser, UserResponse, UserUpdate, UserUpdateWithPassword, UserProfileUpdate};
 use crate::repository;
+use crate::repository::user_emails as user_emails_repo;
 use crate::handlers::auth::validate_token_internal;
 
 // Pagination query parameters
@@ -1367,4 +1368,122 @@ pub async fn update_user_by_uuid(
             "message": "Error updating user"
         })),
     }
+}
+
+/// Get user email addresses
+pub async fn get_user_emails(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+    path: web::Path<String>, // User UUID
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Database connection failed"
+        })),
+    };
+
+    let user_uuid = path.into_inner();
+
+    // Validate token
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Check authorization (user can access their own emails, admins can access any)
+    if claims.sub != user_uuid && claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Not authorized to access this resource"
+        }));
+    }
+
+    // Get user emails
+    match user_emails_repo::get_user_emails_by_uuid(&mut conn, &user_uuid) {
+        Ok(emails) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "emails": emails
+        })),
+        Err(e) => {
+            eprintln!("Error fetching user emails for UUID {}: {:?}", user_uuid, e);
+            match e {
+                diesel::result::Error::NotFound => {
+                    HttpResponse::NotFound().json(json!({
+                        "status": "error",
+                        "message": "User not found"
+                    }))
+                },
+                _ => {
+                    HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to retrieve user emails"
+                    }))
+                }
+            }
+        }
+    }
+}
+
+/// Get user with all email addresses
+pub async fn get_user_with_emails(
+    db_pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
+    path: web::Path<String>, // User UUID
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Database connection failed"
+        })),
+    };
+
+    let user_uuid = path.into_inner();
+
+    // Validate token
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Check authorization
+    if claims.sub != user_uuid && claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Not authorized to access this resource"
+        }));
+    }
+
+    // Get user
+    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+        Ok(user) => user,
+        Err(_) => return HttpResponse::NotFound().json(json!({
+            "status": "error",
+            "message": "User not found"
+        })),
+    };
+
+    // Get user emails
+    let emails = match user_emails_repo::get_user_emails(&mut conn, user.id) {
+        Ok(emails) => emails,
+        Err(e) => {
+            eprintln!("Error fetching emails for user {}: {:?}", user.id, e);
+            Vec::new() // Return empty vec if error fetching emails
+        }
+    };
+
+    let user_with_emails = crate::models::UserWithEmails {
+        user: UserResponse::from(user),
+        emails,
+    };
+
+    HttpResponse::Ok().json(user_with_emails)
 } 

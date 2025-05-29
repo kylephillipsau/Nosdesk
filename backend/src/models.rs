@@ -300,6 +300,23 @@ pub struct NewTicketDevice {
     pub device_id: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable, Associations)]
+#[diesel(table_name = crate::schema::ticket_assignees)]
+#[diesel(belongs_to(Ticket))]
+#[diesel(primary_key(ticket_id, user_uuid))]
+pub struct TicketAssignee {
+    pub ticket_id: i32,
+    pub user_uuid: String,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::ticket_assignees)]
+pub struct NewTicketAssignee {
+    pub ticket_id: i32,
+    pub user_uuid: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Identifiable, Associations)]
 #[diesel(table_name = crate::schema::comments)]
 #[diesel(belongs_to(Ticket))]
@@ -433,6 +450,7 @@ pub struct CompleteTicket {
     pub article_content: Option<String>,
     pub linked_tickets: Vec<i32>,
     pub projects: Vec<Project>,
+    pub assignees: Vec<UserInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -765,6 +783,51 @@ impl From<User> for UserInfo {
             name: user.name,
         }
     }
+}
+
+// User Email models for storing multiple email addresses per user
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable, Associations)]
+#[diesel(table_name = crate::schema::user_emails)]
+#[diesel(belongs_to(User))]
+pub struct UserEmail {
+    pub id: i32,
+    pub user_id: i32,
+    pub email: String,
+    pub email_type: String,
+    pub is_primary: bool,
+    pub verified: bool,
+    pub source: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::user_emails)]
+pub struct NewUserEmail {
+    pub user_id: i32,
+    pub email: String,
+    pub email_type: String,
+    pub is_primary: bool,
+    pub verified: bool,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::user_emails)]
+pub struct UserEmailUpdate {
+    pub email_type: Option<String>,
+    pub is_primary: Option<bool>,
+    pub verified: Option<bool>,
+    pub source: Option<String>,
+    pub updated_at: Option<NaiveDateTime>,
+}
+
+// Extended User response that includes all email addresses
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserWithEmails {
+    #[serde(flatten)]
+    pub user: UserResponse,
+    pub emails: Vec<UserEmail>,
 }
 
 // Project Status Enum
@@ -1162,7 +1225,6 @@ pub struct SyncHistory {
     pub started_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub completed_at: Option<NaiveDateTime>,
-    pub can_cancel: bool,
     pub created_at: NaiveDateTime,
 }
 
@@ -1179,7 +1241,6 @@ pub struct NewSyncHistory {
     pub started_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub completed_at: Option<NaiveDateTime>,
-    pub can_cancel: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, AsChangeset)]
@@ -1191,5 +1252,4 @@ pub struct SyncHistoryUpdate {
     pub total_count: Option<i32>,
     pub updated_at: Option<NaiveDateTime>,
     pub completed_at: Option<Option<NaiveDateTime>>,
-    pub can_cancel: Option<bool>,
 }

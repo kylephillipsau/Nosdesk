@@ -82,7 +82,7 @@ const submitForm = () => {
       </select>
     </div>
     
-    <div class="flex justify-end space-x-3 pt-4">
+    <div class="flex gap-2 justify-end space-x-3 pt-4">
       <button
         type="button"
         @click="emit('cancel')"

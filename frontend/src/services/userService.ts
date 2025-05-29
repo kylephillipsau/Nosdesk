@@ -44,6 +44,19 @@ export interface AuthIdentity {
   created_at: string;
 }
 
+// User Email interface matching the backend model
+export interface UserEmail {
+  id: number;
+  user_id: number;
+  email: string;
+  email_type: string;
+  is_primary: boolean;
+  verified: boolean;
+  source?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // Request cancellation manager
 class RequestManager {
   private activeRequests = new Map<string, AbortController>();
@@ -130,6 +143,17 @@ const userService = {
     } catch (error) {
       console.error(`Error fetching user with UUID ${uuid}:`, error);
       return null;
+    }
+  },
+
+  // Get user email addresses
+  async getUserEmails(uuid: string): Promise<UserEmail[]> {
+    try {
+      const response = await apiClient.get(`/users/${uuid}/emails`);
+      return response.data.emails || [];
+    } catch (error) {
+      console.error(`Error fetching emails for user with UUID ${uuid}:`, error);
+      return [];
     }
   },
 

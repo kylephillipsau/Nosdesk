@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use diesel::result::Error;
+use std::collections::HashMap;
 
 use crate::db::Pool;
 use crate::models::{NewDevice, DeviceUpdate, Device, User};
@@ -201,8 +202,8 @@ pub async fn get_device_by_id(
     }
 }
 
-/// Get devices by user UUID
-pub async fn get_devices_by_user(
+/// Get devices for a specific user
+pub async fn get_user_devices(
     pool: web::Data<Pool>,
     path: web::Path<String>,
 ) -> impl Responder {
@@ -212,14 +213,13 @@ pub async fn get_devices_by_user(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
     
-    match repository::get_devices_by_user(&mut conn, &user_uuid) {
+    match crate::repository::devices::get_devices_for_user(&mut conn, &user_uuid) {
         Ok(devices) => {
-            // Convert devices to enhanced responses with user data
             let device_responses = devices_to_responses(&mut conn, devices);
             HttpResponse::Ok().json(device_responses)
         },
         Err(e) => {
-            eprintln!("Database error getting devices for user {}: {:?}", user_uuid, e);
+            eprintln!("Error getting devices for user {}: {:?}", user_uuid, e);
             HttpResponse::InternalServerError().json(format!("Failed to get devices for user {}", user_uuid))
         }
     }
@@ -308,6 +308,57 @@ pub async fn delete_device(
         Err(e) => {
             eprintln!("Database error deleting device {}: {:?}", device_id, e);
             HttpResponse::InternalServerError().json(format!("Failed to delete device {}", device_id))
+        }
+    }
+}
+
+/// Get paginated devices excluding specific IDs
+pub async fn get_paginated_devices_excluding(
+    pool: web::Data<Pool>,
+    query: web::Query<PaginationParams>,
+    exclude_query: web::Query<HashMap<String, String>>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
+
+    // Parse exclude_ids from comma-separated string
+    let exclude_ids: Vec<i32> = exclude_query.get("excludeIds")
+        .map(|ids_str| {
+            ids_str.split(',')
+                .filter_map(|id| id.trim().parse::<i32>().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    match crate::repository::devices::get_paginated_devices_excluding_ids(
+        &mut conn, 
+        page, 
+        page_size, 
+        query.search.as_deref(),
+        &exclude_ids
+    ) {
+        Ok((devices, total_count)) => {
+            let total_pages = ((total_count as f64) / (page_size as f64)).ceil() as i64;
+            let device_responses = devices_to_responses(&mut conn, devices);
+            
+            let response = PaginatedResponse {
+                data: device_responses,
+                page,
+                page_size,
+                total: total_count,
+                total_pages,
+            };
+            
+            HttpResponse::Ok().json(response)
+        },
+        Err(e) => {
+            eprintln!("Error getting paginated devices: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get devices")
         }
     }
 } 

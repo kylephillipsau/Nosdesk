@@ -9,7 +9,7 @@ import ticketService from '@/services/ticketService';
 import userService from '@/services/userService';
 import { getDevicesByUser } from '@/services/deviceService';
 import type { Ticket } from '@/services/ticketService';
-import type { User } from '@/services/userService';
+import type { User, UserEmail } from '@/services/userService';
 import type { Device } from '@/types/device';
 
 interface UserProfile extends User {
@@ -27,6 +27,7 @@ const userProfile = ref<UserProfile | null>(null);
 const assignedTickets = ref<Ticket[]>([]);
 const requestedTickets = ref<Ticket[]>([]);
 const devices = ref<Device[]>([]);
+const userEmails = ref<UserEmail[]>([]);
 
 // Update document title when user profile changes
 watch(userProfile, (newProfile) => {
@@ -81,6 +82,15 @@ const fetchUserData = async () => {
       console.error('Error loading devices for user:', deviceError);
       // Don't fail the whole page if devices can't be loaded
       devices.value = [];
+    }
+
+    // Load user emails from the API
+    try {
+      userEmails.value = await userService.getUserEmails(userUuid);
+    } catch (emailError) {
+      console.error('Error loading emails for user:', emailError);
+      // Don't fail the whole page if emails can't be loaded
+      userEmails.value = [];
     }
   } catch (e) {
     error.value = 'Failed to load user profile';
@@ -182,6 +192,51 @@ onMounted(() => {
                     <p class="mt-2 text-sm text-slate-500">
                       Joined {{ userProfile.joinedDate ? formatDate(userProfile.joinedDate) : 'Recently' }}
                     </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Email Aliases Section -->
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h2 class="text-lg font-medium text-white mb-4">Email Addresses</h2>
+              <div v-if="userEmails.length === 0" class="text-slate-400 text-sm">
+                No additional email addresses
+              </div>
+              <div v-else class="flex flex-col gap-2 space-y-3">
+                <div
+                  v-for="email in userEmails"
+                  :key="email.id"
+                  class="bg-slate-700/50 p-3 rounded-lg"
+                >
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-2">
+                        <span class="font-medium text-white">{{ email.email }}</span>
+                        <span 
+                          v-if="email.is_primary" 
+                          class="text-xs px-2 py-1 rounded-full bg-blue-900/20 text-blue-400"
+                        >
+                          Primary
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-2 mt-1">
+                        <span class="text-sm text-slate-400 capitalize">{{ email.email_type }}</span>
+                        <span v-if="email.source" class="text-slate-600">•</span>
+                        <span v-if="email.source" class="text-xs text-slate-500 capitalize">{{ email.source }}</span>
+                      </div>
+                    </div>
+                    <div class="flex-shrink-0 ml-3">
+                      <span 
+                        class="text-xs px-2 py-1 rounded-full"
+                        :class="{
+                          'text-green-400 bg-green-900/20': email.verified,
+                          'text-yellow-400 bg-yellow-900/20': !email.verified
+                        }"
+                      >
+                        {{ email.verified ? 'Verified' : 'Unverified' }}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>

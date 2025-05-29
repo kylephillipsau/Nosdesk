@@ -184,6 +184,9 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     // Get devices associated with this ticket through the junction table
     let devices = get_devices_for_ticket(conn, ticket_id).unwrap_or_default();
     
+    // Get assignees for this ticket through the junction table
+    let assignees = get_assignees_for_ticket(conn, ticket_id).unwrap_or_default();
+    
     // Get comments for this ticket
     let comments = crate::repository::comments::get_comments_by_ticket_id(conn, ticket_id)?;
     let mut comments_with_attachments = Vec::new();
@@ -228,6 +231,7 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
         article_content,
         linked_tickets,
         projects,
+        assignees,
     })
 }
 
@@ -462,4 +466,70 @@ pub fn get_tickets_for_device(conn: &mut DbConnection, device_id: i32) -> QueryR
         .filter(ticket_devices::device_id.eq(device_id))
         .select(tickets::all_columns)
         .load(conn)
+}
+
+// Ticket-Assignee relationship functions
+pub fn add_assignee_to_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuid: String) -> QueryResult<TicketAssignee> {
+    let new_ticket_assignee = NewTicketAssignee {
+        ticket_id,
+        user_uuid,
+    };
+    
+    diesel::insert_into(ticket_assignees::table)
+        .values(&new_ticket_assignee)
+        .on_conflict((ticket_assignees::ticket_id, ticket_assignees::user_uuid))
+        .do_nothing()
+        .get_result(conn)
+}
+
+pub fn remove_assignee_from_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuid: String) -> QueryResult<usize> {
+    diesel::delete(
+        ticket_assignees::table
+            .filter(ticket_assignees::ticket_id.eq(ticket_id))
+            .filter(ticket_assignees::user_uuid.eq(user_uuid))
+    ).execute(conn)
+}
+
+pub fn get_assignees_for_ticket(conn: &mut DbConnection, ticket_id: i32) -> QueryResult<Vec<UserInfo>> {
+    ticket_assignees::table
+        .inner_join(users::table.on(ticket_assignees::user_uuid.eq(users::uuid)))
+        .filter(ticket_assignees::ticket_id.eq(ticket_id))
+        .select((users::uuid, users::name))
+        .load::<(String, String)>(conn)
+        .map(|results| {
+            results.into_iter().map(|(uuid, name)| UserInfo { uuid, name }).collect()
+        })
+}
+
+pub fn get_tickets_for_assignee(conn: &mut DbConnection, user_uuid: String) -> QueryResult<Vec<Ticket>> {
+    ticket_assignees::table
+        .inner_join(tickets::table)
+        .filter(ticket_assignees::user_uuid.eq(user_uuid))
+        .select(tickets::all_columns)
+        .load(conn)
+}
+
+pub fn set_assignees_for_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuids: Vec<String>) -> QueryResult<Vec<TicketAssignee>> {
+    // First remove all existing assignees
+    diesel::delete(
+        ticket_assignees::table
+            .filter(ticket_assignees::ticket_id.eq(ticket_id))
+    ).execute(conn)?;
+    
+    // Then add all new assignees
+    let new_assignees: Vec<NewTicketAssignee> = user_uuids
+        .into_iter()
+        .map(|user_uuid| NewTicketAssignee {
+            ticket_id,
+            user_uuid,
+        })
+        .collect();
+    
+    if new_assignees.is_empty() {
+        return Ok(vec![]);
+    }
+    
+    diesel::insert_into(ticket_assignees::table)
+        .values(&new_assignees)
+        .get_results(conn)
 } 
