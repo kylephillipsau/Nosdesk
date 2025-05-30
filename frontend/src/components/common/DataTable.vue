@@ -86,7 +86,7 @@ const getColumnVisibility = (column: Column) => {
       <!-- Sticky Header Row -->
       <div class="contents sticky top-0 z-10">
         <!-- Checkbox Header -->
-        <div class="px-2 py-3 flex items-center font-semibold text-slate-200 bg-slate-800 border-b-1 border-slate-700 sticky top-0 z-10">
+        <div class="px-4 py-3 flex items-center font-semibold text-slate-200 bg-slate-800 border-b-1 border-slate-700 sticky top-0 z-10">
           <input
             type="checkbox"
             class="w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
@@ -119,7 +119,7 @@ const getColumnVisibility = (column: Column) => {
       <template v-for="(item, index) in data" :key="item[itemIdField]">
         <div class="contents group cursor-pointer" @click="emit('row-click', item)">
           <!-- Checkbox Cell -->
-          <div class="px-2 py-3 flex items-center bg-slate-900 group-hover:bg-slate-800 transition-colors border-b border-slate-800">
+          <div class="px-4 py-3 flex items-center bg-slate-900 group-hover:bg-slate-800 transition-colors border-b border-slate-800">
             <input
               type="checkbox"
               class="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"

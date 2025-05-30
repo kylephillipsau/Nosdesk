@@ -6,15 +6,30 @@ mod schema;
 mod config_utils;
 
 use actix_cors::Cors;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder, dev::ServiceRequest, Error};
 use actix_files::Files;
 use actix_web_httpauth::middleware::HttpAuthentication;
+use actix_web_httpauth::extractors::bearer::BearerAuth;
 use dotenv::dotenv;
 use std::env;
 use std::sync::Arc;
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("Helpdesk API is running!")
+}
+
+// JWT Authentication validator for middleware
+async fn validator(req: ServiceRequest, credentials: BearerAuth) -> Result<ServiceRequest, (Error, ServiceRequest)> {
+    let pool = req.app_data::<web::Data<crate::db::Pool>>().unwrap();
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return Err((actix_web::error::ErrorInternalServerError("Database connection failed"), req)),
+    };
+
+    match handlers::auth::validate_token_internal(&credentials, &mut conn).await {
+        Ok(_) => Ok(req),
+        Err(err) => Err((err, req)),
+    }
 }
 
 #[actix_web::main]
@@ -86,35 +101,57 @@ async fn main() -> std::io::Result<()> {
             .app_data(yjs_app_state.clone())
             .app_data(json_config)
             .app_data(multipart_config)
+            
+            // === PUBLIC ROUTES (NO AUTHENTICATION REQUIRED) ===
             .route("/health", web::get().to(health_check))
-            // Serve static files from the uploads directory
-            .service(Files::new("/uploads", "./uploads").show_files_listing())
+            
+            // Public access for user avatars (no auth required)
+            .service(
+                web::scope("/uploads/users")
+                    .service(Files::new("", "./uploads/users").show_files_listing())
+            )
+            
+            // Public WebSocket for collaboration (auth handled in WebSocket handler)
+            .service(
+                web::scope("/api/collaboration")
+                    .configure(handlers::collaboration::config)
+            )
+            
+            // Public file serving with token-based auth for attachments
+            .route("/api/files/tickets/{filename:.*}", web::get().to(handlers::serve_ticket_file))
+            .route("/api/files/temp/{filename:.*}", web::get().to(handlers::serve_temp_file))
+            
+            // Authentication routes (public by design)
+            .service(
+                web::scope("/api/auth")
+                    .route("/login", web::post().to(handlers::login))
+                    .route("/register", web::post().to(handlers::register))
+                    .route("/providers/enabled", web::get().to(handlers::get_enabled_auth_providers))
+                    .route("/oauth/authorize", web::post().to(handlers::oauth_authorize))
+                    .route("/oauth/logout", web::post().to(handlers::oauth_logout))
+                    .route("/microsoft/callback", web::get().to(handlers::oauth_callback))
+                    // Protected auth routes (require authentication)
+                    .route("/me", web::get().to(handlers::get_current_user).wrap(HttpAuthentication::bearer(validator)))
+                    .route("/change-password", web::post().to(handlers::change_password).wrap(HttpAuthentication::bearer(validator)))
+            )
+            
+            // === PROTECTED ROUTES (AUTHENTICATION REQUIRED) ===
             .service(
                 web::scope("/api")
-                    // Authentication endpoints
-                    .route("/auth/login", web::post().to(handlers::login))
-                    .route("/auth/register", web::post().to(handlers::register))
-                    .route("/auth/change-password", web::post().to(handlers::change_password))
-                    .route("/auth/me", web::get().to(handlers::get_current_user))
+                    .wrap(HttpAuthentication::bearer(validator))
                     
-                    // Authentication Provider endpoints
+                    // Authentication Provider management (admin only)
                     .route("/auth/providers", web::get().to(handlers::get_auth_providers))
-                    .route("/auth/providers/enabled", web::get().to(handlers::get_enabled_auth_providers))
                     .route("/auth/providers", web::post().to(handlers::create_auth_provider))
                     .route("/auth/providers/{id}", web::get().to(handlers::get_auth_provider))
                     .route("/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
                     .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
                     .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
                     .route("/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
-                    .route("/auth/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
-                    .route("/auth/oauth/logout", web::post().to(handlers::oauth_logout))
-                    // Microsoft Graph API endpoint
-                    .route("/auth/microsoft/graph", web::post().to(handlers::process_graph_request))
-                    // For Microsoft OAuth Callback
-                    .route("/auth/microsoft/callback", web::get().to(handlers::oauth_callback))
                     
-                    // Microsoft Graph API endpoints in dedicated section
+                    // Microsoft Graph API endpoints
+                    .route("/auth/microsoft/graph", web::post().to(handlers::process_graph_request))
                     .service(
                         web::scope("/msgraph")
                             .route("/request", web::post().to(handlers::process_graph_request))
@@ -130,7 +167,6 @@ async fn main() -> std::io::Result<()> {
                             .route("/status", web::get().to(handlers::get_connection_status))
                             .route("/test", web::post().to(handlers::test_connection))
                             .route("/sync", web::post().to(handlers::sync_data))
-        
                             .route("/progress/{session_id}", web::get().to(handlers::get_sync_progress_endpoint))
                             .route("/active-syncs", web::get().to(handlers::get_active_syncs))
                             .route("/last-sync", web::get().to(handlers::get_last_sync))
@@ -142,7 +178,6 @@ async fn main() -> std::io::Result<()> {
                     .route("/upload", web::post().to(handlers::upload_files))
                     
                     // ===== TICKET MANAGEMENT =====
-                    // Core ticket operations
                     .route("/tickets", web::get().to(handlers::get_tickets))
                     .route("/tickets/paginated", web::get().to(handlers::get_paginated_tickets))
                     .route("/tickets", web::post().to(handlers::create_ticket))
@@ -151,31 +186,17 @@ async fn main() -> std::io::Result<()> {
                     .route("/tickets/{id}", web::put().to(handlers::update_ticket))
                     .route("/tickets/{id}", web::patch().to(handlers::update_ticket_partial))
                     .route("/tickets/{id}", web::delete().to(handlers::delete_ticket))
-                    
-                    // Ticket import functionality
                     .route("/import/file", web::post().to(handlers::import_tickets_from_json))
                     .route("/import/json", web::post().to(handlers::import_tickets_from_json_string))
-                    
-                    // Ticket linking
                     .route("/tickets/{ticket_id}/link/{linked_ticket_id}", web::post().to(handlers::link_tickets))
                     .route("/tickets/{ticket_id}/unlink/{linked_ticket_id}", web::delete().to(handlers::unlink_tickets))
-                    
-                    // Ticket-device relationships
                     .route("/tickets/{ticket_id}/devices/{device_id}", web::post().to(handlers::add_device_to_ticket))
                     .route("/tickets/{ticket_id}/devices/{device_id}", web::delete().to(handlers::remove_device_from_ticket))
-                    
-                    // Ticket comments and attachments
                     .route("/tickets/{ticket_id}/comments", web::get().to(handlers::get_comments_by_ticket_id))
                     .route("/tickets/{ticket_id}/comments", web::post().to(handlers::add_comment_to_ticket))
                     .route("/comments/{id}", web::delete().to(handlers::delete_comment))
                     .route("/comments/{comment_id}/attachments", web::post().to(handlers::add_attachment_to_comment))
                     .route("/attachments/{id}", web::delete().to(handlers::delete_attachment))
-                    
-                    // Collaboration endpoints
-                    .service(
-                        web::scope("/collaboration")
-                            .configure(handlers::collaboration::config)
-                    )
                     
                     // ===== PROJECT MANAGEMENT =====
                     .route("/projects", web::get().to(handlers::get_all_projects))
@@ -190,15 +211,17 @@ async fn main() -> std::io::Result<()> {
                     // ===== USER MANAGEMENT =====
                     .route("/users", web::get().to(handlers::get_users))
                     .route("/users/paginated", web::get().to(handlers::get_paginated_users))
+                    .route("/users/batch", web::post().to(handlers::get_users_batch))
                     .route("/users", web::post().to(handlers::create_user))
                     .route("/users/{uuid}", web::get().to(handlers::get_user_by_uuid))
                     .route("/users/{uuid}", web::put().to(handlers::update_user_by_uuid))
                     .route("/users/{uuid}", web::delete().to(handlers::delete_user))
                     .route("/users/{uuid}/image", web::post().to(handlers::upload_user_image))
+                    .route("/users/{uuid}/emails", web::get().to(handlers::get_user_emails))
+                    .route("/users/{uuid}/with-emails", web::get().to(handlers::get_user_with_emails))
                     .route("/users/cleanup-images", web::post().to(handlers::cleanup_stale_images))
                     .route("/users/auth-identities", web::get().to(handlers::get_user_auth_identities))
                     .route("/users/auth-identities/{id}", web::delete().to(handlers::delete_user_auth_identity))
-                    // New routes using UUIDs for auth identities
                     .route("/users/{uuid}/auth-identities", web::get().to(handlers::get_user_auth_identities_by_uuid))
                     .route("/users/{uuid}/auth-identities/{id}", web::delete().to(handlers::delete_user_auth_identity_by_uuid))
                     
@@ -210,36 +233,36 @@ async fn main() -> std::io::Result<()> {
                     .route("/devices/{id}", web::get().to(handlers::get_device_by_id))
                     .route("/devices/{id}", web::put().to(handlers::update_device))
                     .route("/devices/{id}", web::delete().to(handlers::delete_device))
-                    // Note: Device-ticket association removed in favor of user-device associations
                     .route("/users/{uuid}/devices", web::get().to(handlers::get_user_devices))
                     
                     // ===== DOCUMENTATION SYSTEM =====
-                    // Core documentation operations
                     .route("/documentation/pages", web::get().to(handlers::get_documentation_pages))
                     .route("/documentation/pages", web::post().to(handlers::create_documentation_page))
                     .route("/documentation/pages/{id}", web::get().to(handlers::get_documentation_page))
                     .route("/documentation/pages/{id}", web::put().to(handlers::update_documentation_page))
                     .route("/documentation/pages/{id}", web::delete().to(handlers::delete_documentation_page))
-                    
-                    // Documentation navigation and hierarchy
                     .route("/documentation/pages/top-level", web::get().to(handlers::get_top_level_documentation_pages))
                     .route("/documentation/pages/parent/{parent_id}", web::get().to(handlers::get_documentation_pages_by_parent_id))
                     .route("/documentation/pages/slug/{slug}", web::get().to(handlers::get_documentation_page_by_slug))
                     .route("/documentation/pages/slug/{slug}/with-children", web::get().to(handlers::get_documentation_page_by_slug_with_children))
                     .route("/documentation/pages/{id}/with-children-by-parent", web::get().to(handlers::get_page_with_children_by_parent_id))
-                    
-                    // Documentation ordering and structure management
                     .route("/documentation/pages/ordered/top-level", web::get().to(handlers::get_ordered_top_level_pages))
                     .route("/documentation/pages/ordered/parent/{parent_id}", web::get().to(handlers::get_ordered_pages_by_parent_id))
                     .route("/documentation/pages/{id}/with-ordered-children", web::get().to(handlers::get_page_with_ordered_children))
                     .route("/documentation/pages/reorder", web::post().to(handlers::reorder_pages))
                     .route("/documentation/pages/move", web::post().to(handlers::move_page_to_parent))
-                    
-                    // Ticket-to-documentation integration
                     .route("/tickets/{ticket_id}/documentation", web::get().to(handlers::get_documentation_pages_by_ticket_id))
                     .route("/tickets/{ticket_id}/documentation/create", web::post().to(handlers::create_documentation_page_from_ticket))
                     .route("/documentation/{id}", web::put().to(handlers::update_documentation_page))
                     .route("/documentation/{id}", web::delete().to(handlers::delete_documentation_page))
+            )
+            
+            // === PROTECTED UPLOADS (AUTHENTICATION REQUIRED) ===
+            .service(
+                web::scope("/uploads")
+                    .wrap(HttpAuthentication::bearer(validator))
+                    .service(Files::new("/tickets", "./uploads/tickets").show_files_listing())
+                    .service(Files::new("/temp", "./uploads/temp").show_files_listing())
             )
     })
     .bind((host, port))?

@@ -142,4 +142,12 @@ pub fn update_user(
 
 pub fn delete_user(id: i32, conn: &mut DbConnection) -> Result<usize, Error> {
     diesel::delete(users::table.find(id)).execute(conn)
+}
+
+// Batch get users by UUIDs
+pub fn get_users_by_uuids(uuids: &[String], conn: &mut DbConnection) -> Result<Vec<User>, Error> {
+    users::table
+        .filter(users::uuid.eq_any(uuids))
+        .order_by(users::name.asc())
+        .load::<User>(conn)
 } 

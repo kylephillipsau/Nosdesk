@@ -149,6 +149,48 @@ pub async fn get_user_by_uuid(
     }
 }
 
+// Batch users request
+#[derive(Deserialize)]
+pub struct BatchUsersRequest {
+    uuids: Vec<String>,
+}
+
+pub async fn get_users_batch(
+    batch_request: web::Json<BatchUsersRequest>,
+    pool: web::Data<crate::db::Pool>,
+) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Validate UUIDs and remove duplicates
+    let mut valid_uuids = HashSet::new();
+    for uuid_str in &batch_request.uuids {
+        if let Ok(_) = Uuid::parse_str(uuid_str) {
+            valid_uuids.insert(uuid_str.clone());
+        }
+    }
+
+    if valid_uuids.is_empty() {
+        return HttpResponse::BadRequest().json("No valid UUIDs provided");
+    }
+
+    // Convert to Vec for the repository function
+    let uuids_vec: Vec<String> = valid_uuids.into_iter().collect();
+
+    match repository::get_users_by_uuids(&uuids_vec, &mut conn) {
+        Ok(users) => {
+            let user_responses: Vec<UserResponse> = users.into_iter().map(UserResponse::from).collect();
+            HttpResponse::Ok().json(user_responses)
+        },
+        Err(e) => {
+            eprintln!("Error fetching users batch: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to get users")
+        },
+    }
+}
+
 pub async fn create_user(
     db_pool: web::Data<crate::db::Pool>,
     user_data: web::Json<NewUser>,

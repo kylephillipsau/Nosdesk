@@ -91,20 +91,32 @@ const requestManager = new RequestManager();
 // Service for user-related API calls
 const userService = {
   // Get all users
-  async getUsers(): Promise<User[]> {
-    console.log('Fetching users from:', `${API_URL}/users`);
+  async getAllUsers(): Promise<User[]> {
     try {
-      const response = await apiClient.get(`/users`);
-      // Validate that the response data is an array
-      if (Array.isArray(response.data)) {
-        return response.data;
-      } else {
-        console.error('API returned non-array response for users:', response.data);
-        return []; // Return empty array instead of throwing
-      }
+      const response = await apiClient.get('/users');
+      return response.data || [];
     } catch (error) {
-      console.error('Error fetching users:', error);
-      // Return empty array instead of throwing to prevent component failures
+      console.error('Error fetching all users:', error);
+      return [];
+    }
+  },
+
+  // Get multiple users by UUIDs in a single request
+  async getUsersBatch(uuids: string[]): Promise<User[]> {
+    try {
+      // Remove duplicates and empty values
+      const uniqueUuids = [...new Set(uuids.filter(uuid => uuid && uuid.trim()))];
+      
+      if (uniqueUuids.length === 0) {
+        return [];
+      }
+
+      const response = await apiClient.post('/users/batch', {
+        uuids: uniqueUuids
+      });
+      return response.data || [];
+    } catch (error) {
+      console.error('Error fetching users batch:', error);
       return [];
     }
   },
@@ -151,7 +163,7 @@ const userService = {
     try {
       const response = await apiClient.get(`/users/${uuid}/emails`);
       return response.data.emails || [];
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error fetching emails for user with UUID ${uuid}:`, error);
       return [];
     }
