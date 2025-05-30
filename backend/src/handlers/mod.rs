@@ -334,6 +334,5 @@ pub async fn delete_attachment(
 
 // Re-export collaboration handlers explicitly to make them available 
 // without having to change all import paths
-pub use self::collaboration::sync_ticket_article;
 pub use self::collaboration::get_article_content;
 pub use self::collaboration::config;

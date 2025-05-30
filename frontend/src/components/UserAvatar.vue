@@ -1,15 +1,16 @@
 <!-- # src/components/UserAvatar.vue -->
 <script setup lang="ts">
-import { computed, ref, onMounted, watch, defineExpose } from 'vue'
+import { computed, ref, onMounted, watch, defineExpose, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import userService from '@/services/userService'
 import LazyImage from '@/components/LazyImage.vue'
 import { useUserLookup } from '@/services/userLookupService'
+import { useDataStore } from '@/stores/dataStore'
 
 // Method to refresh a specific user's data
 const refreshUser = async (userUuid: string) => {
   try {
-    const userData = await userService.getUserByUuid(userUuid);
+    const userData = await dataStore.getUserByUuid(userUuid, true); // Force refresh through batching system
     if (userData) {
       // Add to lookup cache
       addUsersToCache([userData]);
@@ -39,9 +40,13 @@ const router = useRouter()
 
 // User lookup service for efficient lookups
 const { getUserName, getUserAvatar, lookupUser, addUsersToCache } = useUserLookup()
+const dataStore = useDataStore()
 
 // Simple ref for the element
 const elementRef = ref<HTMLElement | null>(null)
+
+// Force refresh counter for reactivity
+const forceRefresh = ref(0) // Counter to force reactivity updates
 
 // Check if a string is a UUID
 const isUuid = (str: string) => {
@@ -55,24 +60,42 @@ onMounted(async () => {
     // Check if user is in cache first
     const cachedName = getUserName(props.name)
     if (!cachedName) {
-      // Try to fetch individual user instead of all users
-      await lookupUser(props.name)
+      // Let the batching system handle coordination - no artificial delays needed
+      if (elementRef.value) {
+        await lookupUser(props.name)
+        forceRefresh.value++ // Trigger reactivity update
+      }
     }
   }
 })
 
-// Watch for changes to props.name
-watch(() => props.name, async (newName) => {
+// Cleanup on unmount
+onUnmounted(() => {
+  // No cleanup needed since we removed periodic refresh
+})
+
+// Watch for changes to props.name with debouncing
+watch(() => props.name, async (newName, oldName) => {
+  // Skip if name hasn't actually changed
+  if (newName === oldName) return
+  
   if (isUuid(newName) && !props.userName) {
     const cachedName = getUserName(newName)
     if (!cachedName) {
-      await lookupUser(newName)
+      // Let the batching system handle debouncing - no artificial delays needed
+      if (props.name === newName && elementRef.value) {
+        await lookupUser(newName)
+        forceRefresh.value++ // Trigger reactivity update
+      }
     }
   }
-}, { immediate: true })
+}) // Removed immediate: true to prevent burst requests on mount
 
 // Check if the name is a UUID and get the actual name if it is
 const displayName = computed(() => {
+  // Force reactivity by accessing forceRefresh
+  forceRefresh.value
+
   // If we have a pre-loaded user name, use it immediately
   if (props.userName) {
     return props.userName;
@@ -95,6 +118,9 @@ const displayName = computed(() => {
 
 // Get the avatar URL either from props or from the user data if loaded by UUID
 const effectiveAvatarUrl = computed(() => {
+  // Force reactivity by accessing forceRefresh
+  forceRefresh.value
+  
   // If an avatar was directly provided as a prop, use it
   if (props.avatar) {
     return props.avatar;

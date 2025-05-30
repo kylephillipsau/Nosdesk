@@ -49,9 +49,14 @@ apiClient.interceptors.response.use(
   (response) => {
     // Enable debugging in development
     if (import.meta.env.DEV) {
+      // Get the call stack to identify which component made the request
+      const stack = new Error().stack;
+      const caller = stack?.split('\n')[4]?.trim() || 'Unknown caller';
+      
       console.log(`API Response from ${response.config.url}:`, { 
         status: response.status,
-        data: response.data 
+        data: response.data,
+        caller: caller
       });
     }
     
