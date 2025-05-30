@@ -210,7 +210,12 @@ const renderToTransitionCanvas = async (pageNum: number): Promise<boolean> => {
     } catch (error) {
       console.error('Error getting page, trying to reload document:', error);
       // If there's an error, try re-fetching the document
-      const loadingTask = pdfjsLib.getDocument(props.src);
+      const response = await fetch(props.src);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
       pdfDocument.value = await loadingTask.promise;
       pdfTotalPages.value = pdfDocument.value.numPages;
       page = await pdfDocument.value.getPage(pageNum);
@@ -348,9 +353,23 @@ const loadPdfPreview = async (src: string, pageNumber: number = 1, isNewDocument
         }
         
         const pdfjsLib = await initPdfJs();
-        const loadingTask = pdfjsLib.getDocument(src);
+        
+        // Fetch the PDF with authentication and convert to array buffer
+        console.log('Fetching PDF from:', src);
+        const response = await fetch(src);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        console.log('PDF fetched successfully, size:', arrayBuffer.byteLength, 'bytes');
+        
+        // Load PDF from the array buffer instead of URL
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
         pdfDocument.value = await loadingTask.promise;
         pdfTotalPages.value = pdfDocument.value.numPages;
+        console.log('PDF loaded successfully, pages:', pdfTotalPages.value);
       } catch (error) {
         console.error('Error loading PDF document:', error);
         emit('error', error);

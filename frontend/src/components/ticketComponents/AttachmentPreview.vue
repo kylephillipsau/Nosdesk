@@ -6,6 +6,7 @@ import FilePreview from "@/components/ticketComponents/FilePreview.vue";
 import PDFViewer from "@/components/ticketComponents/PDFViewer.vue";
 import Modal from "@/components/Modal.vue";
 import UserAvatar from "@/components/UserAvatar.vue";
+import { convertToAuthenticatedPath } from '@/services/fileService';
 
 interface Props {
   attachment: { id?: number; url: string; name: string; comment_id?: number };
@@ -25,6 +26,11 @@ const emit = defineEmits<{
   (e: 'submit'): void;
   (e: 'preview', src: string): void;
 }>();
+
+// Convert attachment URL to authenticated URL for secure file access
+const authenticatedUrl = computed(() => {
+  return convertToAuthenticatedPath(props.attachment.url)
+})
 
 const showPreviewModal = ref(false);
 const previewImageSrc = ref('');
@@ -139,9 +145,9 @@ const openImagePreview = async (src: string, retryCount = 0) => {
     return;
   }
   
-  // For PDF files, just open the preview modal with the original source
+  // For PDF files, always use the original authenticated URL - don't convert to blob
   if (isPdfFile(props.attachment.name)) {
-    previewImageSrc.value = src;
+    previewImageSrc.value = src; // Use the original authenticated URL
     showPreviewModal.value = true;
     emit('preview', src);
     return;
@@ -263,6 +269,11 @@ onBeforeUnmount(() => {
     debugLog('Revoked thumbnail URL');
   }
   
+  if (pdfThumbnailSrc.value) {
+    URL.revokeObjectURL(pdfThumbnailSrc.value);
+    debugLog('Revoked PDF thumbnail URL');
+  }
+  
   if (previewImageSrc.value && previewImageSrc.value !== props.attachment.url) {
     URL.revokeObjectURL(previewImageSrc.value);
     debugLog('Revoked preview image URL');
@@ -273,72 +284,58 @@ onBeforeUnmount(() => {
 const convertHeicThumbnail = async (retryCount = 0) => {
   if (!isHeicFile(props.attachment.name)) return;
   
+  if (previewImageSrc.value && previewImageSrc.value !== authenticatedUrl.value) {
+    URL.revokeObjectURL(previewImageSrc.value);
+  }
+  
+  isLoadingThumbnail.value = true;
+  showPlaceholder.value = true;
+  conversionProgress.value = 0;
+  
+  const updateProgress = () => {
+    conversionProgress.value += 10;
+    if (conversionProgress.value >= 90) {
+      conversionProgress.value = 90;
+      return;
+    }
+    setTimeout(updateProgress, 100);
+  };
+  updateProgress();
+  
   try {
-    // Set initial state
-    isLoadingThumbnail.value = true;
-    showPlaceholder.value = true;
-    conversionProgress.value = 10;
-    
-    // Import heic2any library
-    const heic2any = await import('heic2any');
-    conversionProgress.value = 20;
+    const heic2any = (await import('heic2any')).default;
     
     // Fetch the HEIC file
-    const response = await fetch(props.attachment.url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch HEIC file: ${response.status} ${response.statusText}`);
-    }
-    
-    conversionProgress.value = 40;
+    const response = await fetch(authenticatedUrl.value);
     const blob = await response.blob();
-    if (!blob || blob.size === 0) {
-      throw new Error('Received empty blob from server');
-    }
     
     conversionProgress.value = 50;
     
-    // Convert HEIC to JPEG
-    conversionProgress.value = 60;
-    const jpegBlob = await heic2any.default({
+    const convertedBlob = await heic2any({
       blob,
       toType: 'image/jpeg',
-      quality: 0.5
-    }) as Blob;
+      quality: 0.8,
+    });
     
     conversionProgress.value = 90;
     
-    // Create a URL for the converted image
-    convertedThumbnailSrc.value = URL.createObjectURL(jpegBlob);
-    conversionProgress.value = 100;
-    log('HEIC thumbnail converted successfully');
+    const jpegBlob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+    convertedThumbnailSrc.value = URL.createObjectURL(jpegBlob as Blob);
+    previewImageSrc.value = convertedThumbnailSrc.value;
     
-    // Add a small delay before hiding the loading indicator
+    conversionProgress.value = 100;
+    
     setTimeout(() => {
       isLoadingThumbnail.value = false;
-    }, 300);
+      showPlaceholder.value = false;
+    }, 200);
+    
   } catch (error) {
-    console.error('Error converting HEIC thumbnail:', error);
-    conversionProgress.value = 0;
-    
-    // Retry up to 2 times with increasing delay
-    if (retryCount < 2) {
-      const retryDelay = 500 * (retryCount + 1);
-      log(`Retrying HEIC conversion in ${retryDelay}ms (attempt ${retryCount + 1}/2)`);
-      
-      setTimeout(() => {
-        convertHeicThumbnail(retryCount + 1).catch(err => {
-          console.error(`Retry ${retryCount + 1} failed:`, err);
-        });
-      }, retryDelay);
-      return;
-    }
-    
-    // All retries failed
-    convertedThumbnailSrc.value = null;
+    console.error('Error converting HEIC to JPEG:', error);
+    // Fallback to original HEIC file
+    previewImageSrc.value = authenticatedUrl.value;
     isLoadingThumbnail.value = false;
-  } finally {
-    // Keep the placeholder visible if conversion failed
-    showPlaceholder.value = !convertedThumbnailSrc.value;
+    showPlaceholder.value = false;
   }
 };
 
@@ -407,67 +404,50 @@ const getDisplayName = (filename: string): string => {
 
 const pdfThumbnailCanvas = ref<HTMLCanvasElement | null>(null);
 const isPdfThumbnailLoading = ref<boolean>(false);
+const pdfThumbnailSrc = ref<string | null>(null); // Separate variable for PDF thumbnails
 
 // Function to generate PDF thumbnails for the grid view
-const generatePdfThumbnail = async (src: string, retryCount = 0) => {
-  if (!isPdfFile(props.attachment.name)) return;
+const generatePdfThumbnail = async (url: string) => {
+  isPdfThumbnailLoading.value = true;
+  showPlaceholder.value = true;
   
   try {
-    isPdfThumbnailLoading.value = true;
-    
-    // Wait for the canvas to be available
-    await nextTick();
-    
-    if (!pdfThumbnailCanvas.value) {
-      // Retry up to 3 times with increasing delays
-      if (retryCount < 3) {
-        await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1)));
-        return generatePdfThumbnail(src, retryCount + 1);
-      }
-      throw new Error('Canvas element not found');
-    }
-    
-    // Dynamically import PDF.js
     const pdfjsLib = await import('pdfjs-dist');
-    // Configure worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.js';
     
-    // Load the PDF
-    try {
-      const loadingTask = pdfjsLib.getDocument(src);
-      const pdf = await loadingTask.promise;
-      
-      // Get the first page
-      const page = await pdf.getPage(1);
-      
-      // Set appropriate scale for the thumbnail
-      const viewport = page.getViewport({ scale: 0.5 });
-      const canvas = pdfThumbnailCanvas.value;
-      const context = canvas.getContext('2d');
-      
-      if (!context) {
-        throw new Error('Could not get canvas context');
+    const response = await fetch(authenticatedUrl.value);
+    const arrayBuffer = await response.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const page = await pdf.getPage(1);
+    
+    const scale = 2;
+    const viewport = page.getViewport({ scale });
+    
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not get canvas context');
+    
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise;
+    
+    canvas.toBlob((blob) => {
+      if (blob) {
+        // Store PDF thumbnail separately - don't overwrite previewImageSrc
+        pdfThumbnailSrc.value = URL.createObjectURL(blob);
+        showPlaceholder.value = false;
       }
-      
-      // Set dimensions
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      
-      // Render the page
-      await page.render({
-        canvasContext: context,
-        viewport: viewport
-      }).promise;
-      
-      log('PDF thumbnail generated successfully');
-    } catch (error) {
-      console.error('Error in PDF generation process:', error);
-      throw error;
-    }
+      isPdfThumbnailLoading.value = false;
+    }, 'image/png', 0.8);
+    
   } catch (error) {
     console.error('Error generating PDF thumbnail:', error);
-  } finally {
     isPdfThumbnailLoading.value = false;
+    showPlaceholder.value = false;
   }
 };
 </script>
@@ -505,7 +485,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
         <div class="flex items-center gap-2">
           <!-- Download button -->
           <a
-            :href="attachment.url"
+            :href="authenticatedUrl"
             target="_blank"
             :download="attachment.name"
             class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
@@ -535,12 +515,12 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
     <!-- Content -->
     <template v-if="attachmentType === 'audio'">
       <div class="bg-slate-800 rounded-lg p-3 w-full">
-        <AudioPlayer :src="attachment.url" />
+        <AudioPlayer :src="authenticatedUrl" />
       </div>
     </template>
     <template v-else-if="attachmentType === 'video'">
       <VideoPlayer
-        :src="attachment.url"
+        :src="authenticatedUrl"
         class="w-full h-64"
         :show-delete="showDelete"
         @delete="emit('delete')"
@@ -617,7 +597,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
             <img 
               v-else
               key="image"
-              :src="isHeicFile(attachment.name) && convertedThumbnailSrc ? convertedThumbnailSrc : attachment.url" 
+              :src="isHeicFile(attachment.name) && convertedThumbnailSrc ? convertedThumbnailSrc : authenticatedUrl" 
               :alt="attachment.name" 
               class="w-full h-full object-cover bg-transparent z-5 heic-image"
               :class="{
@@ -633,11 +613,11 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
           class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center cursor-pointer z-25"
           @click.stop="() => {
             try {
-              openImagePreview(attachment.url, 0);
+              openImagePreview(authenticatedUrl, 0);
             } catch (error) {
               console.error('Error opening image preview:', error);
               // Fallback to just showing the modal with the original image
-              previewImageSrc = attachment.url;
+              previewImageSrc = authenticatedUrl;
               showPreviewModal = true;
             }
           }"
@@ -667,7 +647,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
           <div class="flex gap-2">
             <!-- Original file download button -->
             <a
-              :href="attachment.url"
+              :href="authenticatedUrl"
               target="_blank"
               :download="attachment.name"
               class="flex items-center gap-1 p-2 bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
@@ -726,11 +706,21 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
           <span class="text-sm text-white font-medium">Loading PDF</span>
         </div>
         
-        <!-- PDF Thumbnail canvas -->
-        <canvas 
-          ref="pdfThumbnailCanvas" 
-          class="w-full h-full object-contain"
-        ></canvas>
+        <!-- PDF Thumbnail Display -->
+        <div v-if="pdfThumbnailSrc" class="w-full h-full flex items-center justify-center">
+          <img 
+            :src="pdfThumbnailSrc" 
+            :alt="attachment.name"
+            class="w-full h-full object-contain"
+          />
+        </div>
+        
+        <!-- Fallback PDF icon when no thumbnail -->
+        <div v-else-if="!isPdfThumbnailLoading" class="w-full h-full flex items-center justify-center bg-slate-700">
+          <svg class="w-16 h-16 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
+          </svg>
+        </div>
         
         <!-- PDF overlay with icon -->
         <div 
@@ -749,11 +739,12 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
           class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center cursor-pointer z-25"
           @click.stop="() => {
             try {
-              openImagePreview(attachment.url, 0);
+              // Always use the original authenticated URL for PDF preview, not the thumbnail blob
+              openImagePreview(authenticatedUrl, 0);
             } catch (error) {
               console.error('Error opening PDF preview:', error);
               // Fallback to just showing the modal with the original PDF
-              previewImageSrc = attachment.url;
+              previewImageSrc = authenticatedUrl;
               showPreviewModal = true;
             }
           }"
@@ -769,7 +760,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
           class="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-25"
         >
           <a
-            :href="attachment.url"
+            :href="authenticatedUrl"
             target="_blank"
             :download="attachment.name"
             class="flex items-center gap-1 p-2 bg-red-600/90 text-white hover:bg-red-700 rounded transition-colors"
@@ -786,7 +777,7 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
     </template>
     <template v-else>
       <FilePreview
-        :src="attachment.url"
+        :src="authenticatedUrl"
         :filename="attachment.name"
         :author="author"
         :timestamp="timestamp"
@@ -868,10 +859,10 @@ const generatePdfThumbnail = async (src: string, retryCount = 0) => {
         <!-- Show download buttons only for non-PDF files since PDFViewer has its own -->
         <div v-if="!isPdfFile(attachment.name)" class="mt-4 flex gap-3">
           <!-- For HEIC files, show both download options -->
-          <template v-if="isHeicFile(attachment.name) && previewImageSrc !== attachment.url">
+          <template v-if="isHeicFile(attachment.name) && previewImageSrc !== authenticatedUrl">
             <!-- Original HEIC download button -->
             <a
-              :href="attachment.url"
+              :href="authenticatedUrl"
               target="_blank"
               :download="attachment.name"
               class="px-4 py-2 bg-slate-800 text-white text-sm rounded hover:bg-slate-700 transition-colors flex items-center gap-2"

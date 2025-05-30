@@ -70,14 +70,42 @@ export const nodes: {[key: string]: NodeSpec} = {
   
   // A code listing. Disallows marks or non-text inline nodes by default
   code_block: {
-    attrs: { ychange: { default: null } },
+    attrs: { 
+      ychange: { default: null },
+      language: { default: null }
+    },
     content: 'text*',
     marks: '',
     group: 'block',
     code: true,
     defining: true,
-    parseDOM: [{ tag: 'pre', preserveWhitespace: 'full' }],
-    toDOM(node) { return ['pre', calcYchangeDomAttrs(node.attrs), ['code', 0]]; }
+    parseDOM: [{ 
+      tag: 'pre', 
+      preserveWhitespace: 'full',
+      getAttrs(node: HTMLElement) {
+        const codeEl = node.querySelector('code');
+        let language = null;
+        if (codeEl) {
+          const className = codeEl.className;
+          const match = /language-(\S+)/.exec(className);
+          if (match) {
+            language = match[1];
+          }
+        }
+        return { language };
+      }
+    }],
+    toDOM(node) { 
+      const attrs = calcYchangeDomAttrs(node.attrs);
+      if (node.attrs.language) {
+        attrs['data-language'] = node.attrs.language;
+      }
+      const codeAttrs: any = {};
+      if (node.attrs.language) {
+        codeAttrs.class = `language-${node.attrs.language}`;
+      }
+      return ['pre', attrs, ['code', codeAttrs, 0]]; 
+    }
   },
   
   // The text node

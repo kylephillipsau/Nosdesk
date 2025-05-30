@@ -5,7 +5,7 @@ import type { User, PaginatedResponse, PaginationParams } from '@/services/userS
 
 // Cache configuration
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
-const BACKGROUND_REFRESH_THRESHOLD = 2 * 60 * 1000 // 2 minutes
+const BACKGROUND_REFRESH_THRESHOLD = 4 * 60 * 1000 // 4 minutes - increased to reduce unnecessary background refreshes
 
 interface CacheEntry<T> {
   data: T
@@ -24,8 +24,16 @@ interface PaginatedCacheEntry {
   params: PaginationParams
 }
 
-// Request deduplication
-const activeRequests = new Map<string, Promise<any>>()
+// Active user requests to prevent duplicate network calls
+const activePaginatedRequests = new Map<string, Promise<PaginatedResponse<User>>>()
+const activeUserRequests = new Map<string, Promise<User | null>>()
+const activeBackgroundRefreshes = new Map<string, Promise<void>>()
+
+// Batch request management
+const pendingBatchRequests = new Set<string>()
+const batchTimeout = ref<number | null>(null)
+const BATCH_DELAY_MS = 50 // Wait 50ms to collect multiple requests
+const MAX_BATCH_SIZE = 20 // Maximum users per batch request
 
 export const useDataStore = defineStore('data', () => {
   // Users cache
@@ -50,6 +58,11 @@ export const useDataStore = defineStore('data', () => {
   // Check if cache entry is valid
   const isCacheValid = (timestamp: number): boolean => {
     return Date.now() - timestamp < CACHE_TTL
+  }
+  
+  // Check if data is stale
+  const isDataStale = (timestamp: number): boolean => {
+    return Date.now() - timestamp > CACHE_TTL
   }
   
   // Check if cache needs background refresh
@@ -81,19 +94,19 @@ export const useDataStore = defineStore('data', () => {
     
     // Check for ongoing request
     const requestKey = `paginated-users-${cacheKey}`
-    if (activeRequests.has(requestKey)) {
-      return activeRequests.get(requestKey)
+    if (activePaginatedRequests.has(requestKey)) {
+      return activePaginatedRequests.get(requestKey)!
     }
     
     // Create new request
     const requestPromise = fetchPaginatedUsersFromAPI(params, cacheKey)
-    activeRequests.set(requestKey, requestPromise)
+    activePaginatedRequests.set(requestKey, requestPromise)
     
     try {
       const result = await requestPromise
       return result
     } finally {
-      activeRequests.delete(requestKey)
+      activePaginatedRequests.delete(requestKey)
     }
   }
   
@@ -154,21 +167,42 @@ export const useDataStore = defineStore('data', () => {
   
   // Background refresh without blocking UI
   const refreshPaginatedUsersInBackground = async (params: PaginationParams, cacheKey: string) => {
+    // Check if background refresh is already in progress for this cache key
+    const backgroundKey = `background-paginated-${cacheKey}`
+    if (activeBackgroundRefreshes.has(backgroundKey)) {
+      return activeBackgroundRefreshes.get(backgroundKey)
+    }
+    
+    // Create new background refresh promise
+    const refreshPromise = (async () => {
+      try {
+        console.log('Background refreshing users cache for:', cacheKey)
+        await fetchPaginatedUsersFromAPI(params, cacheKey)
+      } catch (error) {
+        console.warn('Background refresh failed:', error)
+      }
+    })()
+    
+    // Track the background refresh
+    activeBackgroundRefreshes.set(backgroundKey, refreshPromise)
+    
     try {
-      console.log('Background refreshing users cache for:', cacheKey)
-      await fetchPaginatedUsersFromAPI(params, cacheKey)
-    } catch (error) {
-      console.warn('Background refresh failed:', error)
+      await refreshPromise
+    } finally {
+      // Clean up the tracking
+      activeBackgroundRefreshes.delete(backgroundKey)
     }
   }
   
-  // Get individual user by UUID
+  // Get individual user by UUID with smart caching and batching
   const getUserByUuid = async (uuid: string, forceRefresh = false): Promise<User | null> => {
     const cached = individualUsersCache.value.get(uuid)
     
     // Return cached data if valid
     if (!forceRefresh && cached && isCacheValid(cached.timestamp) && !cached.loading) {
-      if (needsBackgroundRefresh(cached.timestamp)) {
+      // Only trigger background refresh if user is NOT in pending batch queue
+      // This prevents race conditions between batch requests and individual background refreshes
+      if (needsBackgroundRefresh(cached.timestamp) && !pendingBatchRequests.has(uuid)) {
         // Trigger background refresh
         refreshUserInBackground(uuid)
       }
@@ -177,19 +211,52 @@ export const useDataStore = defineStore('data', () => {
     
     // Check for ongoing request
     const requestKey = `user-${uuid}`
-    if (activeRequests.has(requestKey)) {
-      return activeRequests.get(requestKey)
+    if (activeUserRequests.has(requestKey)) {
+      return activeUserRequests.get(requestKey)!
     }
     
-    // Create new request
-    const requestPromise = fetchUserFromAPI(uuid)
-    activeRequests.set(requestKey, requestPromise)
+    // Add to batch request queue
+    pendingBatchRequests.add(uuid)
+    
+    // Set up debounced batch processing
+    if (batchTimeout.value) {
+      clearTimeout(batchTimeout.value)
+    }
+    
+    batchTimeout.value = window.setTimeout(() => {
+      processBatchRequests()
+      batchTimeout.value = null
+    }, BATCH_DELAY_MS)
+    
+    // Create a promise that resolves when the user is loaded
+    const requestPromise = new Promise<User | null>((resolve) => {
+      // Poll the cache until the user is loaded or error occurs
+      const checkCache = () => {
+        const currentCached = individualUsersCache.value.get(uuid)
+        
+        if (currentCached && !currentCached.loading) {
+          if (currentCached.error) {
+            resolve(null)
+          } else {
+            resolve(currentCached.data)
+          }
+        } else {
+          // Continue polling
+          setTimeout(checkCache, 10)
+        }
+      }
+      
+      // Start polling after a short delay to allow batch processing
+      setTimeout(checkCache, BATCH_DELAY_MS + 10)
+    })
+    
+    activeUserRequests.set(requestKey, requestPromise)
     
     try {
       const result = await requestPromise
       return result
     } finally {
-      activeRequests.delete(requestKey)
+      activeUserRequests.delete(requestKey)
     }
   }
   
@@ -232,18 +299,42 @@ export const useDataStore = defineStore('data', () => {
   
   // Background refresh for individual user
   const refreshUserInBackground = async (uuid: string) => {
+    // Check if background refresh is already in progress for this user
+    const backgroundKey = `background-user-${uuid}`
+    if (activeBackgroundRefreshes.has(backgroundKey)) {
+      // Return the existing promise instead of starting a new request
+      return activeBackgroundRefreshes.get(backgroundKey)
+    }
+    
+    // Create new background refresh promise using the batching system
+    const refreshPromise = (async () => {
+      try {
+        console.log('Background refreshing user cache for:', uuid)
+        // Use the batching system instead of direct API call
+        await getUserByUuid(uuid, true) // Force refresh through batching system
+      } catch (error) {
+        console.warn('Background user refresh failed:', error)
+      }
+    })()
+    
+    // Track the background refresh
+    activeBackgroundRefreshes.set(backgroundKey, refreshPromise)
+    
     try {
-      console.log('Background refreshing user cache for:', uuid)
-      await fetchUserFromAPI(uuid)
-    } catch (error) {
-      console.warn('Background user refresh failed:', error)
+      await refreshPromise
+    } finally {
+      // Clean up the tracking
+      activeBackgroundRefreshes.delete(backgroundKey)
     }
   }
   
   // Get user name from cache (for quick lookups)
   const getUserName = (uuid: string): string | null => {
     const cached = individualUsersCache.value.get(uuid)
-    return cached?.data?.name || null
+    if (!cached?.data) return null
+    
+    // Return cached data - background refresh is handled by getUserByUuid calls
+    return cached.data.name || null
   }
   
   // Get user avatar from cache
@@ -251,6 +342,7 @@ export const useDataStore = defineStore('data', () => {
     const cached = individualUsersCache.value.get(uuid)
     if (!cached?.data) return null
     
+    // Return cached data - background refresh is handled by getUserByUuid calls
     if (preferThumb && cached.data.avatar_thumb) {
       return cached.data.avatar_thumb
     }
@@ -319,7 +411,7 @@ export const useDataStore = defineStore('data', () => {
   const getCacheStats = computed(() => ({
     paginatedCaches: usersCache.value.size,
     individualUsers: individualUsersCache.value.size,
-    activeRequests: activeRequests.size
+    activeRequests: activePaginatedRequests.size + activeUserRequests.size
   }))
   
   // Cleanup expired cache entries
@@ -344,25 +436,122 @@ export const useDataStore = defineStore('data', () => {
   // Auto cleanup every 10 minutes
   setInterval(cleanupExpiredCache, 10 * 60 * 1000)
   
+  // Process batched user requests
+  const processBatchRequests = async () => {
+    if (pendingBatchRequests.size === 0) return
+    
+    // Get all pending UUIDs and clear the set
+    const uuidsToFetch = Array.from(pendingBatchRequests)
+    pendingBatchRequests.clear()
+    
+    // Filter to only UUIDs that aren't already cached or loading
+    const uncachedUuids = uuidsToFetch.filter(uuid => {
+      const cached = individualUsersCache.value.get(uuid)
+      return !cached || (!cached.loading && isDataStale(cached.timestamp))
+    })
+    
+    if (uncachedUuids.length === 0) return
+    
+    console.log(`🚀 Batching ${uncachedUuids.length} user requests:`, uncachedUuids)
+    
+    // Mark all as loading
+    uncachedUuids.forEach(uuid => {
+      individualUsersCache.value.set(uuid, {
+        data: individualUsersCache.value.get(uuid)?.data || {} as User,
+        timestamp: individualUsersCache.value.get(uuid)?.timestamp || 0,
+        loading: true,
+        error: null
+      })
+    })
+    
+    try {
+      // Process in batches if needed
+      const batches = []
+      for (let i = 0; i < uncachedUuids.length; i += MAX_BATCH_SIZE) {
+        batches.push(uncachedUuids.slice(i, i + MAX_BATCH_SIZE))
+      }
+      
+      const allUsers = []
+      for (const batch of batches) {
+        const users = await userService.getUsersBatch(batch)
+        allUsers.push(...users)
+      }
+      
+      // Update cache with results
+      const userMap = new Map(allUsers.map(user => [user.uuid, user]))
+      
+      uncachedUuids.forEach(uuid => {
+        const user = userMap.get(uuid)
+        if (user) {
+          individualUsersCache.value.set(uuid, {
+            data: user,
+            timestamp: Date.now(),
+            loading: false,
+            error: null
+          })
+        } else {
+          // User not found
+          individualUsersCache.value.set(uuid, {
+            data: individualUsersCache.value.get(uuid)?.data || {} as User,
+            timestamp: Date.now(),
+            loading: false,
+            error: 'User not found'
+          })
+        }
+      })
+      
+    } catch (error) {
+      console.error('Batch user request failed:', error)
+      
+      // Mark all as error
+      uncachedUuids.forEach(uuid => {
+        individualUsersCache.value.set(uuid, {
+          data: individualUsersCache.value.get(uuid)?.data || {} as User,
+          timestamp: individualUsersCache.value.get(uuid)?.timestamp || 0,
+          loading: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+      })
+    }
+  }
+  
   return {
-    // Main API methods
+    // Paginated users
     getPaginatedUsers,
+    invalidateAllUsers,
+    
+    // Individual users
     getUserByUuid,
+    refreshUserInBackground,
+    addUserToCache,
+    updateUserInCache,
+    removeUserFromCache,
     getUserName,
     getUserAvatar,
     
     // Cache management
     invalidateUser,
-    invalidateAllUsers,
-    updateUserInCache,
-    addUserToCache,
-    removeUserFromCache,
+    
+    // Utilities
+    cleanupExpiredCache,
     
     // State
     globalLoading,
-    getCacheStats,
     
-    // Utilities
-    cleanupExpiredCache
+    // Batch request management
+    processBatchRequests,
+    
+    // Multi-user convenience functions
+    getUsersByUuids: async (uuids: string[]): Promise<(User | null)[]> => {
+      // Use the batching system to efficiently fetch multiple users
+      const userPromises = uuids.map(uuid => getUserByUuid(uuid))
+      return await Promise.all(userPromises)
+    },
+    
+    // Direct batch API call (bypasses cache)
+    getUsersBatchDirect: userService.getUsersBatch,
+    
+    // Stats
+    getCacheStats
   }
 }) 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseListView from '@/components/common/BaseListView.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -10,10 +10,12 @@ import DeviceForm from '@/components/DeviceForm.vue'
 import { IdCell, TextCell, StatusBadgeCell, UserAvatarCell } from '@/components/common/cells'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useListManagement } from '@/composables/useListManagement'
+import { useDataStore } from '@/stores/dataStore'
 import { getPaginatedDevices, createDevice } from '@/services/deviceService'
 import type { Device, DeviceFormData } from '@/types/device'
 
 const router = useRouter()
+const dataStore = useDataStore()
 
 // Use the composable for all common functionality
 const listManager = useListManagement<Device>({
@@ -21,7 +23,7 @@ const listManager = useListManagement<Device>({
   defaultSortField: 'name',
   defaultSortDirection: 'asc',
   fetchFunction: async (params) => {
-    return await getPaginatedDevices({
+    const response = await getPaginatedDevices({
       page: params.page,
       pageSize: params.pageSize,
       sortField: params.sortField,
@@ -30,9 +32,38 @@ const listManager = useListManagement<Device>({
       type: params.type,
       warranty: params.warranty
     });
+    
+    // Pre-warm user cache for efficient avatar loading
+    preWarmUserCache(response.data);
+    
+    return response;
   },
   routeBuilder: (device) => `/devices/${device.id}`
 });
+
+// Pre-warm user cache with all primary users from devices
+const preWarmUserCache = async (devices: Device[]) => {
+  try {
+    // Extract unique user UUIDs from devices
+    const userUuids = [...new Set(
+      devices
+        .map(device => device.primary_user?.uuid)
+        .filter((uuid): uuid is string => uuid !== undefined && uuid.length === 36) // Valid UUIDs only
+    )];
+    
+    if (userUuids.length === 0) return;
+    
+    console.log(`🚀 Pre-warming user cache for ${userUuids.length} device users`);
+    
+    // Use our batching system to efficiently load all users
+    await dataStore.getUsersByUuids(userUuids);
+    
+    console.log('✅ Device user cache pre-warming completed');
+  } catch (error) {
+    console.warn('Failed to pre-warm user cache:', error);
+    // Don't throw - this is an optimization, not critical
+  }
+};
 
 // Define table columns with responsive behavior
 const columns = [
@@ -227,6 +258,8 @@ const formatDate = (dateString: string) => {
               <UserAvatarCell 
                 v-if="item.primary_user"
                 :user-id="item.primary_user.uuid" 
+                :user-name="item.primary_user.name"
+                :avatar="item.primary_user.avatar_thumb || item.primary_user.avatar_url"
                 :show-name="true" 
               />
               <span v-else class="text-xs text-slate-500">Unassigned</span>
@@ -286,7 +319,13 @@ const formatDate = (dateString: string) => {
                   <div class="flex items-center justify-between text-xs">
                     <div v-if="device.primary_user" class="flex items-center gap-2">
                       <span class="text-slate-400">Assigned to:</span>
-                      <UserAvatar :name="device.primary_user.uuid" size="xs" />
+                      <UserAvatar 
+                        :name="device.primary_user.uuid" 
+                        :user-name="device.primary_user.name"
+                        :avatar="device.primary_user.avatar_thumb || device.primary_user.avatar_url"
+                        :show-name="true" 
+                        size="xs" 
+                      />
                     </div>
                     <div v-else class="text-slate-500">Unassigned</div>
                     <div class="text-slate-400">

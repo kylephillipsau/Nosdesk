@@ -200,8 +200,9 @@ onMounted(() => {
             <!-- Email Aliases Section -->
             <div class="bg-slate-800 rounded-2xl p-6">
               <h2 class="text-lg font-medium text-white mb-4">Email Addresses</h2>
+              
               <div v-if="userEmails.length === 0" class="text-slate-400 text-sm">
-                No additional email addresses
+                No additional email addresses found
               </div>
               <div v-else class="flex flex-col gap-2 space-y-3">
                 <div

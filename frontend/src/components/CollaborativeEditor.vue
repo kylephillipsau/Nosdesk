@@ -4,7 +4,7 @@ import * as Y from "yjs";
 import { PermanentUserData } from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import { EditorView } from "prosemirror-view";
-import { EditorState } from "prosemirror-state";
+import { EditorState, Selection } from "prosemirror-state";
 import { schema } from "@/components/editor/schema";
 import { useAuthStore } from "@/stores/auth";
 import UserAvatar from "./UserAvatar.vue";
@@ -51,21 +51,34 @@ import {
 // Props
 interface Props {
   docId: string;
-  modelValue?: string;
-  isBinaryUpdate?: boolean;
 }
 
-const props = withDefaults(defineProps<Props>(), {
-  modelValue: "",
-  isBinaryUpdate: false,
-});
-
-const emit = defineEmits<{
-  "update:modelValue": [value: string];
-}>();
+const props = defineProps<Props>();
 
 // Get auth store for user info
 const authStore = useAuthStore();
+
+// Computed property for save status
+const saveStatus = computed(() => {
+  if (isSaving.value) {
+    return "Saving...";
+  }
+  if (!isConnected.value) {
+    return "Offline - changes saved locally";
+  }
+  if (lastSaveTime.value) {
+    const now = new Date();
+    const diff = now.getTime() - lastSaveTime.value.getTime();
+    if (diff < 5000) {
+      return "Saved";
+    }
+    if (diff < 60000) {
+      return "Saved a moment ago";
+    }
+    return `Last saved ${new Date(lastSaveTime.value).toLocaleTimeString()}`;
+  }
+  return "Connected";
+});
 
 // Refs for template
 const editorElement = ref<HTMLElement | null>(null);
@@ -73,6 +86,14 @@ const isConnected = ref(false);
 
 // State for connected users
 const connectedUsers = ref<{ id: string; user: any }[]>([]);
+
+// State for save status
+const lastSaveTime = ref<Date | null>(null);
+const isSaving = ref(false);
+
+// Track initialization state
+const isInitialized = ref(false);
+let reinitializeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Custom dropdown state for toolbar
 const typeMenuRef = ref<HTMLElement | null>(null);
@@ -104,6 +125,62 @@ const log = {
     console.warn(`[YJS-Editor] ${message}`, ...args),
 };
 
+// Helper function to get WebSocket state text
+const getWebSocketStateText = (readyState: number): string => {
+  switch (readyState) {
+    case WebSocket.CONNECTING:
+      return "CONNECTING";
+    case WebSocket.OPEN:
+      return "OPEN";
+    case WebSocket.CLOSING:
+      return "CLOSING";
+    case WebSocket.CLOSED:
+      return "CLOSED";
+    default:
+      return `UNKNOWN(${readyState})`;
+  }
+};
+
+// Helper function to get close code meaning
+const getCloseCodeMeaning = (code: number): string => {
+  switch (code) {
+    case 1000:
+      return "Normal closure";
+    case 1001:
+      return "Going away";
+    case 1002:
+      return "Protocol error";
+    case 1003:
+      return "Unsupported data";
+    case 1004:
+      return "Reserved";
+    case 1005:
+      return "No status received";
+    case 1006:
+      return "Abnormal closure";
+    case 1007:
+      return "Invalid frame payload data";
+    case 1008:
+      return "Policy violation";
+    case 1009:
+      return "Message too big";
+    case 1010:
+      return "Mandatory extension";
+    case 1011:
+      return "Internal server error";
+    case 1012:
+      return "Service restart";
+    case 1013:
+      return "Try again later";
+    case 1014:
+      return "Bad gateway";
+    case 1015:
+      return "TLS handshake";
+    default:
+      return `Unknown code (${code})`;
+  }
+};
+
 // Create custom input rules function to replace exampleSetup
 const buildInputRules = (schema: Schema) => {
   const rules = [];
@@ -126,9 +203,19 @@ const buildInputRules = (schema: Schema) => {
     rules.push(wrappingInputRule(/^\s*>\s$/, schema.nodes.blockquote));
   }
 
-  // Code block rule: ``` followed by space
+  // Code block rules
   if (schema.nodes.code_block) {
-    rules.push(textblockTypeInputRule(/^```\s$/, schema.nodes.code_block));
+    // Basic code block: ``` followed by Enter
+    rules.push(textblockTypeInputRule(/^```$/, schema.nodes.code_block));
+    
+    // Code block with language: ```language
+    rules.push(
+      textblockTypeInputRule(
+        /^```(\w+)\s$/,
+        schema.nodes.code_block,
+        (match) => ({ language: match[1] })
+      )
+    );
   }
 
   // List rules
@@ -194,17 +281,42 @@ const initEditor = async () => {
     ydoc = new Y.Doc();
 
     // 2. Create the websocket provider
-    const wsUrl =
+    // Note: y-websocket automatically appends `/${docId}` to the URL we provide
+    // So we need to provide the base URL without the document ID
+    const baseWsUrl =
       import.meta.env.VITE_WS_SERVER_URL ||
       `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${
         window.location.hostname
       }:8080/api/collaboration/ws`;
 
-    log.info(
-      `Connecting to WebSocket server at: ${wsUrl} with document ID: ${props.docId}`
-    );
+    // Get JWT token for authentication
+    const token = localStorage.getItem('token');
+    if (!token) {
+      log.error('No authentication token found. Please log in.');
+      return;
+    }
 
-    provider = new WebsocketProvider(wsUrl, props.docId, ydoc);
+    log.info(
+      `Connecting to WebSocket server at: ${baseWsUrl} with document ID: ${props.docId}`
+    );
+    log.debug("Authentication token present:", {
+      tokenLength: token.length,
+      tokenPrefix: token.substring(0, 20) + "...",
+      documentId: props.docId,
+      baseUrl: baseWsUrl,
+    });
+
+    // Create WebsocketProvider with custom URL construction
+    // y-websocket will append /${docId} to the baseWsUrl, creating the correct backend route
+    provider = new WebsocketProvider(baseWsUrl, props.docId, ydoc, {
+      params: { token: token }
+    });
+
+    log.debug("WebsocketProvider created:", {
+      url: `${baseWsUrl}/${props.docId}`,
+      hasToken: !!token,
+      docId: props.docId,
+    });
 
     // 3. Set base awareness information for user identification
     provider.awareness.setLocalState({
@@ -218,112 +330,18 @@ const initEditor = async () => {
     // 4. Get the XML fragment and initialize ProseMirror document
     yXmlFragment = ydoc.getXmlFragment("prosemirror");
     
-    // Check if we have initial content from props.modelValue
-    if (props.modelValue) {
-      if (props.isBinaryUpdate) {
-        try {
-          // Check if the content looks like base64 (contains only valid base64 characters)
-          let base64String = props.modelValue.trim();
-          const isBase64 = /^[A-Za-z0-9+/=]+$/.test(base64String);
-          if (isBase64) {
-            // Add padding if necessary
-            const paddingNeeded = (4 - (base64String.length % 4)) % 4;
-            base64String += '='.repeat(paddingNeeded);
-            log.info("Sanitized base64 string length:", base64String.length, "Original length:", props.modelValue.length);
-            log.debug("Base64 content preview:", base64String.substring(0, 50) + (base64String.length > 50 ? "..." : ""));
-            const binaryData = Uint8Array.from(atob(base64String), c => c.charCodeAt(0));
-            Y.applyUpdate(ydoc, binaryData);
-            log.info("Applied initial binary content to Yjs document", binaryData.length);
-            log.info("Loaded latest binary content from backend on initialization");
-          } else {
-            log.warn("Content does not appear to be valid base64, treating as JSON");
-            // Try to parse as JSON if it's not base64
-            const parsedDoc = JSON.parse(props.modelValue);
-            const newDoc = schema.nodeFromJSON(parsedDoc);
-            if (newDoc) {
-              const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
-              if (tr) editorView?.dispatch(tr);
-              log.info("Applied initial JSON content to editor");
-              log.info("Loaded latest JSON content from backend on initialization");
-            } else {
-              log.error("Failed to parse content as JSON");
-              if (yXmlFragment.toString() === "") {
-                const emptyParagraph = new Y.XmlElement("paragraph");
-                yXmlFragment.insert(0, [emptyParagraph]);
-                log.info("Added empty paragraph to empty document after failed content parse");
-              }
-            }
-          }
-        } catch (error) {
-          log.error("Error applying initial binary content:", error);
-          log.error("Base64 content causing error (first 100 chars):", props.modelValue.substring(0, 100) + (props.modelValue.length > 100 ? "..." : ""));
-          // Try to parse as JSON as a fallback
-          try {
-            const parsedDoc = JSON.parse(props.modelValue);
-            const newDoc = schema.nodeFromJSON(parsedDoc);
-            if (newDoc) {
-              const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
-              if (tr) editorView?.dispatch(tr);
-              log.info("Applied initial JSON content to editor as fallback");
-              log.info("Loaded latest JSON content from backend on initialization as fallback");
-            } else {
-              if (yXmlFragment.toString() === "") {
-                const emptyParagraph = new Y.XmlElement("paragraph");
-                yXmlFragment.insert(0, [emptyParagraph]);
-                log.info("Added empty paragraph to empty document after failed JSON parse");
-              }
-            }
-          } catch (jsonError) {
-            log.error("Error parsing content as JSON:", jsonError);
-            if (yXmlFragment.toString() === "") {
-              const emptyParagraph = new Y.XmlElement("paragraph");
-              yXmlFragment.insert(0, [emptyParagraph]);
-              log.info("Added empty paragraph to empty document after failed binary and JSON parse");
-            }
-          }
-        }
-      } else {
-        // Handle as JSON directly
-        try {
-          const parsedDoc = JSON.parse(props.modelValue);
-          const newDoc = schema.nodeFromJSON(parsedDoc);
-          if (newDoc) {
-            const tr = editorView?.state.tr.replaceWith(0, editorView?.state.doc.content.size || 0, newDoc.content);
-            if (tr) editorView?.dispatch(tr);
-            log.info("Applied initial JSON content to editor");
-            log.info("Loaded latest JSON content from backend on initialization");
-          } else {
-            if (yXmlFragment.toString() === "") {
-              const emptyParagraph = new Y.XmlElement("paragraph");
-              yXmlFragment.insert(0, [emptyParagraph]);
-              log.info("Added empty paragraph to empty document after failed JSON parse");
-            }
-          }
-        } catch (error) {
-          log.error("Error applying initial JSON content:", error);
-          if (yXmlFragment.toString() === "") {
-            const emptyParagraph = new Y.XmlElement("paragraph");
-            yXmlFragment.insert(0, [emptyParagraph]);
-            log.info("Added empty paragraph to empty document after failed JSON parse");
-          }
-        }
-      }
-    } else if (yXmlFragment.toString() === "") {
-      // Only add empty paragraph if no content is loaded
-      const emptyParagraph = new Y.XmlElement("paragraph");
-      yXmlFragment.insert(0, [emptyParagraph]);
-      log.info("Added empty paragraph to empty document");
-    }
+    // The backend will send the initial state through the WebSocket sync protocol
+    // No need to handle initial content from props anymore
     
-    const { doc, meta } = initProseMirrorDoc(yXmlFragment, schema);
+    const prosemirrorDoc = initProseMirrorDoc(yXmlFragment, schema);
 
     // 5. Create the editor view - following the exact pattern in the official demo
     editorView = new EditorView(editorElement.value, {
       state: EditorState.create({
-        doc,
+        doc: prosemirrorDoc.doc,
         schema,
         plugins: [
-          ySyncPlugin(yXmlFragment, { mapping: meta }),
+          ySyncPlugin(yXmlFragment),
           yCursorPlugin(provider.awareness),
           yUndoPlugin(),
           keymap({
@@ -332,6 +350,35 @@ const initEditor = async () => {
             "Mod-Shift-z": redo,
             "Mod-b": toggleMark(schema.marks.strong),
             "Mod-i": toggleMark(schema.marks.em),
+            "Mod-Alt-c": setBlockType(schema.nodes.code_block),
+            // Exit code block with triple backticks
+            "```": (state, dispatch) => {
+              const { $from } = state.selection;
+              if ($from.parent.type === schema.nodes.code_block && dispatch) {
+                // Check if we're at the end of a code block
+                const after = $from.after();
+                const tr = state.tr.replaceWith(
+                  after, 
+                  after, 
+                  schema.nodes.paragraph.createAndFill()!
+                );
+                tr.setSelection(Selection.near(tr.doc.resolve(after + 1)));
+                dispatch(tr);
+                return true;
+              }
+              return false;
+            },
+            // Better Enter handling in code blocks
+            "Enter": (state, dispatch) => {
+              const { $from } = state.selection;
+              if ($from.parent.type === schema.nodes.code_block) {
+                if (dispatch) {
+                  dispatch(state.tr.insertText("\n"));
+                }
+                return true;
+              }
+              return false;
+            },
           }),
           // Add list handling keymap - this is crucial for proper list behavior
           keymap(createListKeymap(schema)),
@@ -344,42 +391,201 @@ const initEditor = async () => {
       }),
     });
 
-    // Ensure the editor view is updated with the latest content
-    if (props.modelValue && !props.isBinaryUpdate) {
-      try {
-        const parsedDoc = JSON.parse(props.modelValue);
-        const newDoc = schema.nodeFromJSON(parsedDoc);
-        if (newDoc) {
-          const tr = editorView.state.tr.replaceWith(0, editorView.state.doc.content.size, newDoc.content);
-          editorView.dispatch(tr);
-          log.info("Re-applied initial JSON content to ensure rendering");
-        }
-      } catch (error) {
-        log.error("Error re-applying content to ensure rendering:", error);
-      }
-    }
-
-    // 6. Set up connection status handler
+    // 6. Set up connection status handler with enhanced logging
     provider.on(
       "status",
       (event: { status: "connected" | "disconnected" | "connecting" }) => {
+        const previousStatus = isConnected.value ? "connected" : "disconnected";
         isConnected.value = event.status === "connected";
-        log.info(`WebSocket connection status: ${event.status}`);
+        
+        log.info(`WebSocket connection status changed: ${previousStatus} -> ${event.status}`);
+        
+        // Log additional context for disconnections
+        if (event.status === "disconnected") {
+          log.warn("WebSocket disconnected - checking for underlying causes...");
+          
+          // Run comprehensive diagnostics
+          diagnoseConnectionIssue();
+          
+          // Log current provider state
+          if (provider) {
+            log.debug("Provider state:", {
+              connected: provider.wsconnected,
+              connecting: provider.wsconnecting,
+              readyState: provider.ws?.readyState,
+              url: provider.ws?.url,
+              protocols: provider.ws?.protocol,
+              bufferedAmount: provider.ws?.bufferedAmount,
+            });
+            
+            // Check if there's a close event on the websocket
+            if (provider.ws) {
+              const ws = provider.ws;
+              log.debug("WebSocket state details:", {
+                readyState: ws.readyState,
+                readyStateText: getWebSocketStateText(ws.readyState),
+                url: ws.url,
+                extensions: ws.extensions,
+                protocol: ws.protocol,
+              });
+            }
+          }
+          
+          // Log browser connection status
+          log.debug("Browser connection status:", {
+            online: navigator.onLine,
+            connectionType: (navigator as any).connection?.effectiveType || "unknown",
+            downlink: (navigator as any).connection?.downlink || "unknown",
+          });
+        } else if (event.status === "connected") {
+          log.info("WebSocket successfully connected");
+          if (provider?.ws) {
+            log.debug("Connected WebSocket details:", {
+              url: provider.ws.url,
+              protocol: provider.ws.protocol,
+              readyState: provider.ws.readyState,
+              extensions: provider.ws.extensions,
+            });
+          }
+        }
       }
     );
+
+    // Add error event handler for more detailed error information
+    provider.on("connection-error", (error: any) => {
+      log.error("WebSocket connection error:", error);
+      log.debug("Error details:", {
+        message: error?.message || "No error message",
+        code: error?.code || "No error code",
+        type: error?.type || "No error type",
+        target: error?.target || "No target info",
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    // Monitor for authentication-related disconnections
+    provider.on("connection-close", (event: any) => {
+      log.warn("WebSocket connection closed:", {
+        code: event?.code,
+        reason: event?.reason,
+        wasClean: event?.wasClean,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Check for authentication-related close codes
+      if (event?.code === 1008) {
+        log.error("WebSocket closed due to policy violation - likely authentication failure");
+        log.error("Check if JWT token is valid and user still exists in database");
+      } else if (event?.code === 1011) {
+        log.error("WebSocket closed due to server error - likely backend database/processing issue");
+      } else if (event?.code === 1006) {
+        log.warn("WebSocket closed abnormally - network issue or server crash");
+      }
+    });
+
+    // Track sync protocol errors which can cause disconnections
+    ydoc.on("updateV2", (update: Uint8Array) => {
+      log.debug("Document update:", {
+        updateSize: update.length,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    // Add retry logic monitoring
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    
+    provider.on("status", (event: { status: "connected" | "disconnected" | "connecting" }) => {
+      if (event.status === "connecting") {
+        reconnectAttempts++;
+        log.info(`WebSocket reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
+        
+        if (reconnectAttempts > maxReconnectAttempts) {
+          log.error("Max reconnection attempts exceeded - giving up");
+          log.error("This could indicate:");
+          log.error("- Backend server is down");
+          log.error("- JWT token has expired");
+          log.error("- Network connectivity issues");
+          log.error("- Database connection issues on backend");
+        }
+      } else if (event.status === "connected") {
+        reconnectAttempts = 0; // Reset counter on successful connection
+        log.info("WebSocket reconnected successfully");
+      }
+    });
 
     // 7. Add awareness change listener to update connected users
     provider.awareness.on("change", () => {
       updateConnectedUsers();
     });
 
-    // 8. For debugging purposes
+    // 8. Track sync events for save status
+    provider.on("sync", (isSynced: boolean) => {
+      if (isSynced) {
+        lastSaveTime.value = new Date();
+        isSaving.value = false;
+      }
+    });
+    
+    // Track when syncing starts
+    ydoc.on("update", () => {
+      isSaving.value = true;
+    });
+
+    // 9. For debugging purposes
     window.example = {
       provider,
       ydoc,
       yXmlFragment,
       editorView,
+      diagnoseConnection: diagnoseConnectionIssue,
     };
+
+    // Add direct WebSocket event monitoring for low-level events
+    if (provider && provider.ws) {
+      const originalOnClose = provider.ws.onclose;
+      provider.ws.onclose = (event: CloseEvent) => {
+        log.warn("Raw WebSocket close event:", {
+          code: event.code,
+          reason: event.reason || "No reason provided",
+          wasClean: event.wasClean,
+          timestamp: new Date().toISOString(),
+          closeCodeMeaning: getCloseCodeMeaning(event.code),
+        });
+        
+        // Log specific backend-related close reasons
+        if (event.code === 1008) {
+          log.error("Authentication failed: JWT token invalid or user not found");
+          log.error("Token details to check:", {
+            tokenPresent: !!localStorage.getItem('token'),
+            tokenPrefix: localStorage.getItem('token')?.substring(0, 20) + "...",
+            docId: props.docId,
+          });
+        } else if (event.code === 1011) {
+          log.error("Backend server error - check server logs for database/processing issues");
+        }
+        
+        // Call original handler if it exists
+        if (originalOnClose && provider?.ws) {
+          originalOnClose.call(provider.ws, event);
+        }
+      };
+
+      const originalOnError = provider.ws.onerror;
+      provider.ws.onerror = (event: Event) => {
+        log.error("Raw WebSocket error event:", {
+          type: event.type,
+          timestamp: new Date().toISOString(),
+          target: event.target,
+          currentTarget: event.currentTarget,
+        });
+        
+        // Call original handler if it exists
+        if (originalOnError && provider?.ws) {
+          originalOnError.call(provider.ws, event);
+        }
+      };
+    }
 
     log.debug("Editor initialized successfully");
   } catch (error) {
@@ -557,10 +763,22 @@ const toggleBlockquote = () => {
 
 const toggleCodeBlock = () => {
   if (!editorView) return;
-  setBlockType(schema.nodes.code_block, {})(
-    editorView.state,
-    editorView.dispatch
-  );
+  
+  const { state, dispatch } = editorView;
+  const { $from } = state.selection;
+  
+  // Check if we're already in a code block
+  if ($from.parent.type === schema.nodes.code_block) {
+    // Convert back to paragraph
+    setBlockType(schema.nodes.paragraph, {})(state, dispatch);
+  } else {
+    // Ask for language
+    const language = prompt("Enter language for syntax highlighting (optional):", "");
+    const attrs = language ? { language } : {};
+    setBlockType(schema.nodes.code_block, attrs)(state, dispatch);
+  }
+  
+  editorView.focus();
 };
 
 const setParagraph = () => {
@@ -617,6 +835,8 @@ const redoEdit = () => {
 
 // Cleanup function
 const cleanup = () => {
+  log.info("Starting cleanup...");
+  
   if (editorView) {
     editorView.destroy();
     editorView = null;
@@ -627,7 +847,9 @@ const cleanup = () => {
       provider.awareness.off("change", updateConnectedUsers);
     }
 
+    // Ensure provider disconnects cleanly
     provider.disconnect();
+    provider.destroy();
     provider = null;
   }
   if (ydoc) {
@@ -641,24 +863,17 @@ const cleanup = () => {
 
   // Clean up global references
   window.example = undefined;
+  
+  log.info("Cleanup completed");
 };
 
-// Watch for changes in props.docId
-watch(
-  () => props.docId,
-  (newDocId, oldDocId) => {
-    if (newDocId !== oldDocId) {
-      log.info(
-        `Document ID changed from ${oldDocId} to ${newDocId}, reinitializing...`
-      );
-      cleanup();
-      // Short delay to ensure cleanup completes
-      setTimeout(() => {
-        initEditor();
-      }, 100);
-    }
+// Handle page unload to ensure clean disconnect
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (provider && provider.wsconnected) {
+    // Attempt to disconnect cleanly
+    provider.disconnect();
   }
-);
+};
 
 // Watch for changes in the auth user and update awareness
 watch(
@@ -684,44 +899,6 @@ const updateState = (newState: EditorState) => {
     editorView.updateState(newState);
   }
 };
-
-// Watch for changes in model value
-watch(
-  () => props.modelValue,
-  (newValue, oldValue) => {
-    if (newValue !== oldValue && editorView && props.isBinaryUpdate) {
-      try {
-        // Handle binary update for Yjs document
-        if (newValue && ydoc) {
-          const binaryData = Uint8Array.from(atob(newValue), c => c.charCodeAt(0));
-          Y.applyUpdate(ydoc, binaryData);
-          log.debug('Applied binary update to Yjs document');
-        }
-      } catch (error) {
-        log.error('Error applying binary content update:', error);
-      }
-    } else if (newValue !== oldValue && editorView && !props.isBinaryUpdate) {
-      try {
-        // Only update if JSON is valid and the editor is already initialized
-        const parsedDoc = JSON.parse(newValue);
-        const newDoc = schema.nodeFromJSON(parsedDoc);
-
-        if (newDoc) {
-          // Create a transaction that preserves selection
-          const tr = editorView.state.tr.replaceWith(
-            0,
-            editorView.state.doc.content.size,
-            newDoc.content
-          );
-          editorView.dispatch(tr);
-          log.debug('Applied updated content from model');
-        }
-      } catch (error) {
-        log.error('Error applying content update:', error);
-      }
-    }
-  }
-);
 
 // Helper function to log environment variables for debugging
 const logEnvironmentInfo = () => {
@@ -808,6 +985,74 @@ const debugRelativePositions = () => {
   }
 };
 
+// Diagnostic function to help troubleshoot disconnection issues
+const diagnoseConnectionIssue = () => {
+  log.info("=== WebSocket Connection Diagnostics ===");
+  
+  // Environment configuration
+  const baseWsUrl = import.meta.env.VITE_WS_SERVER_URL ||
+    `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:8080/api/collaboration/ws`;
+  
+  log.info("Environment Configuration:", {
+    nodeEnv: import.meta.env.NODE_ENV,
+    mode: import.meta.env.MODE,
+    wsServerUrl: import.meta.env.VITE_WS_SERVER_URL || "Not set (using auto-detected)",
+    computedWsUrl: baseWsUrl,
+    windowLocation: {
+      hostname: window.location.hostname,
+      port: window.location.port,
+      protocol: window.location.protocol,
+      href: window.location.href,
+    },
+  });
+  
+  // Authentication status
+  const token = localStorage.getItem('token');
+  log.info("Authentication Status:", {
+    hasToken: !!token,
+    tokenLength: token?.length || 0,
+    tokenPrefix: token?.substring(0, 20) + "..." || "No token",
+    userLoggedIn: !!authStore.user,
+    userName: authStore.user?.name || "Not logged in",
+    userUuid: authStore.user?.uuid || "No UUID",
+  });
+  
+  // Network status
+  log.info("Network Status:", {
+    online: navigator.onLine,
+    connection: (navigator as any).connection ? {
+      effectiveType: (navigator as any).connection.effectiveType,
+      downlink: (navigator as any).connection.downlink,
+      rtt: (navigator as any).connection.rtt,
+    } : "Connection API not available",
+  });
+  
+  // Document and provider status
+  log.info("Collaboration Status:", {
+    docId: props.docId,
+    hasYdoc: !!ydoc,
+    hasProvider: !!provider,
+    providerConnected: provider?.wsconnected || false,
+    providerConnecting: provider?.wsconnecting || false,
+    hasEditorView: !!editorView,
+    connectedUsers: connectedUsers.value.length,
+  });
+  
+  // Troubleshooting suggestions
+  log.info("=== Troubleshooting Suggestions ===");
+  if (!token) {
+    log.error("❌ No authentication token found - Please log in again");
+  }
+  if (!navigator.onLine) {
+    log.error("❌ Browser reports offline status - Check internet connection");
+  }
+  if (import.meta.env.NODE_ENV === 'development' && !import.meta.env.VITE_WS_SERVER_URL) {
+    log.warn("⚠️  VITE_WS_SERVER_URL not set - Using auto-detection which may not work in all environments");
+  }
+  
+  log.info("=== End Diagnostics ===");
+};
+
 // Add window debug methods
 window.example = undefined; // Initialize with undefined until editor is created
 
@@ -818,58 +1063,31 @@ declare global {
   }
 }
 
-// Function to save document state as binary
-const saveBinaryState = () => {
-  if (!ydoc) return null;
-  const update = Y.encodeStateAsUpdate(ydoc);
-  const base64String = btoa(String.fromCharCode.apply(null, Array.from(update)));
-  emit('update:modelValue', base64String);
-  log.debug('Saved binary state to model');
-  return base64String;
-};
-
-// Auto-save functionality
-const autoSaveInterval = ref<number | null>(null);
-const AUTO_SAVE_INTERVAL_MS = 30000; // Save every 30 seconds
-
-const startAutoSave = () => {
-  // Auto-save removed as backend handles saving
-  log.info('Auto-save not started as backend handles saving');
-};
-
-const stopAutoSave = () => {
-  if (autoSaveInterval.value !== null) {
-    clearInterval(autoSaveInterval.value);
-    autoSaveInterval.value = null;
-    log.info('Stopped auto-save interval');
-  }
-};
-
-// Save on page unload
-const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-  // Keep minimal fallback save on page unload
-  saveBinaryState();
-  log.info('Saved document state before page unload as fallback');
-  log.warn('Frontend fallback save triggered due to page unload - backend save may not have occurred');
-  // Optionally, you can prompt the user if there are unsaved changes
-  // event.preventDefault();
-  // event.returnValue = '';
-};
-
 onMounted(() => {
   initEditor();
   document.addEventListener("mousedown", handleClickOutside);
   document.addEventListener("keydown", handleKeydown);
-  startAutoSave();
   window.addEventListener("beforeunload", handleBeforeUnload);
+  
+  // Add network status monitoring
+  window.addEventListener("online", () => {
+    log.info("Network came back online - websocket may reconnect automatically");
+  });
+  
+  window.addEventListener("offline", () => {
+    log.warn("Network went offline - websocket connection will be lost");
+  });
 });
 
 onBeforeUnmount(() => {
   cleanup();
   document.removeEventListener("mousedown", handleClickOutside);
   document.removeEventListener("keydown", handleKeydown);
-  stopAutoSave();
   window.removeEventListener("beforeunload", handleBeforeUnload);
+  
+  // Remove network status monitoring
+  window.removeEventListener("online", () => {});
+  window.removeEventListener("offline", () => {});
 });
 </script>
 
@@ -1228,7 +1446,7 @@ onBeforeUnmount(() => {
 
       <!-- Connection status indicator only -->
       <div class="connection-status" :class="{ connected: isConnected }">
-        {{ isConnected ? "Connected" : "Syncing locally" }}
+        {{ saveStatus }}
       </div>
     </div>
 
@@ -1246,10 +1464,9 @@ onBeforeUnmount(() => {
 .collaborative-editor {
   display: flex;
   flex-direction: column;
-  border: 1px solid #374151;
-  border-radius: 0.375rem;
+  border-radius: 0 0 0.75rem 0.75rem;
   overflow: hidden;
-  background-color: #202C41;
+  background-color: #1C283D; /* bg-slate-800 */
   height: 100%;
   width: 100%;
   position: relative;
@@ -1258,8 +1475,8 @@ onBeforeUnmount(() => {
 .toolbar {
   display: flex;
   padding: 0.5rem;
-  background-color: #314257;
-  border-bottom: 1px solid #374151;
+  background-color: rgb(51 65 85 / 0.3); /* bg-slate-700/30 */
+  border-bottom: 1px solid rgb(51 65 85 / 0.5); /* border-slate-700/50 */
   flex-wrap: wrap;
   gap: 0.25rem;
   align-items: center;
@@ -1270,27 +1487,28 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 0.25rem 0.5rem;
-  background-color: #45556c;
+  background-color: rgb(51 65 85 / 0.5); /* bg-slate-700/50 */
   border: none;
-  border-radius: 0.25rem;
-  color: #aebaca;
+  border-radius: 0.375rem; /* rounded-md */
+  color: rgb(148 163 184); /* text-slate-400 */
   cursor: pointer;
   font-size: 0.875rem;
   transition: all 0.2s;
 }
 
 .toolbar-button:hover {
-  background-color: #334155;
-  color: #e6eaee;
+  background-color: rgb(51 65 85); /* bg-slate-700 */
+  color: rgb(248 250 252); /* text-white */
 }
 
 .toolbar-button.active {
-  color: #3b82f6;
+  color: rgb(59 130 246); /* text-blue-500 */
 }
 
 .toolbar-divider {
   width: 1px;
-  background-color: #91a1b8;
+  height: 1.5rem;
+  background-color: rgb(148 163 184); /* bg-slate-400 */
   margin: 0 0.5rem;
 }
 
@@ -1300,12 +1518,12 @@ onBeforeUnmount(() => {
   left: 0;
   margin-top: 0.25rem;
   width: 12rem;
-  background-color: #1e293b;
-  border: 1px solid #374151;
-  border-radius: 0.375rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
-    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  background-color: rgb(30 41 59); /* bg-slate-800 */
+  border: 1px solid rgb(51 65 85 / 0.5); /* border-slate-700/50 */
+  border-radius: 0.5rem; /* rounded-lg */
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   z-index: 50;
+  overflow: hidden;
 }
 
 .dropdown-item {
@@ -1314,30 +1532,36 @@ onBeforeUnmount(() => {
   padding: 0.5rem 1rem;
   text-align: left;
   font-size: 0.875rem;
-  color: #e2e8f0;
+  color: rgb(226 232 240); /* text-slate-200 */
   background-color: transparent;
   border: none;
   cursor: pointer;
+  transition: background-color 0.2s;
 }
 
 .dropdown-item:hover {
-  background-color: #334155;
+  background-color: rgb(51 65 85 / 0.5); /* bg-slate-700/50 */
+  color: rgb(248 250 252); /* text-white */
 }
 
 .connection-status {
   font-size: 0.875rem;
-  color: #ef4444;
+  color: rgb(239 68 68); /* text-red-500 */
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  background-color: rgb(127 29 29 / 0.2); /* bg-red-900/20 */
 }
 
 .connection-status.connected {
-  color: #10b981;
+  color: rgb(34 197 94); /* text-green-500 */
+  background-color: rgb(20 83 45 / 0.2); /* bg-green-900/20 */
 }
 
 .editor-container {
   position: relative;
-  background-color: #202C41;
+  background-color: #1C283D; /* bg-slate-800 */
   border-radius: 0.5rem;
-  color: #f8fafc;
+  color: rgb(248 250 252); /* text-slate-50 */
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 1rem;
   line-height: 1.5;
@@ -1368,7 +1592,7 @@ onBeforeUnmount(() => {
 
 /* Style for the editor container when active and there are users connected */
 .collaboration-active {
-  border: 1px solid #4f46e5;
+  border: 1px solid rgb(79 70 229); /* border-indigo-600 */
   border-radius: 0.5rem;
 }
 
@@ -1377,10 +1601,10 @@ onBeforeUnmount(() => {
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: #1e293b;
+  background-color: rgb(30 41 59); /* bg-slate-800 */
   border-top-left-radius: 0.5rem;
   border-top-right-radius: 0.5rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid rgb(51 65 85); /* border-slate-700 */
   padding: 0.5rem;
   display: flex;
   flex-wrap: wrap;
@@ -1398,7 +1622,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   margin-top: 1rem;
   margin-bottom: 1rem;
-  border-bottom: 1px solid #334155;
+  border-bottom: 1px solid rgb(51 65 85); /* border-slate-700 */
   padding-bottom: 0.5rem;
   line-height: 1.2;
 }
@@ -1420,32 +1644,96 @@ onBeforeUnmount(() => {
 }
 
 .ProseMirror blockquote {
-  border-left: 4px solid #3b82f6;
+  border-left: 4px solid rgb(59 130 246); /* border-blue-500 */
   padding-left: 1rem;
   margin-left: 0;
   margin-right: 0;
-  color: #94a3b8;
+  color: rgb(148 163 184); /* text-slate-400 */
   margin-top: 1rem;
   margin-bottom: 1rem;
 }
 
 .ProseMirror pre {
-  background-color: #0f172b;
+  background-color: rgb(15 23 42); /* bg-slate-900 */
   padding: 0.75rem;
-  border-radius: 0.375rem;
+  border-radius: 0.5rem; /* rounded-lg */
   overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
   margin-top: 1rem;
   margin-bottom: 1rem;
+  border: 1px solid rgb(51 65 85 / 0.3); /* border-slate-700/30 */
+  position: relative;
+}
+
+/* Language indicator for code blocks */
+.ProseMirror pre[data-language]::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.25rem 0.5rem;
+  background-color: rgb(51 65 85 / 0.5);
+  color: rgb(148 163 184);
+  font-size: 0.75rem;
+  border-bottom-left-radius: 0.25rem;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.ProseMirror pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: rgb(226 232 240); /* text-slate-200 */
+  display: block;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Better syntax highlighting colors for common languages */
+.ProseMirror pre code.language-javascript,
+.ProseMirror pre code.language-js,
+.ProseMirror pre code.language-typescript,
+.ProseMirror pre code.language-ts {
+  color: rgb(125 211 252); /* text-sky-300 */
+}
+
+.ProseMirror pre code.language-python,
+.ProseMirror pre code.language-py {
+  color: rgb(134 239 172); /* text-green-300 */
+}
+
+.ProseMirror pre code.language-html,
+.ProseMirror pre code.language-xml {
+  color: rgb(251 146 60); /* text-orange-400 */
+}
+
+.ProseMirror pre code.language-css,
+.ProseMirror pre code.language-scss {
+  color: rgb(147 197 253); /* text-blue-300 */
+}
+
+.ProseMirror pre code.language-bash,
+.ProseMirror pre code.language-sh,
+.ProseMirror pre code.language-shell {
+  color: rgb(163 230 53); /* text-lime-400 */
+}
+
+.ProseMirror pre code.language-json {
+  color: rgb(252 211 77); /* text-amber-300 */
+}
+
+.ProseMirror pre code.language-sql {
+  color: rgb(196 181 253); /* text-violet-300 */
 }
 
 .ProseMirror code {
-  background-color: #0f172b;
-  padding: 0.125rem 0.25rem;
+  background-color: rgb(51 65 85 / 0.5); /* bg-slate-700/50 */
+  padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
+  color: rgb(226 232 240); /* text-slate-200 */
 }
 
 .ProseMirror ul,
@@ -1463,7 +1751,7 @@ onBeforeUnmount(() => {
 /* Enhanced list styles */
 .ProseMirror ul {
   list-style-type: disc;
-  color: #e2e8f0;
+  color: rgb(226 232 240); /* text-slate-200 */
 }
 
 .ProseMirror ul ul {
@@ -1476,7 +1764,7 @@ onBeforeUnmount(() => {
 
 .ProseMirror ol {
   list-style-type: decimal;
-  color: #e2e8f0;
+  color: rgb(226 232 240); /* text-slate-200 */
 }
 
 .ProseMirror ol ol {
@@ -1492,18 +1780,22 @@ onBeforeUnmount(() => {
 }
 
 .ProseMirror a {
-  color: #3b82f6;
+  color: rgb(59 130 246); /* text-blue-500 */
   text-decoration: underline;
+}
+
+.ProseMirror a:hover {
+  color: rgb(96 165 250); /* text-blue-400 */
 }
 
 .ProseMirror strong {
   font-weight: 700;
-  color: #e2e8f0;
+  color: rgb(226 232 240); /* text-slate-200 */
 }
 
 .ProseMirror em {
   font-style: italic;
-  color: #e2e8f0;
+  color: rgb(226 232 240); /* text-slate-200 */
 }
 
 .ProseMirror .yRemoteSelection {
@@ -1525,7 +1817,7 @@ onBeforeUnmount(() => {
 /* Empty editor placeholder */
 .editor-container:empty::before {
   content: attr(data-placeholder);
-  color: #64748b;
+  color: rgb(100 116 139); /* text-slate-500 */
   pointer-events: none;
 }
 

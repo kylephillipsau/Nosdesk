@@ -421,25 +421,51 @@ pub async fn change_password(
 pub async fn validate_token_internal(auth: &BearerAuth, conn: &mut DbConnection) -> Result<Claims, actix_web::Error> {
     let token = auth.token();
     
+    // Create validation with stricter requirements
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true; // Ensure token hasn't expired
+    validation.validate_nbf = true; // Ensure token is not used before valid time
+    validation.leeway = 30; // Allow 30 seconds of clock skew
+    
     // Decode the token
     let token_data = match jsonwebtoken::decode::<Claims>(
         token,
         &jsonwebtoken::DecodingKey::from_secret(JWT_SECRET.as_bytes()),
-        &jsonwebtoken::Validation::default(),
+        &validation,
     ) {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error decoding token: {:?}", e);
-            return Err(actix_web::error::ErrorUnauthorized("Invalid token"));
+            match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
+                    return Err(actix_web::error::ErrorUnauthorized("Token has expired"));
+                },
+                jsonwebtoken::errors::ErrorKind::InvalidToken => {
+                    return Err(actix_web::error::ErrorUnauthorized("Invalid token format"));
+                },
+                _ => {
+                    return Err(actix_web::error::ErrorUnauthorized("Invalid token"));
+                }
+            }
         }
     };
     
     let claims = token_data.claims;
     
-    // Check if user exists
-    if let Err(e) = repository::get_user_by_uuid(&claims.sub, conn) {
-        eprintln!("Error finding user by UUID: {:?}", e);
-        return Err(actix_web::error::ErrorUnauthorized("Invalid token"));
+    // Additional security: Check if user still exists and is active
+    let user = match repository::get_user_by_uuid(&claims.sub, conn) {
+        Ok(user) => user,
+        Err(e) => {
+            eprintln!("Error finding user by UUID during token validation: {:?}", e);
+            return Err(actix_web::error::ErrorUnauthorized("User not found or inactive"));
+        }
+    };
+    
+    // Optional: Check if user role has changed
+    if claims.role != user.role {
+        eprintln!("User role mismatch in token for user {}: token has '{}', db has '{}'", 
+                 claims.sub, claims.role, user.role);
+        return Err(actix_web::error::ErrorUnauthorized("Token role mismatch - please log in again"));
     }
     
     Ok(claims)

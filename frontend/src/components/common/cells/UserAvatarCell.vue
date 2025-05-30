@@ -4,6 +4,7 @@ import UserAvatar from '@/components/UserAvatar.vue'
 interface Props {
   userId?: string
   userName?: string
+  avatar?: string | null
   size?: 'xs' | 'sm' | 'md' | 'lg'
   showName?: boolean
   emptyText?: string
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<Props>(), {
     <UserAvatar 
       :name="userId" 
       :user-name="userName"
+      :avatar="avatar"
       :size="size" 
       :clickable="false"
       :show-name="showName"

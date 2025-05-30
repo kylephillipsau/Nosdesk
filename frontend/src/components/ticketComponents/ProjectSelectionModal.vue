@@ -1,6 +1,6 @@
 <!-- ProjectSelectionModal.vue -->
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import Modal from '@/components/Modal.vue'
 import type { Project } from '@/types/project'
 import { projectService } from '@/services/projectService'
@@ -15,15 +15,36 @@ const emit = defineEmits<{
   (e: 'select-project', projectId: number): void;
 }>()
 
+// State management
 const projects = ref<Project[]>([])
 const isLoading = ref(false)
 const error = ref<string | null>(null)
 const searchQuery = ref('')
 
+// Search debouncing
+let searchTimeout: number | null = null;
+const searchDebounceMs = 300;
+
+// Scroll container reference
+const scrollContainer = ref<HTMLElement | null>(null);
+
 // Fetch projects when the modal is shown
 watch(() => props.show, async (isVisible) => {
   if (isVisible) {
-    await fetchProjects()
+    // Reset state
+    searchQuery.value = '';
+    error.value = null;
+    
+    // Load initial data
+    nextTick(() => {
+      fetchProjects();
+    });
+  } else {
+    // Clear search timeout when modal closes
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+      searchTimeout = null;
+    }
   }
 })
 
@@ -43,10 +64,23 @@ const fetchProjects = async () => {
   } catch (err) {
     console.error('Failed to fetch projects:', err)
     error.value = 'Failed to load projects. Please try again later.'
+    projects.value = []
   } finally {
     isLoading.value = false
   }
 }
+
+// Debounced search function
+const performSearch = (query: string) => {
+  if (searchTimeout) {
+    clearTimeout(searchTimeout);
+  }
+  
+  searchTimeout = setTimeout(() => {
+    // Search is performed on already loaded projects
+    // No need to reload from API for client-side filtering
+  }, searchDebounceMs);
+};
 
 const filteredProjects = computed(() => {
   const query = searchQuery.value.toLowerCase()
@@ -56,22 +90,49 @@ const filteredProjects = computed(() => {
   )
 })
 
+// Watch for search query changes
+watch(searchQuery, (newQuery) => {
+  performSearch(newQuery);
+});
+
 const getStatusClass = (status: string) => {
   switch (status) {
     case 'active':
-      return 'bg-green-500/20 text-green-400 border-green-500/30'
+      return 'bg-green-900/30 text-green-400 border-green-700/30'
     case 'completed':
-      return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+      return 'bg-blue-900/30 text-blue-400 border-blue-700/30'
     case 'archived':
-      return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+      return 'bg-gray-900/30 text-gray-400 border-gray-700/30'
     default:
-      return 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+      return 'bg-slate-700/30 text-slate-400 border-slate-600/30'
   }
 }
 
 const selectProject = (projectId: number) => {
   emit('select-project', projectId)
 }
+
+// Format date for display
+const formatDate = (dateString: string): string => {
+  try {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+      return 'Today';
+    } else if (diffDays === 1) {
+      return 'Yesterday';
+    } else if (diffDays < 7) {
+      return `${diffDays}d ago`;
+    } else {
+      return date.toLocaleDateString();
+    }
+  } catch (e) {
+    return 'Unknown';
+  }
+};
 </script>
 
 <template>
@@ -79,67 +140,187 @@ const selectProject = (projectId: number) => {
     :show="show"
     title="Add to Project"
     @close="emit('close')"
+    size="lg"
   >
-    <div class="flex flex-col gap-4 px-2">
+    <div class="flex flex-col gap-4">
       <!-- Search -->
       <div class="relative">
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
         <input
           v-model="searchQuery"
           type="text"
-          placeholder="Search projects..."
-          class="w-full pl-10 pr-4 py-2 bg-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Search projects by name or description..."
+          class="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-600 bg-slate-700 text-white placeholder-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-colors"
         />
-        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-          <svg class="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        <div v-if="isLoading && searchQuery" class="absolute inset-y-0 right-0 pr-3 flex items-center">
+          <svg class="w-5 h-5 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
         </div>
       </div>
 
-      <!-- Error message -->
-      <div v-if="error" class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg">
-        {{ error }}
+      <!-- Loading state (initial load) -->
+      <div v-if="isLoading && projects.length === 0" class="text-center py-8 text-slate-400">
+        <div class="inline-flex items-center gap-3">
+          <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>Loading projects...</span>
+        </div>
       </div>
 
-      <!-- Loading state -->
-      <div v-if="isLoading" class="flex justify-center items-center py-8">
-        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-      </div>
-
-      <!-- Project List -->
-      <div v-else class="flex flex-col gap-2 max-h-[400px] overflow-y-auto p-2">
-        <div
-          v-for="project in filteredProjects"
-          :key="project.id"
-          @click="selectProject(project.id)"
-          class="flex flex-col gap-1 p-3 bg-slate-700 rounded-lg cursor-pointer hover:bg-slate-600 transition-colors"
-          :class="{ 'ring-2 ring-blue-500': project.id === currentProjectId }"
-        >
-          <div class="flex items-center justify-between">
-            <h4 class="font-medium text-white">{{ project.name }}</h4>
-            <span 
-              :class="getStatusClass(project.status)"
-              class="text-sm px-2 py-0.5 rounded-full border"
-            >
-              {{ project.status }}
-            </span>
-          </div>
-          <p v-if="project.description" class="text-sm text-slate-400">
-            {{ project.description }}
+      <!-- Error state -->
+      <div v-else-if="error" class="text-center py-8">
+        <div class="bg-red-900/20 border border-red-700/30 rounded-lg p-4">
+          <p class="text-red-400 flex items-center justify-center gap-2">
+            <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+            </svg>
+            {{ error }}
           </p>
-          <div class="text-xs text-slate-400 mt-1">
-            {{ project.ticketCount }} tickets
+          <button 
+            @click="fetchProjects()"
+            class="mt-3 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+
+      <!-- No results -->
+      <div v-else-if="!isLoading && filteredProjects.length === 0 && searchQuery" class="text-center py-8 text-slate-400">
+        <div class="inline-flex flex-col items-center gap-3">
+          <svg class="w-12 h-12 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          <div class="text-center">
+            <p class="text-lg font-medium text-slate-300">No projects found</p>
+            <p class="text-sm">Try adjusting your search criteria</p>
           </div>
         </div>
       </div>
 
-      <!-- Empty State -->
-      <div
-        v-if="!isLoading && filteredProjects.length === 0"
-        class="text-center py-8 text-slate-400"
-      >
-        No projects found
+      <!-- No projects available -->
+      <div v-else-if="!isLoading && filteredProjects.length === 0 && !searchQuery" class="text-center py-8 text-slate-400">
+        <div class="inline-flex flex-col items-center gap-3">
+          <svg class="w-12 h-12 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          <div class="text-center">
+            <p class="text-lg font-medium text-slate-300">No projects available</p>
+            <p class="text-sm">Create a project to get started</p>
+          </div>
+        </div>
       </div>
+
+      <!-- Projects list -->
+      <div 
+        v-else-if="filteredProjects.length > 0"
+        ref="scrollContainer"
+        class="max-h-[500px] overflow-y-auto"
+      >
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden">
+          <!-- Table header -->
+          <div class="bg-slate-700/50 px-4 py-3 border-b border-slate-600/50 sticky top-0 z-10">
+            <div class="grid grid-cols-12 gap-3 text-xs font-medium text-slate-300 uppercase tracking-wide">
+              <div class="col-span-4">Project Name</div>
+              <div class="col-span-4">Description</div>
+              <div class="col-span-2">Status</div>
+              <div class="col-span-1">Tickets</div>
+              <div class="col-span-1 text-right">Action</div>
+            </div>
+          </div>
+          
+          <!-- Project rows -->
+          <div class="divide-y divide-slate-700/30">
+            <div 
+              v-for="project in filteredProjects"
+              :key="project.id"
+              class="group relative hover:bg-slate-700/30 transition-colors duration-150 cursor-pointer"
+              :class="{ 'bg-blue-900/20 border-l-4 border-blue-500': project.id === currentProjectId }"
+              @click="selectProject(project.id)"
+            >
+              <!-- Current project indicator -->
+              <div v-if="project.id === currentProjectId" class="absolute -top-1 right-2 z-10">
+                <div class="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-b-md shadow-sm">
+                  Current Project
+                </div>
+              </div>
+
+              <div class="px-4 py-3">
+                <div class="grid grid-cols-12 gap-3 items-center">
+                  <!-- Project Name -->
+                  <div class="col-span-4 min-w-0">
+                    <div class="flex flex-col gap-1">
+                      <div class="font-medium text-white truncate text-sm" :title="project.name">
+                        {{ project.name }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Description -->
+                  <div class="col-span-4 min-w-0">
+                    <div v-if="project.description" class="text-sm text-slate-300 truncate" :title="project.description">
+                      {{ project.description }}
+                    </div>
+                    <div v-else class="text-sm text-slate-500 italic">
+                      No description
+                    </div>
+                  </div>
+
+                  <!-- Status -->
+                  <div class="col-span-2 min-w-0">
+                    <span 
+                      :class="getStatusClass(project.status)"
+                      class="text-xs px-2 py-1 rounded-full border capitalize"
+                    >
+                      {{ project.status }}
+                    </span>
+                  </div>
+
+                  <!-- Ticket Count -->
+                  <div class="col-span-1 min-w-0">
+                    <span class="text-sm text-slate-300 font-mono">{{ project.ticketCount }}</span>
+                  </div>
+
+                  <!-- Action Button -->
+                  <div class="col-span-1 text-right">
+                    <button class="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded hover:bg-blue-900/20 transition-colors">
+                      Select
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="mt-6 flex justify-between items-center pt-4 border-t border-slate-700">
+      <div class="flex items-center gap-2 text-sm text-slate-400">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+        <span>
+          {{ filteredProjects.length }} project{{ filteredProjects.length !== 1 ? 's' : '' }} available
+        </span>
+      </div>
+      
+      <button 
+        type="button"
+        class="px-4 py-2 text-sm text-slate-300 hover:text-slate-100 hover:bg-slate-700 rounded-md transition-colors"
+        @click="emit('close')"
+      >
+        Cancel
+      </button>
     </div>
   </Modal>
 </template> 
