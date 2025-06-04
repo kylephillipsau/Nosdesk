@@ -29,6 +29,11 @@ const listManager = useListManagement<UIUser>({
   defaultSortField: 'id',
   defaultSortDirection: 'asc',
   fetchFunction: async (params) => {
+    // Check if we have cached data for this exact query
+    const cacheKey = `users_${JSON.stringify(params)}`;
+    
+    console.log(`🔍 Fetching users with params:`, params);
+    
     const response = await dataStore.getPaginatedUsers({
       page: params.page,
       pageSize: params.pageSize,
@@ -37,6 +42,8 @@ const listManager = useListManagement<UIUser>({
       search: params.search,
       role: params.role !== 'all' ? params.role : undefined
     });
+    
+    console.log(`📊 Received ${response.data.length} users (${response.total} total)`);
     
     // Transform backend users to UI users with additional properties
     const transformedData = response.data.map(user => ({

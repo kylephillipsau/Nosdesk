@@ -1,5 +1,13 @@
 import axios from 'axios';
 
+// API Configuration with Conditional Logging
+// 
+// Logging behavior:
+// - Minimal logging by default (errors only)
+// - Verbose request/response logging enabled when localStorage['api-verbose-logging'] = 'true'
+// - To enable verbose logging: localStorage.setItem('api-verbose-logging', 'true')
+// - To disable: localStorage.removeItem('api-verbose-logging')
+
 // Set API URL based on environment
 export const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -28,8 +36,8 @@ apiClient.interceptors.request.use(
       }
     }
     
-    // Enable debugging in development
-    if (import.meta.env.DEV) {
+    // Only log requests in development mode and when verbose logging is enabled
+    if (import.meta.env.DEV && window.localStorage.getItem('api-verbose-logging') === 'true') {
       console.log(`API Request to ${config.url}:`, { 
         method: config.method,
         headers: config.headers,
@@ -47,8 +55,8 @@ apiClient.interceptors.request.use(
 // Add response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => {
-    // Enable debugging in development
-    if (import.meta.env.DEV) {
+    // Only log responses in development mode and when verbose logging is enabled
+    if (import.meta.env.DEV && window.localStorage.getItem('api-verbose-logging') === 'true') {
       // Get the call stack to identify which component made the request
       const stack = new Error().stack;
       const caller = stack?.split('\n')[4]?.trim() || 'Unknown caller';

@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use crate::db::DbConnection;
 use crate::models::{
     DocumentationPage, DocumentationPageWithChildren,
-    NewDocumentationPage, PageOrder
+    NewDocumentationPage, DocumentationPageUpdate, PageOrder
 };
 use crate::schema::documentation_pages;
 
@@ -44,20 +44,11 @@ pub fn create_documentation_page(
 // Update an existing documentation page
 pub fn update_documentation_page(
     conn: &mut DbConnection,
-    page: &DocumentationPage,
+    page_id: i32,
+    page_update: &DocumentationPageUpdate,
 ) -> Result<DocumentationPage, Error> {
-    diesel::update(documentation_pages::table.find(page.id))
-        .set((
-            documentation_pages::slug.eq(&page.slug),
-            documentation_pages::title.eq(&page.title),
-            documentation_pages::description.eq(&page.description),
-            documentation_pages::content.eq(&page.content),
-            documentation_pages::parent_id.eq(page.parent_id),
-            documentation_pages::author.eq(&page.author),
-            documentation_pages::status.eq(page.status),
-            documentation_pages::icon.eq(&page.icon),
-            documentation_pages::updated_at.eq(page.updated_at),
-        ))
+    diesel::update(documentation_pages::table.find(page_id))
+        .set(page_update)
         .get_result(conn)
 }
 

@@ -81,7 +81,27 @@ export const convertToPage = (data: any): Page => {
     const cleanSlug = typeof data.slug === 'string' ? data.slug : '';
     const cleanTitle = typeof data.title === 'string' ? data.title : 'Untitled';
     const cleanDescription = data.description !== undefined ? data.description : null;
-    const cleanContent = typeof data.content === 'string' ? data.content : '';
+    
+    // Handle content conversion from binary (Vec<u8>) to string
+    let cleanContent = '';
+    if (data.content) {
+      if (typeof data.content === 'string') {
+        // Already a string
+        cleanContent = data.content;
+      } else if (Array.isArray(data.content)) {
+        // It's an array of bytes from the backend
+        try {
+          const bytes = new Uint8Array(data.content);
+          cleanContent = new TextDecoder().decode(bytes);
+        } catch (decodeError) {
+          console.warn('Error decoding binary content:', decodeError);
+          cleanContent = '';
+        }
+      } else {
+        cleanContent = '';
+      }
+    }
+    
     const cleanParentId = data.parent_id !== undefined ? data.parent_id : null;
     const cleanAuthor = typeof data.author === 'string' ? data.author : 'System Admin';
     const cleanStatus = typeof data.status === 'string' ? data.status : 'published';
@@ -506,6 +526,9 @@ export const saveArticle = async (article: Page): Promise<Page | null> => {
       statusValue = 'published';
     }
     
+    // Convert content string to bytes for the backend
+    const contentBytes = Array.from(new TextEncoder().encode(article.content));
+    
     // Create a clean payload object with only the required fields
     // Important: Keep created_at and updated_at exactly as they are in the original article
     // The backend expects NaiveDateTime objects, not ISO strings
@@ -513,9 +536,8 @@ export const saveArticle = async (article: Page): Promise<Page | null> => {
       slug: article.slug,
       title: article.title,
       description: article.description || null,
-      content: article.content,
+      content: contentBytes, // Send as array of bytes
       parent_id: article.parent_id,
-      author: article.author,
       status: statusValue,
       icon: article.icon,
       created_at: currentArticle.created_at,
@@ -572,13 +594,16 @@ export const createArticle = async (article: Partial<Page>): Promise<Page | null
     // Use ISO format but truncate to seconds for NaiveDateTime compatibility
     const now = new Date().toISOString().split('.')[0];
     
+    // Convert content string to base64 (to be sent as binary)
+    const contentString = article.content || '';
+    const contentBytes = Array.from(new TextEncoder().encode(contentString));
+    
     // Prepare the payload with all required fields as expected by the backend
     const payload = {
       slug: slug,
       title: article.title || 'Untitled',
       description: article.description || '',
-      content: article.content || '',
-      author: article.author || 'System Admin',
+      content: contentBytes, // Send as array of bytes
       status: statusValue,
       icon: article.icon || '📄',
       parent_id: article.parent_id !== undefined ? article.parent_id : null,
@@ -646,7 +671,7 @@ export const createArticle = async (article: Partial<Page>): Promise<Page | null
 /**
  * Save the content of a page
  */
-export const savePageContent = async (pageId: string, content: string, author: string): Promise<Page | null> => {
+export const savePageContent = async (pageId: string, content: string): Promise<Page | null> => {
   try {
     let page;
     
@@ -672,6 +697,9 @@ export const savePageContent = async (pageId: string, content: string, author: s
         statusValue = 'published';
       }
       
+      // Convert content string to bytes for the backend
+      const contentBytes = Array.from(new TextEncoder().encode(content));
+      
       // Create a clean payload object with only the required fields
       // Important: Keep created_at and updated_at exactly as they are in the original page
       // The backend expects NaiveDateTime objects, not ISO strings
@@ -679,9 +707,8 @@ export const savePageContent = async (pageId: string, content: string, author: s
         slug: page.slug,
         title: page.title,
         description: page.description,
-        content: content,
+        content: contentBytes, // Send as array of bytes
         parent_id: page.parent_id,
-        author: author,
         status: statusValue,
         icon: page.icon,
         created_at: page.created_at,
@@ -870,6 +897,37 @@ export const getPageWithOrderedChildren = async (pageId: string | number): Promi
   }
 };
 
+/**
+ * Delete a documentation page/article
+ */
+export const deleteArticle = async (pageId: string | number): Promise<boolean> => {
+  try {
+    let numericId: number;
+    
+    if (typeof pageId === 'number') {
+      numericId = pageId;
+    } else if (!isNaN(Number(pageId))) {
+      numericId = Number(pageId);
+    } else {
+      // If it's a slug, we need to fetch the numeric ID first
+      try {
+        const response = await axios.get(`${API_URL}/documentation/pages/slug/${pageId}`);
+        numericId = response.data.id;
+      } catch (error) {
+        console.error(`Error fetching page with slug ${pageId}:`, error);
+        return false;
+      }
+    }
+    
+    // Delete the page
+    await axios.delete(`${API_URL}/documentation/pages/${numericId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error deleting documentation page ${pageId}:`, error);
+    return false;
+  }
+};
+
 export default {
   getPages,
   getAllArticles,
@@ -879,6 +937,7 @@ export default {
   searchArticles,
   saveArticle,
   createArticle,
+  deleteArticle,
   savePageContent,
   getPagesByParentId,
   getPageWithChildrenByParentId,

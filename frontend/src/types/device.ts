@@ -42,4 +42,5 @@ export interface DeviceFormData {
   primary_user_uuid?: string | null;
   intune_device_id?: string;
   entra_device_id?: string;
+  type?: string;
 } 

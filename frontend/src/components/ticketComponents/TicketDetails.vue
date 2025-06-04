@@ -71,7 +71,7 @@ onMounted(() => {
 
 <template>
   <div class="w-full">
-    <div class="bg-slate-800 rounded-xl border border-slate-700/50">
+    <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
       <!-- Header -->
       <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
         <h2 class="text-lg font-medium text-white">Ticket Details</h2>
@@ -85,7 +85,7 @@ onMounted(() => {
             <!-- Requester -->
             <div class="flex flex-col gap-1.5">
               <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Requester</h3>
-              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 relative z-30">
                 <UserAutocomplete
                   v-model="selectedRequester"
                   placeholder="Search or select Requester..."
@@ -98,7 +98,7 @@ onMounted(() => {
             <!-- Assignee -->
             <div class="flex flex-col gap-1.5">
               <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Assignee</h3>
-              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 relative z-20">
                 <UserAutocomplete
                   v-model="selectedAssignee"
                   placeholder="Search or select Assignee..."
@@ -114,7 +114,7 @@ onMounted(() => {
             <!-- Status -->
             <div class="flex flex-col gap-1.5">
               <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Status</h3>
-              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 relative z-20">
                 <CustomDropdown
                   :value="selectedStatus"
                   :options="statusOptions"
@@ -128,7 +128,7 @@ onMounted(() => {
             <!-- Priority -->
             <div class="flex flex-col gap-1.5">
               <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Priority</h3>
-              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30">
+              <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 relative z-10">
                 <CustomDropdown
                   :value="selectedPriority"
                   :options="priorityOptions"

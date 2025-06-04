@@ -209,8 +209,11 @@ const startProgressPolling = (sessionId: string) => {
       const response = await axios.get(`/api/integrations/graph/progress/${sessionId}`);
       syncProgress.value = response.data;
       
-      // Stop polling if sync is completed or failed
-      if (response.data.status === 'completed' || response.data.status === 'error' || response.data.status === 'cancelled') {
+      // Stop polling if sync is completed, failed, or cancelled
+      if (response.data.status === 'completed' || 
+          response.data.status === 'error' || 
+          response.data.status === 'cancelled' ||
+          response.data.status === 'completed_with_errors') {
         stopProgressPolling();
       }
     } catch (error: any) {
@@ -231,7 +234,8 @@ const stopProgressPolling = () => {
   isSyncing.value = false;
   currentSessionId.value = null;
   
-  // Refresh last sync details when polling stops
+  // Refresh both active syncs and last sync details when polling stops
+  fetchActiveSyncs();
   fetchLastSyncDetails();
 };
 
@@ -405,11 +409,17 @@ const fetchActiveSyncs = async () => {
     const response = await axios.get("/api/integrations/graph/active-syncs");
     activeSyncs.value = response.data.active_syncs || [];
     
-    // If there are active syncs and we're not currently monitoring one, start monitoring the first one
+    // Only start monitoring if there are truly active syncs (running/starting) and we're not already monitoring
     if (activeSyncs.value.length > 0 && !isSyncing.value) {
-      const activeSync = activeSyncs.value[0];
+      const runningSyncs = activeSyncs.value.filter(sync => 
+        sync.status === 'running' || sync.status === 'starting'
+      );
+      
+      if (runningSyncs.length > 0) {
+        const activeSync = runningSyncs[0];
       console.log("Found active sync, resuming monitoring:", activeSync.session_id);
       startProgressPolling(activeSync.session_id);
+      }
     }
   } catch (error: any) {
     console.error("Failed to fetch active syncs:", error);
@@ -675,11 +685,12 @@ onMounted(async () => {
                   <span class="px-2 py-1 text-xs rounded-full" :class="{
                     'bg-blue-900/50 text-blue-400 border border-blue-700': syncProgress.status === 'running' || syncProgress.status === 'starting',
                     'bg-green-900/50 text-green-400 border border-green-700': syncProgress.status === 'completed',
+                    'bg-orange-900/50 text-orange-400 border border-orange-700': syncProgress.status === 'completed_with_errors',
                     'bg-red-900/50 text-red-400 border border-red-700': syncProgress.status === 'error',
                     'bg-yellow-900/50 text-yellow-400 border border-yellow-700': syncProgress.status === 'cancelling',
-                    'bg-orange-900/50 text-orange-400 border border-orange-700': syncProgress.status === 'cancelled'
+                    'bg-gray-900/50 text-gray-400 border border-gray-700': syncProgress.status === 'cancelled'
                   }">
-                    {{ syncProgress.status }}
+                    {{ syncProgress.status === 'completed_with_errors' ? 'completed with errors' : syncProgress.status }}
                   </span>
                 </div>
               </div>
@@ -703,14 +714,15 @@ onMounted(async () => {
                   :class="{
                     'bg-blue-500': syncProgress.status === 'running' || syncProgress.status === 'starting',
                     'bg-green-500': syncProgress.status === 'completed',
+                    'bg-orange-500': syncProgress.status === 'completed_with_errors',
                     'bg-red-500': syncProgress.status === 'error',
                     'bg-yellow-500': syncProgress.status === 'cancelling',
-                    'bg-orange-500': syncProgress.status === 'cancelled'
+                    'bg-gray-500': syncProgress.status === 'cancelled'
                   }"
                   :style="{ 
                     width: syncProgress.total > 0 
                       ? `${Math.round((syncProgress.current / syncProgress.total) * 100)}%` 
-                      : '0%' 
+                      : (syncProgress.status === 'completed' || syncProgress.status === 'completed_with_errors') ? '100%' : '0%'
                   }"
                 ></div>
               </div>
@@ -771,9 +783,10 @@ onMounted(async () => {
                       'bg-blue-900/50 text-blue-400 border border-blue-700': sync.status === 'running' || sync.status === 'starting',
                       'bg-yellow-900/50 text-yellow-400 border border-yellow-700': sync.status === 'cancelling',
                       'bg-green-900/50 text-green-400 border border-green-700': sync.status === 'completed',
+                      'bg-orange-900/50 text-orange-400 border border-orange-700': sync.status === 'completed_with_errors',
                       'bg-red-900/50 text-red-400 border border-red-700': sync.status === 'error'
                     }">
-                      {{ sync.status }}
+                      {{ sync.status === 'completed_with_errors' ? 'completed with errors' : sync.status }}
                     </span>
                   </div>
                   
@@ -797,12 +810,13 @@ onMounted(async () => {
                         'bg-blue-500': sync.status === 'running' || sync.status === 'starting',
                         'bg-yellow-500': sync.status === 'cancelling',
                         'bg-green-500': sync.status === 'completed',
+                        'bg-orange-500': sync.status === 'completed_with_errors',
                         'bg-red-500': sync.status === 'error'
                       }"
                       :style="{ 
                         width: sync.total > 0 
                           ? `${Math.round((sync.current / sync.total) * 100)}%` 
-                          : '0%' 
+                          : (sync.status === 'completed' || sync.status === 'completed_with_errors') ? '100%' : '0%' 
                       }"
                     ></div>
                   </div>
@@ -810,7 +824,7 @@ onMounted(async () => {
                 
                 <div class="flex gap-2 ml-4">
                   <button
-                    v-if="currentSessionId !== sync.session_id"
+                    v-if="currentSessionId !== sync.session_id && (sync.status === 'running' || sync.status === 'starting')"
                     @click="resumeSync(sync.session_id)"
                     class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 transition-colors flex items-center gap-1"
                   >
@@ -863,9 +877,9 @@ onMounted(async () => {
               <div class="flex items-center gap-2 mt-2">
                 <span class="text-xs capitalize" :class="{
                   'text-green-400': lastSyncDetails.status === 'completed',
-                  'text-yellow-400': lastSyncDetails.status === 'completed_with_errors',
+                  'text-orange-400': lastSyncDetails.status === 'completed_with_errors',
                   'text-red-400': lastSyncDetails.status === 'error',
-                  'text-orange-400': lastSyncDetails.status === 'cancelled'
+                  'text-gray-400': lastSyncDetails.status === 'cancelled'
                 }">
                   {{ lastSyncDetails.status === 'completed_with_errors' ? 'completed with errors' : lastSyncDetails.status }}
                 </span>
@@ -904,14 +918,14 @@ onMounted(async () => {
               class="h-3 rounded-full transition-all duration-300" 
               :class="{
                 'bg-green-500': lastSyncDetails.status === 'completed',
-                'bg-yellow-500': lastSyncDetails.status === 'completed_with_errors',
+                'bg-orange-500': lastSyncDetails.status === 'completed_with_errors',
                 'bg-red-500': lastSyncDetails.status === 'error',
-                'bg-orange-500': lastSyncDetails.status === 'cancelled'
+                'bg-gray-500': lastSyncDetails.status === 'cancelled'
               }"
                              :style="{ 
                  width: lastSyncDetails.total > 0 
                    ? `${Math.round((lastSyncDetails.current / lastSyncDetails.total) * 100)}%` 
-                   : lastSyncDetails.status === 'completed' ? '100%' : '0%'
+                  : (lastSyncDetails.status === 'completed' || lastSyncDetails.status === 'completed_with_errors') ? '100%' : '0%'
                }"
             ></div>
           </div>
@@ -1034,7 +1048,7 @@ onMounted(async () => {
           <div class="space-y-3">
             <div v-for="result in syncResults.results" :key="result.entity" class="p-3 rounded-md border" :class="{
               'bg-green-900/30 border-green-700': result.status === 'completed',
-              'bg-yellow-900/30 border-yellow-700': result.status === 'completed_with_errors',
+              'bg-orange-900/30 border-orange-700': result.status === 'completed_with_errors',
               'bg-red-900/30 border-red-700': result.status === 'error'
             }">
               <div class="flex justify-between items-start">
@@ -1051,7 +1065,7 @@ onMounted(async () => {
                   <svg v-if="result.status === 'completed'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <svg v-else-if="result.status === 'completed_with_errors'" class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg v-else-if="result.status === 'completed_with_errors'" class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.864-.833-2.634 0l-5.898 8.5c-.77.833.192 2.5 1.732 2.5z"></path>
                   </svg>
                   <svg v-else class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

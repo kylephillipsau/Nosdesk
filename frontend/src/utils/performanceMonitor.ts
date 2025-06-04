@@ -166,6 +166,18 @@ export const usePerformanceMonitor = () => {
   }
 }
 
+// Export trackImagePerformance function for backward compatibility
+export const trackImagePerformance = (url: string, options: { cached?: boolean } = {}) => {
+  const { trackImageLoad } = usePerformanceMonitor()
+  const tracker = trackImageLoad(url)
+  
+  return {
+    onLoad: (size?: number) => tracker.success(size),
+    onError: () => tracker.error(),
+    onCancel: () => tracker.cancel()
+  }
+}
+
 // Helper function to wrap axios requests with performance tracking
 export const withPerformanceTracking = async <T>(
   requestFn: () => Promise<T>,
@@ -198,12 +210,7 @@ export const logPerformanceStats = () => {
     
     if (slowOperations.value.length > 0) {
       console.group('🐌 Slow Operations (>1s)')
-      console.table(slowOperations.value.map(op => ({
-        type: op.type,
-        url: op.url,
-        duration: `${Math.round(op.duration || 0)}ms`,
-        status: op.status
-      })))
+      console.table(slowOperations.value)
       console.groupEnd()
     }
     console.groupEnd()

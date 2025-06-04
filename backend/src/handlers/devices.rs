@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use diesel::result::Error;
 use std::collections::HashMap;
+use uuid::Uuid;
+use crate::utils;
 
 use crate::db::Pool;
 use crate::models::{NewDevice, DeviceUpdate, Device, User};
@@ -37,7 +39,7 @@ pub struct PaginatedResponse<T> {
 }
 
 // Enhanced device response with joined user data
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DeviceResponse {
     pub id: i32,
     pub name: String,
@@ -54,7 +56,7 @@ pub struct DeviceResponse {
     pub primary_user: Option<UserInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct UserInfo {
     pub uuid: String,
     pub name: String,
@@ -68,18 +70,18 @@ impl DeviceResponse {
         Self {
             id: device.id,
             name: device.name,
-            hostname: device.hostname,
-            serial_number: device.serial_number,
-            model: device.model,
-            warranty_status: device.warranty_status,
+            hostname: device.hostname.unwrap_or_default(),
+            serial_number: device.serial_number.unwrap_or_default(),
+            model: device.model.unwrap_or_default(),
+            warranty_status: device.warranty_status.unwrap_or_default(),
             manufacturer: device.manufacturer,
-            primary_user_uuid: device.primary_user_uuid.clone(),
+            primary_user_uuid: device.primary_user_uuid.map(|uuid| utils::uuid_to_string(&uuid)),
             intune_device_id: device.intune_device_id,
             entra_device_id: device.entra_device_id,
             created_at: device.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
             updated_at: device.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
             primary_user: user.map(|u| UserInfo {
-                uuid: u.uuid,
+                uuid: utils::uuid_to_string(&u.uuid),
                 name: u.name,
                 email: u.email,
                 avatar_url: u.avatar_url,
@@ -90,9 +92,9 @@ impl DeviceResponse {
 }
 
 // Helper function to get user by UUID
-fn get_user_by_uuid(conn: &mut crate::db::DbConnection, uuid: &str) -> Option<User> {
-    use crate::repository::users as user_repo;
-    user_repo::get_user_by_uuid(uuid, conn).ok()
+fn get_user_by_uuid(conn: &mut crate::db::DbConnection, uuid: &Uuid) -> Option<User> {
+    use crate::repository;
+    repository::get_user_by_uuid(uuid, conn).ok()
 }
 
 // Helper function to convert devices to device responses with user data
@@ -207,10 +209,16 @@ pub async fn get_user_devices(
     pool: web::Data<Pool>,
     path: web::Path<String>,
 ) -> impl Responder {
-    let user_uuid = path.into_inner();
+    let user_uuid_str = path.into_inner();
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    // Parse UUID from string
+    let user_uuid = match utils::parse_uuid(&user_uuid_str) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
     };
     
     match crate::repository::devices::get_devices_for_user(&mut conn, &user_uuid) {
@@ -219,8 +227,8 @@ pub async fn get_user_devices(
             HttpResponse::Ok().json(device_responses)
         },
         Err(e) => {
-            eprintln!("Error getting devices for user {}: {:?}", user_uuid, e);
-            HttpResponse::InternalServerError().json(format!("Failed to get devices for user {}", user_uuid))
+            eprintln!("Error getting devices for user {}: {:?}", user_uuid_str, e);
+            HttpResponse::InternalServerError().json(format!("Failed to get devices for user {}", user_uuid_str))
         }
     }
 }

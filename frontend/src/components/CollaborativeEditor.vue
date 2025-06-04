@@ -1,4 +1,12 @@
 <script setup lang="ts">
+// Collaborative Editor with Yjs for real-time document editing
+// 
+// Logging behavior:
+// - Minimal logging by default (info, warn, error only)
+// - Debug logging enabled in development mode or when localStorage['editor-verbose-logging'] = 'true'
+// - To enable verbose logging in production: localStorage.setItem('editor-verbose-logging', 'true')
+// - To disable: localStorage.removeItem('editor-verbose-logging')
+
 import { ref, onMounted, onBeforeUnmount, watch, computed } from "vue";
 import * as Y from "yjs";
 import { PermanentUserData } from "yjs";
@@ -119,8 +127,12 @@ const log = {
     console.log(`[YJS-Editor] ${message}`, ...args),
   error: (message: string, ...args: any[]) =>
     console.error(`[YJS-Editor] ${message}`, ...args),
-  debug: (message: string, ...args: any[]) =>
-    console.debug(`[YJS-Editor] ${message}`, ...args),
+  debug: (message: string, ...args: any[]) => {
+    // Only log debug messages in development or when verbose logging is enabled
+    if (import.meta.env.DEV || window.localStorage.getItem('editor-verbose-logging') === 'true') {
+      console.debug(`[YJS-Editor] ${message}`, ...args);
+    }
+  },
   warn: (message: string, ...args: any[]) =>
     console.warn(`[YJS-Editor] ${message}`, ...args),
 };
@@ -296,26 +308,16 @@ const initEditor = async () => {
       return;
     }
 
-    log.info(
-      `Connecting to WebSocket server at: ${baseWsUrl} with document ID: ${props.docId}`
-    );
-    log.debug("Authentication token present:", {
-      tokenLength: token.length,
-      tokenPrefix: token.substring(0, 20) + "...",
-      documentId: props.docId,
+    log.debug("WebSocket connection details:", {
       baseUrl: baseWsUrl,
+      documentId: props.docId,
+      hasToken: !!token,
     });
 
     // Create WebsocketProvider with custom URL construction
     // y-websocket will append /${docId} to the baseWsUrl, creating the correct backend route
     provider = new WebsocketProvider(baseWsUrl, props.docId, ydoc, {
       params: { token: token }
-    });
-
-    log.debug("WebsocketProvider created:", {
-      url: `${baseWsUrl}/${props.docId}`,
-      hasToken: !!token,
-      docId: props.docId,
     });
 
     // 3. Set base awareness information for user identification
@@ -398,55 +400,21 @@ const initEditor = async () => {
         const previousStatus = isConnected.value ? "connected" : "disconnected";
         isConnected.value = event.status === "connected";
         
-        log.info(`WebSocket connection status changed: ${previousStatus} -> ${event.status}`);
+        // Only log status changes, not every status event
+        if (previousStatus !== event.status) {
+          log.info(`Connection status: ${event.status}`);
+        }
         
         // Log additional context for disconnections
         if (event.status === "disconnected") {
-          log.warn("WebSocket disconnected - checking for underlying causes...");
+          log.warn("WebSocket disconnected - will attempt to reconnect automatically");
           
-          // Run comprehensive diagnostics
-          diagnoseConnectionIssue();
-          
-          // Log current provider state
-          if (provider) {
-            log.debug("Provider state:", {
-              connected: provider.wsconnected,
-              connecting: provider.wsconnecting,
-              readyState: provider.ws?.readyState,
-              url: provider.ws?.url,
-              protocols: provider.ws?.protocol,
-              bufferedAmount: provider.ws?.bufferedAmount,
-            });
-            
-            // Check if there's a close event on the websocket
-            if (provider.ws) {
-              const ws = provider.ws;
-              log.debug("WebSocket state details:", {
-                readyState: ws.readyState,
-                readyStateText: getWebSocketStateText(ws.readyState),
-                url: ws.url,
-                extensions: ws.extensions,
-                protocol: ws.protocol,
-              });
-            }
+          // Only run diagnostics in debug mode or when explicitly enabled
+          if (import.meta.env.DEV || window.localStorage.getItem('editor-verbose-logging') === 'true') {
+            diagnoseConnectionIssue();
           }
-          
-          // Log browser connection status
-          log.debug("Browser connection status:", {
-            online: navigator.onLine,
-            connectionType: (navigator as any).connection?.effectiveType || "unknown",
-            downlink: (navigator as any).connection?.downlink || "unknown",
-          });
         } else if (event.status === "connected") {
-          log.info("WebSocket successfully connected");
-          if (provider?.ws) {
-            log.debug("Connected WebSocket details:", {
-              url: provider.ws.url,
-              protocol: provider.ws.protocol,
-              readyState: provider.ws.readyState,
-              extensions: provider.ws.extensions,
-            });
-          }
+          log.info("WebSocket connected successfully");
         }
       }
     );
@@ -484,33 +452,35 @@ const initEditor = async () => {
     });
 
     // Track sync protocol errors which can cause disconnections
-    ydoc.on("updateV2", (update: Uint8Array) => {
-      log.debug("Document update:", {
-        updateSize: update.length,
-        timestamp: new Date().toISOString(),
-      });
-    });
+    // Remove the frequent document update logging
+    // ydoc.on("updateV2", (update: Uint8Array) => {
+    //   log.debug("Document update:", {
+    //     updateSize: update.length,
+    //     timestamp: new Date().toISOString(),
+    //   });
+    // });
 
-    // Add retry logic monitoring
+    // Add retry logic monitoring - simplified
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 5;
     
     provider.on("status", (event: { status: "connected" | "disconnected" | "connecting" }) => {
       if (event.status === "connecting") {
         reconnectAttempts++;
-        log.info(`WebSocket reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
+        // Only log after several attempts to avoid noise
+        if (reconnectAttempts > 2) {
+          log.warn(`Reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
+        }
         
         if (reconnectAttempts > maxReconnectAttempts) {
-          log.error("Max reconnection attempts exceeded - giving up");
-          log.error("This could indicate:");
-          log.error("- Backend server is down");
-          log.error("- JWT token has expired");
-          log.error("- Network connectivity issues");
-          log.error("- Database connection issues on backend");
+          log.error("Max reconnection attempts exceeded - connection failed");
+          log.error("Possible causes: server down, token expired, or network issues");
         }
       } else if (event.status === "connected") {
         reconnectAttempts = 0; // Reset counter on successful connection
-        log.info("WebSocket reconnected successfully");
+        if (reconnectAttempts > 0) {
+          log.info("Reconnected successfully");
+        }
       }
     });
 
@@ -541,29 +511,16 @@ const initEditor = async () => {
       diagnoseConnection: diagnoseConnectionIssue,
     };
 
-    // Add direct WebSocket event monitoring for low-level events
-    if (provider && provider.ws) {
+    // Add direct WebSocket event monitoring only in debug mode
+    if ((import.meta.env.DEV || window.localStorage.getItem('editor-verbose-logging') === 'true') && provider && provider.ws) {
       const originalOnClose = provider.ws.onclose;
       provider.ws.onclose = (event: CloseEvent) => {
-        log.warn("Raw WebSocket close event:", {
+        log.debug("WebSocket close event:", {
           code: event.code,
           reason: event.reason || "No reason provided",
           wasClean: event.wasClean,
-          timestamp: new Date().toISOString(),
           closeCodeMeaning: getCloseCodeMeaning(event.code),
         });
-        
-        // Log specific backend-related close reasons
-        if (event.code === 1008) {
-          log.error("Authentication failed: JWT token invalid or user not found");
-          log.error("Token details to check:", {
-            tokenPresent: !!localStorage.getItem('token'),
-            tokenPrefix: localStorage.getItem('token')?.substring(0, 20) + "...",
-            docId: props.docId,
-          });
-        } else if (event.code === 1011) {
-          log.error("Backend server error - check server logs for database/processing issues");
-        }
         
         // Call original handler if it exists
         if (originalOnClose && provider?.ws) {
@@ -573,11 +530,9 @@ const initEditor = async () => {
 
       const originalOnError = provider.ws.onerror;
       provider.ws.onerror = (event: Event) => {
-        log.error("Raw WebSocket error event:", {
+        log.debug("WebSocket error event:", {
           type: event.type,
           timestamp: new Date().toISOString(),
-          target: event.target,
-          currentTarget: event.currentTarget,
         });
         
         // Call original handler if it exists
@@ -587,7 +542,7 @@ const initEditor = async () => {
       };
     }
 
-    log.debug("Editor initialized successfully");
+    log.info("Editor initialized successfully");
   } catch (error) {
     log.error("Error initializing editor:", error);
   }
@@ -835,7 +790,7 @@ const redoEdit = () => {
 
 // Cleanup function
 const cleanup = () => {
-  log.info("Starting cleanup...");
+  log.debug("Cleaning up editor...");
   
   if (editorView) {
     editorView.destroy();
@@ -864,7 +819,7 @@ const cleanup = () => {
   // Clean up global references
   window.example = undefined;
   
-  log.info("Cleanup completed");
+  log.debug("Cleanup completed");
 };
 
 // Handle page unload to ensure clean disconnect
@@ -888,7 +843,7 @@ watch(
           name: getUserDisplayName(),
         },
       });
-      log.info(`Updated collaborative user name to: ${getUserDisplayName()}`);
+      log.debug(`Updated user name to: ${getUserDisplayName()}`);
     }
   }
 );

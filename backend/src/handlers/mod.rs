@@ -28,6 +28,9 @@ use actix_web::{web, HttpResponse, Responder, HttpRequest};
 use serde_json::json;
 use std::cmp::min;
 
+// Re-export validation utilities
+// pub use crate::utils::validation;
+
 // Placeholders for handlers that haven't been implemented in dedicated modules yet
 
 // Ticket comments and attachments
@@ -36,7 +39,7 @@ pub async fn get_comments_by_ticket_id(
     pool: web::Data<crate::db::Pool>
 ) -> impl Responder {
     let ticket_id = path.into_inner();
-    println!("Getting comments for ticket ID: {}", ticket_id);
+    println!("Getting comments for ticket: {}", ticket_id);
     
     let mut conn = match pool.get() {
         Ok(conn) => conn,
@@ -48,15 +51,13 @@ pub async fn get_comments_by_ticket_id(
     
     match crate::repository::comments::get_comments_with_attachments_by_ticket_id(&mut conn, ticket_id) {
         Ok(comments) => {
-            // Transform the comments to match the format expected by the frontend
+            // Format the comments for the frontend
             let formatted_comments: Vec<serde_json::Value> = comments.into_iter().map(|c| {
-                // Format the ISO timestamp correctly for JavaScript
                 let created_at = c.comment.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-                
                 json!({
                     "id": c.comment.id,
                     "content": c.comment.content,
-                    "user_uuid": c.comment.user_uuid,
+                    "user_id": c.comment.user_id,  // Use user_id, not user_uuid
                     "created_at": created_at,
                     "createdAt": created_at,
                     "ticket_id": c.comment.ticket_id,
@@ -83,7 +84,7 @@ pub async fn add_comment_to_ticket(
     let ticket_id = path.into_inner();
     println!("Adding comment to ticket {}", ticket_id);
     println!("Comment content: {}", comment_data.content);
-    println!("Comment user UUID: {}", comment_data.user_uuid);
+    println!("Comment user ID: {}", comment_data.user_id);  // Use user_id
     println!("Attachments count: {}", comment_data.attachments.len());
     
     let mut conn = match pool.get() {
@@ -94,27 +95,22 @@ pub async fn add_comment_to_ticket(
         }
     };
 
-    // Validate user UUID
-    let user_info = match crate::repository::users::get_user_by_uuid(&comment_data.user_uuid, &mut conn) {
+    // Validate user ID by getting user info
+    let user_info = match crate::repository::users::get_user_by_id(comment_data.user_id, &mut conn) {
         Ok(user) => {
             println!("Found valid user: {} ({})", user.name, user.uuid);
             Some(crate::models::UserInfo::from(user))
         },
         Err(e) => {
-            println!("Warning: User with UUID '{}' not found: {:?}", comment_data.user_uuid, e);
-            // Provide a fallback user info
-            Some(crate::models::UserInfo {
-                uuid: comment_data.user_uuid.clone(),
-                name: format!("Guest User {}", &comment_data.user_uuid.chars().take(4).collect::<String>())
-            })
+            println!("Warning: User with ID '{}' not found: {:?}", comment_data.user_id, e);
+            return HttpResponse::BadRequest().json(json!({"error": "Invalid user ID"}));
         }
     };
 
-    // Create the new comment
+    // Create the new comment (removing created_at since it's not in the model)
     let new_comment = crate::models::NewComment {
         content: comment_data.content.clone(),
-        created_at: Some(chrono::Local::now().naive_local()),
-        user_uuid: comment_data.user_uuid.clone(),
+        user_id: comment_data.user_id,  // Use user_id
         ticket_id,
     };
 
@@ -212,7 +208,7 @@ pub async fn add_comment_to_ticket(
             let response = json!({
                 "id": comment.id,
                 "content": comment.content,
-                "user_uuid": comment.user_uuid,
+                "user_id": comment.user_id,
                 "created_at": created_at,
                 "createdAt": created_at,
                 "ticket_id": comment.ticket_id,

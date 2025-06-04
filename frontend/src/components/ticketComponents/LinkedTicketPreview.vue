@@ -20,24 +20,55 @@ const emit = defineEmits<{
 const router = useRouter();
 const linkedTicket = ref<Ticket | null>(null);
 const isNavigating = ref(false);
+const isHovered = ref(false);
 
 const isSameAsCurrentTicket = computed(() => {
   return props.currentTicketId && props.linkedTicketId === props.currentTicketId;
 });
 
+// Computed property to get status colors for the ticket badge
+const ticketBadgeColors = computed(() => {
+  if (!linkedTicket.value) return 'bg-slate-600/80 text-slate-200 border-slate-500/50';
+  
+  switch (linkedTicket.value.status) {
+    case 'open':
+      return 'bg-yellow-500/20 text-yellow-200 border-yellow-500/30';
+    case 'in-progress':
+      return 'bg-blue-500/20 text-blue-200 border-blue-500/30';
+    case 'closed':
+      return 'bg-green-500/20 text-green-200 border-green-500/30';
+    default:
+      return 'bg-slate-600/80 text-slate-200 border-slate-500/50';
+  }
+});
+
+const handleMouseEnter = () => {
+  isHovered.value = true;
+};
+
+const handleMouseLeave = () => {
+  isHovered.value = false;
+};
+
 const fetchLinkedTicket = async () => {
   if (isSameAsCurrentTicket.value) {
-    console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    if (import.meta.env.DEV) {
+      console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    }
     return;
   }
   
   try {
-    console.log(`Fetching linked ticket #${props.linkedTicketId}`);
+    if (import.meta.env.DEV) {
+      console.log(`Fetching linked ticket #${props.linkedTicketId}`);
+    }
     const fetchedTicket = await ticketService.getTicketById(props.linkedTicketId);
     
     if (fetchedTicket) {
       linkedTicket.value = fetchedTicket;
-      console.log(`Successfully fetched linked ticket #${props.linkedTicketId}:`, fetchedTicket);
+      if (import.meta.env.DEV) {
+        console.log(`Successfully fetched linked ticket #${props.linkedTicketId}:`, fetchedTicket);
+      }
     }
   } catch (error) {
     console.error(`Error fetching linked ticket #${props.linkedTicketId}:`, error);
@@ -60,7 +91,9 @@ const viewTicket = async () => {
 
 onMounted(() => {
   if (isSameAsCurrentTicket.value) {
-    console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    if (import.meta.env.DEV) {
+      console.log(`Skipping fetch for ticket #${props.linkedTicketId} as it's the same as the current ticket #${props.currentTicketId}`);
+    }
     return;
   }
   fetchLinkedTicket();
@@ -82,29 +115,39 @@ const formattedDate = (dateString: string) => {
 </script>
 
 <template>
-  <div v-if="linkedTicket && !isSameAsCurrentTicket" class="bg-slate-800 rounded-lg overflow-hidden">
+  <div 
+    v-if="linkedTicket && !isSameAsCurrentTicket" 
+    class="bg-slate-800 rounded-xl border border-slate-700/50 overflow-hidden hover:border-slate-600/50 transition-colors"
+    @mouseenter="handleMouseEnter"
+    @mouseleave="handleMouseLeave"
+  >
     <!-- Header with status and actions -->
-    <div class="py-2 px-4 bg-slate-700/50 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <StatusBadge
-          type="status"
-          :value="linkedTicket.status"
-          custom-classes="w-1 h-2.5 flex-shrink-0"
-        />
-        <span class="text-gray-400 text-sm">#{{ linkedTicket.id }}</span>
-        <div class="flex items-center gap-2">
-          
-          <h3 class="text-white font-medium flex-1">
+    <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex items-center">
+      <div class="flex items-center gap-3 min-w-0 flex-1">
+        <!-- Ticket Number Badge -->
+        <div class="flex-shrink-0">
+          <span class="inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-semibold" :class="ticketBadgeColors">
+            #{{ linkedTicket.id }}
+          </span>
+        </div>
+        
+        <!-- Title - extends to full width when buttons not shown -->
+        <div class="min-w-0 flex-1">
+          <h3 class="text-white font-medium truncate text-sm">
             {{ linkedTicket.title }}
           </h3>
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        
+      
+      <!-- Action buttons - only render when hovering -->
+      <div 
+        v-if="isHovered"
+        class="flex items-center gap-1 ml-3 flex-shrink-0 animate-in fade-in duration-200"
+      >
         <button
           @click="viewTicket"
           :disabled="isNavigating"
-          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors disabled:opacity-50"
+          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded-md transition-colors disabled:opacity-50"
           title="View ticket"
         >
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -119,7 +162,7 @@ const formattedDate = (dateString: string) => {
         <button
           @click="emit('unlink')"
           :disabled="isNavigating"
-          class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded transition-colors disabled:opacity-50"
+          class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-50"
           title="Unlink ticket"
         >
           <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
@@ -134,40 +177,44 @@ const formattedDate = (dateString: string) => {
     </div>
 
     <!-- Ticket content -->
-    <div class="flex flex-col p-4 gap-2">
-      <!-- Title and ID -->
-
-      <!-- Details grid -->
-      <div class="grid grid-cols-2 gap-1 text-sm">
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Priority:</span>
-          <StatusBadge type="priority" :value="linkedTicket.priority" short />
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Created:</span>
-          <span class="text-white">{{
-            formattedDate(linkedTicket.created)
-          }}</span>
-        </div>
-        <div class="flex items-center gap-2 col-span-2">
-          <span class="text-gray-400 min-w-[70px]">Assignee:</span>
-          <UserAvatar 
-            v-if="linkedTicket.assignee" 
-            :name="linkedTicket.assignee" 
-            size="xs" 
-            :showName="true"
-          />
-          <span v-else class="text-white">Unassigned</span>
-        </div>
-        <div class="flex items-center gap-2 col-span-2">
-          <span class="text-gray-400 min-w-[70px]">Requester:</span>
-          <UserAvatar 
-            v-if="linkedTicket.requester" 
-            :name="linkedTicket.requester" 
-            size="xs" 
-            :showName="true"
-          />
-          <span v-else class="text-white">None</span>
+    <div class="p-4">
+      <div class="flex flex-col gap-3">
+        <!-- Details grid -->
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Priority</span>
+            <StatusBadge type="priority" :value="linkedTicket.priority" short />
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Created</span>
+            <span class="text-slate-200">{{
+              formattedDate(linkedTicket.created)
+            }}</span>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Assignee</span>
+            <div class="flex items-center gap-2">
+              <UserAvatar 
+                v-if="linkedTicket.assignee" 
+                :name="linkedTicket.assignee" 
+                size="xs" 
+                :showName="true"
+              />
+              <span v-else class="text-slate-200">Unassigned</span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-slate-400 uppercase tracking-wide">Requester</span>
+            <div class="flex items-center gap-2">
+              <UserAvatar 
+                v-if="linkedTicket.requester" 
+                :name="linkedTicket.requester" 
+                size="xs" 
+                :showName="true"
+              />
+              <span v-else class="text-slate-200">None</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

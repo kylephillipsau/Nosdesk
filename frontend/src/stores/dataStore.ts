@@ -452,7 +452,10 @@ export const useDataStore = defineStore('data', () => {
     
     if (uncachedUuids.length === 0) return
     
-    console.log(`🚀 Batching ${uncachedUuids.length} user requests:`, uncachedUuids)
+    // Only log batching in development mode
+    if (import.meta.env.DEV) {
+      console.log(`🚀 Batching ${uncachedUuids.length} user requests:`, uncachedUuids)
+    }
     
     // Mark all as loading
     uncachedUuids.forEach(uuid => {

@@ -17,13 +17,17 @@ use crate::repository;
 use crate::models::NewArticleContent;
 
 // How often heartbeat pings are sent
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 // How long before lack of client response causes a timeout
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 // Minimum time between saves for the same document
 const MIN_SAVE_INTERVAL: Duration = Duration::from_secs(5);
 // Maximum time a document can have pending changes before forcing a save
-const MAX_PENDING_DURATION: Duration = Duration::from_secs(30);
+const MAX_PENDING_DURATION: Duration = Duration::from_secs(120);
+// How long to wait before doing final save on empty room
+const EMPTY_ROOM_FINAL_SAVE_DELAY: Duration = Duration::from_secs(2);
+// How long to keep document state after room becomes empty
+const EMPTY_ROOM_CLEANUP_DELAY: Duration = Duration::from_secs(300); // 5 minutes
 
 // Simple handler to get article content by ticket ID
 pub async fn get_article_content(
@@ -79,6 +83,8 @@ struct DocumentState {
     has_pending_changes: bool,
     pending_since: Option<Instant>,
     sync_message_count: u32,
+    room_empty_since: Option<Instant>, // Track when room became empty
+    final_save_completed: bool, // Track if final save was done
 }
 
 impl DocumentState {
@@ -89,6 +95,8 @@ impl DocumentState {
             has_pending_changes: false,
             pending_since: None,
             sync_message_count: 0,
+            room_empty_since: None,
+            final_save_completed: false,
         }
     }
     
@@ -98,6 +106,10 @@ impl DocumentState {
             self.pending_since = Some(Instant::now());
         }
         self.sync_message_count += 1;
+        
+        // Reset room empty tracking since there's activity
+        self.room_empty_since = None;
+        self.final_save_completed = false;
     }
     
     fn mark_saved(&mut self) {
@@ -105,6 +117,22 @@ impl DocumentState {
         self.has_pending_changes = false;
         self.pending_since = None;
         self.sync_message_count = 0;
+    }
+    
+    fn mark_room_empty(&mut self) {
+        if self.room_empty_since.is_none() {
+            self.room_empty_since = Some(Instant::now());
+            self.final_save_completed = false;
+        }
+    }
+    
+    fn mark_room_active(&mut self) {
+        self.room_empty_since = None;
+        self.final_save_completed = false;
+    }
+    
+    fn mark_final_save_completed(&mut self) {
+        self.final_save_completed = true;
     }
     
     fn should_save(&self) -> bool {
@@ -131,6 +159,27 @@ impl DocumentState {
             return true;
         }
         
+        false
+    }
+    
+    fn should_do_final_save(&self) -> bool {
+        // Only do final save if room has been empty for a bit, changes exist, and we haven't done it yet
+        if let Some(empty_since) = self.room_empty_since {
+            let now = Instant::now();
+            return !self.final_save_completed && 
+                   (self.has_pending_changes || now.duration_since(empty_since) < Duration::from_secs(5)) &&
+                   now.duration_since(empty_since) >= EMPTY_ROOM_FINAL_SAVE_DELAY;
+        }
+        false
+    }
+    
+    fn should_cleanup(&self) -> bool {
+        // Clean up document state after room has been empty for the cleanup delay and final save is done
+        if let Some(empty_since) = self.room_empty_since {
+            let now = Instant::now();
+            return self.final_save_completed && 
+                   now.duration_since(empty_since) >= EMPTY_ROOM_CLEANUP_DELAY;
+        }
         false
     }
 }
@@ -162,7 +211,7 @@ impl YjsAppState {
         let state_clone = state.clone();
         actix::spawn(async move {
             use actix::clock::interval;
-            let mut interval = interval(Duration::from_secs(10)); // Check every 10 seconds (was 30)
+            let mut interval = interval(Duration::from_secs(30)); // Check every 30 seconds (was 10)
             loop {
                 interval.tick().await;
                 state_clone.cleanup_stale_sessions();
@@ -176,18 +225,44 @@ impl YjsAppState {
     fn save_all_active_documents(&self) {
         let mut documents = self.documents.lock().unwrap();
         let mut saved_count = 0;
+        let mut final_saved_count = 0;
+        let mut cleaned_up_count = 0;
+        let mut docs_to_remove = Vec::new();
         
         for (doc_id, doc_state) in documents.iter_mut() {
+            // Regular saves for active documents
             if doc_state.should_save() {
                 println!("Saving document {} with pending changes", doc_id);
                 self.save_document_internal(doc_id, &doc_state.awareness);
                 doc_state.mark_saved();
                 saved_count += 1;
             }
+            
+            // Final save for empty rooms
+            if doc_state.should_do_final_save() {
+                println!("Performing final save for empty room: {}", doc_id);
+                self.save_document_internal(doc_id, &doc_state.awareness);
+                doc_state.mark_saved();
+                doc_state.mark_final_save_completed();
+                final_saved_count += 1;
+            }
+            
+            // Clean up old empty documents
+            if doc_state.should_cleanup() {
+                println!("Cleaning up old document state: {}", doc_id);
+                docs_to_remove.push(doc_id.clone());
+                cleaned_up_count += 1;
+            }
         }
         
-        if saved_count > 0 {
-            println!("Periodic save completed: saved {} documents", saved_count);
+        // Remove cleaned up documents
+        for doc_id in docs_to_remove {
+            documents.remove(&doc_id);
+        }
+        
+        if saved_count > 0 || final_saved_count > 0 || cleaned_up_count > 0 {
+            println!("Periodic maintenance completed: {} regular saves, {} final saves, {} cleanups", 
+                    saved_count, final_saved_count, cleaned_up_count);
         }
     }
 
@@ -196,7 +271,7 @@ impl YjsAppState {
         let mut documents = self.documents.lock().unwrap();
         
         if let Some(doc_state) = documents.get(doc_id) {
-            println!("Using existing awareness for document: {}", doc_id);
+            // Only log when document is accessed for the first time in a while, not on every message
             Arc::clone(&doc_state.awareness)
         } else {
             println!("Creating new awareness for document: {}", doc_id);
@@ -215,7 +290,7 @@ impl YjsAppState {
                                                 ticket_id, article_content.content.len());
                                         
                                         // Apply the saved state to the document
-                                        if let Ok(update) = Update::decode_v1(&article_content.content) {
+                                        if let Ok(update) = Update::decode_v1(article_content.content.as_bytes()) {
                                             if let Err(e) = awareness.doc_mut().transact_mut().apply_update(update) {
                                                 println!("Error applying saved state: {:?}", e);
                                             }
@@ -263,7 +338,14 @@ impl YjsAppState {
         // Add this session to the room with current timestamp
         room.insert(session_id.to_string(), (addr, Instant::now()));
         
-        println!("Session {} joined document {}", session_id, doc_id);
+        // Mark document as having active sessions
+        if let Ok(mut documents) = self.documents.lock() {
+            if let Some(doc_state) = documents.get_mut(doc_id) {
+                doc_state.mark_room_active();
+            }
+        }
+        
+        println!("Session {} joined document {} (room now has {} users)", session_id, doc_id, room.len());
     }
 
     // Update session activity timestamp
@@ -284,18 +366,20 @@ impl YjsAppState {
         
         if let Some(room) = sessions.get_mut(doc_id) {
             room.remove(session_id);
-            println!("Session {} left document {}", session_id, doc_id);
+            println!("Session {} left document {} (room now has {} users)", session_id, doc_id, room.len());
             
-            // If room is empty, consider saving the document
+            // If room is empty, mark it as empty but don't save immediately
             if room.is_empty() {
-                println!("Room for document {} is empty, saving state", doc_id);
-                // Release the mutex to avoid deadlock when saving
+                println!("Room for document {} is now empty, will save after delay", doc_id);
+                // Release the mutex to avoid deadlock
                 drop(sessions);
-                // Force save any pending changes when room becomes empty
-                self.save_document_by_id(doc_id);
-                println!("Completed saving state for document {} after room emptied", doc_id);
-                // Re-acquire the mutex
-                sessions = self.sessions.lock().unwrap();
+                
+                // Mark the document as having an empty room
+                if let Ok(mut documents) = self.documents.lock() {
+                    if let Some(doc_state) = documents.get_mut(doc_id) {
+                        doc_state.mark_room_empty();
+                    }
+                }
             }
         }
     }
@@ -304,15 +388,16 @@ impl YjsAppState {
     fn cleanup_stale_sessions(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         let now = Instant::now();
-        let mut docs_to_clean = Vec::new();
         let mut stale_session_count = 0;
+        let mut newly_empty_rooms = Vec::new();
         
         // First pass: collect stale sessions
         for (doc_id, room) in sessions.iter_mut() {
             let mut stale_sessions = Vec::new();
+            let was_empty = room.is_empty();
             
             for (session_id, (_, last_active)) in room.iter() {
-                if now.duration_since(*last_active) > CLIENT_TIMEOUT * 3 {
+                if now.duration_since(*last_active) > CLIENT_TIMEOUT * 5 {
                     stale_sessions.push(session_id.clone());
                 }
             }
@@ -325,9 +410,9 @@ impl YjsAppState {
                 room.remove(session_id);
             }
             
-            // Mark document for potential cleaning if room is empty
-            if room.is_empty() {
-                docs_to_clean.push(doc_id.clone());
+            // If room just became empty, mark it
+            if !was_empty && room.is_empty() {
+                newly_empty_rooms.push(doc_id.clone());
             }
         }
         
@@ -336,17 +421,18 @@ impl YjsAppState {
             println!("Cleaned up {} stale sessions", stale_session_count);
         }
         
-        // Release the sessions lock before saving
+        // Release the sessions lock before updating document states
         drop(sessions);
         
-        // Process empty rooms and save their state
-        for doc_id in docs_to_clean {
-            let documents = self.documents.lock().unwrap();
-            if documents.contains_key(&doc_id) {
-                println!("Room for document {} is empty, saving state", &doc_id);
-                drop(documents);
-                // Use a separate method that will acquire the lock internally
-                self.save_document_by_id(&doc_id);
+        // Mark newly empty rooms
+        if !newly_empty_rooms.is_empty() {
+            if let Ok(mut documents) = self.documents.lock() {
+                for doc_id in newly_empty_rooms {
+                    if let Some(doc_state) = documents.get_mut(&doc_id) {
+                        println!("Marking room {} as empty due to stale session cleanup", doc_id);
+                        doc_state.mark_room_empty();
+                    }
+                }
             }
         }
     }
@@ -416,7 +502,7 @@ impl YjsAppState {
                         Ok(mut conn) => {
                             let new_content = NewArticleContent {
                                 ticket_id,
-                                content,
+                                content: general_purpose::STANDARD.encode(&content), // Convert binary to base64 string for storage
                             };
                             
                             match repository::update_article_content(&mut conn, ticket_id, new_content) {
@@ -462,13 +548,20 @@ impl YjsWebSocket {
     // Handle heartbeat
     fn hb(&self, ctx: &mut <Self as Actor>::Context) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                println!("WebSocket Client heartbeat failed, disconnecting!");
+            let time_since_last_hb = Instant::now().duration_since(act.hb);
+            
+            if time_since_last_hb > CLIENT_TIMEOUT {
+                println!("WebSocket Client heartbeat failed after {} seconds, disconnecting session {}", 
+                        time_since_last_hb.as_secs(), act.id);
                 act.app_state.remove_session(&act.doc_id, &act.id);
                 ctx.stop();
                 return;
             }
-            ctx.ping(b"");
+            
+            // Only send ping if we haven't heard from client in a while
+            if time_since_last_hb > HEARTBEAT_INTERVAL / 2 {
+                ctx.ping(b"");
+            }
         });
     }
     
@@ -523,11 +616,24 @@ impl Actor for YjsWebSocket {
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         println!("WebSocket connection closed: {} for doc {}", self.id, self.doc_id);
         
-        // Force save the document when any user disconnects to prevent data loss
-        self.app_state.force_save_document(&self.doc_id);
-        
-        // Remove the session
+        // Remove the session first
         self.app_state.remove_session(&self.doc_id, &self.id);
+        
+        // Only force save if this was the last session in the room
+        // The periodic save task will handle regular saves
+        let should_force_save = {
+            let sessions = self.app_state.sessions.lock().unwrap();
+            if let Some(room) = sessions.get(&self.doc_id) {
+                room.is_empty() // Only force save if room is now empty
+            } else {
+                true // Room doesn't exist, so it was the last session
+            }
+        };
+        
+        if should_force_save {
+            println!("Last session for document {}, performing final save", self.doc_id);
+            self.app_state.force_save_document(&self.doc_id);
+        }
         
         Running::Stop
     }
@@ -608,7 +714,12 @@ pub async fn ws_handler(
         };
         
         // Verify user still exists in database
-        match crate::repository::users::get_user_by_uuid(&token_data.claims.sub, &mut conn) {
+        let user_uuid = match crate::utils::parse_uuid(&token_data.claims.sub) {
+            Ok(uuid) => uuid,
+            Err(_) => return Err(actix_web::error::ErrorUnauthorized("Invalid user UUID in token")),
+        };
+
+        match crate::repository::users::get_user_by_uuid(&user_uuid, &mut conn) {
             Ok(_) => (),
             Err(_) => return Err(actix_web::error::ErrorUnauthorized("User not found")),
         }
