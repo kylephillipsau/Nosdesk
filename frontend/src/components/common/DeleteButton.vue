@@ -32,12 +32,8 @@ const confirmDelete = () => {
   emit('delete');
   closeConfirmModal();
   
-  // If no parent component handles the delete event, navigate to fallback route
-  if (props.fallbackRoute) {
-    setTimeout(() => {
-      router.push(props.fallbackRoute);
-    }, 100);
-  }
+  // The parent component should handle navigation after successful deletion
+  // We no longer automatically navigate here to prevent conflicts
 };
 </script>
 

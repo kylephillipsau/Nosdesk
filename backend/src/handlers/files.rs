@@ -1,9 +1,7 @@
-use actix_web::{web, HttpResponse, Error};
-use actix_multipart::{Field, Multipart};
-use futures::StreamExt;
-use futures::TryStreamExt;
+use actix_web::{web, HttpResponse};
+use actix_multipart::Multipart;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
-use std::fs;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -27,7 +25,7 @@ pub async fn upload_files(
     let storage_path = "uploads";
     if !Path::new(storage_path).exists() {
         println!("Creating uploads directory: {}", storage_path);
-        fs::create_dir_all(storage_path).map_err(|e| {
+        std::fs::create_dir_all(storage_path).map_err(|e| {
             eprintln!("Failed to create uploads directory: {:?}", e);
             actix_web::error::ErrorInternalServerError("Failed to create uploads directory")
         })?;
@@ -37,7 +35,7 @@ pub async fn upload_files(
     let temp_path = "uploads/temp";
     if !Path::new(temp_path).exists() {
         println!("Creating temporary uploads directory: {}", temp_path);
-        fs::create_dir_all(temp_path).map_err(|e| {
+        std::fs::create_dir_all(temp_path).map_err(|e| {
             eprintln!("Failed to create temporary uploads directory: {:?}", e);
             actix_web::error::ErrorInternalServerError("Failed to create temporary uploads directory")
         })?;
@@ -92,13 +90,19 @@ pub async fn upload_files(
         
         println!("Read {} bytes of data for file {}", file_data.len(), filename);
         
-        // Write the collected data to the file
-        web::block(move || std::fs::write(filepath, &file_data))
+        // Save to temp directory with error handling
+        let file_write_result = web::block(move || std::fs::write(filepath, &file_data))
             .await
             .map_err(|e| {
                 eprintln!("Error writing to file: {:?}", e);
                 actix_web::error::ErrorInternalServerError("Error writing to file")
             })?;
+
+        // Handle the file write result
+        file_write_result.map_err(|e| {
+            eprintln!("File system error: {:?}", e);
+            actix_web::error::ErrorInternalServerError("Failed to save file")
+        })?;
         
         // Create a new attachment record in the database
         let new_attachment = NewAttachment {
@@ -229,7 +233,12 @@ async fn validate_file_access_token(
     };
     
     // Verify user still exists in database (same as auth handler)
-    match crate::repository::users::get_user_by_uuid(&token_data.claims.sub, conn) {
+    let user_uuid = match crate::utils::parse_uuid(&token_data.claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return Err(actix_web::error::ErrorUnauthorized("Invalid user UUID in token")),
+    };
+
+    match crate::repository::users::get_user_by_uuid(&user_uuid, conn) {
         Ok(_) => Ok(()),
         Err(_) => Err(actix_web::error::ErrorUnauthorized("User not found")),
     }

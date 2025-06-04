@@ -48,7 +48,7 @@ const loadProviders = async () => {
   errorMessage.value = '';
   
   try {
-    const response = await axios.get('/api/auth/providers');
+    const response = await axios.get('/api/admin/auth/providers');
     providers.value = response.data;
   } catch (error: any) {
     console.error('Failed to load auth providers:', error);
@@ -67,7 +67,7 @@ const toggleProvider = async (provider: Provider) => {
   };
   
   try {
-    await axios.put(`/api/auth/providers/${provider.id}`, updatedProvider);
+    await axios.put(`/api/admin/auth/providers/${provider.id}`, updatedProvider);
     
     // Reload providers to get updated data
     await loadProviders();
@@ -94,7 +94,7 @@ const createProvider = async () => {
       is_default: false
     };
     
-    const response = await axios.post('/api/auth/providers', newProvider);
+    const response = await axios.post('/api/admin/auth/providers', newProvider);
     
     // Close the modal and reload providers
     showAddProviderModal.value = false;
@@ -175,7 +175,7 @@ const saveProviderConfig = async () => {
     }
     
     // Send configuration to backend
-    await axios.post('/api/auth/providers/config', configRequest);
+    await axios.post('/api/admin/auth/providers/config', configRequest);
     
     // Close the modal and reload providers
     showConfigModal.value = false;
@@ -194,7 +194,7 @@ const saveProviderConfig = async () => {
 // Set a provider as default
 const setAsDefault = async (provider: Provider) => {
   try {
-    await axios.post('/api/auth/providers/default', { provider_id: provider.id });
+    await axios.post('/api/admin/auth/providers/default', { provider_id: provider.id });
     
     // Update the UI
     await loadProviders();
@@ -281,12 +281,12 @@ onMounted(() => {
 <template>
   <div class="flex-1">
     <!-- Navigation and actions bar -->
-    <div class="pt-6 px-8 flex justify-between items-center">
+    <div class="pt-4 px-6 flex justify-between items-center">
       <BackButton fallbackRoute="/admin/settings" label="Back to Administration" />
     </div>
     
-    <div class="flex flex-col gap-4 px-8 py-6 mx-auto w-full max-w-6xl">
-      <div class="mb-8">
+    <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
+      <div class="mb-6">
         <h1 class="text-2xl font-bold text-white">Authentication Providers</h1>
         <p class="text-slate-400 mt-2">
           Configure and manage login methods for your organization
@@ -346,7 +346,7 @@ onMounted(() => {
       <!-- Provider list -->
       <div v-else class="flex flex-col gap-4">
         <div v-for="provider in providers" :key="provider.id" 
-             class="bg-slate-800 p-6 rounded-lg border border-slate-700 flex flex-col md:flex-row md:items-center md:justify-between gap-4 transition-all hover:bg-slate-800/80">
+             class="bg-slate-800 border border-slate-700 rounded-lg p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 transition-all hover:bg-slate-800/80">
           
           <div class="flex items-start gap-4">
             <!-- Provider icon -->

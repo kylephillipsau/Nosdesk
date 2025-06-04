@@ -4,18 +4,31 @@ mod models;
 mod repository;
 mod schema;
 mod config_utils;
+mod utils;
 
 use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder, dev::ServiceRequest, Error};
 use actix_files::Files;
 use actix_web_httpauth::middleware::HttpAuthentication;
 use actix_web_httpauth::extractors::bearer::BearerAuth;
+use actix_limitation::{Limiter, RateLimiter};
 use dotenv::dotenv;
+use serde_json;
 use std::env;
-use std::sync::Arc;
+use std::time::Duration;
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("Helpdesk API is running!")
+}
+
+// Custom rate limit error handler
+async fn rate_limit_handler() -> impl Responder {
+    HttpResponse::TooManyRequests().json(serde_json::json!({
+        "status": "error",
+        "message": "Rate limit exceeded. Please slow down your requests.",
+        "code": "RATE_LIMIT_EXCEEDED",
+        "retry_after_seconds": 60
+    }))
 }
 
 // JWT Authentication validator for middleware
@@ -23,12 +36,23 @@ async fn validator(req: ServiceRequest, credentials: BearerAuth) -> Result<Servi
     let pool = req.app_data::<web::Data<crate::db::Pool>>().unwrap();
     let mut conn = match pool.get() {
         Ok(conn) => conn,
-        Err(_) => return Err((actix_web::error::ErrorInternalServerError("Database connection failed"), req)),
+        Err(_) => {
+            let error = actix_web::error::ErrorInternalServerError("Database connection failed");
+            return Err((error, req));
+        }
     };
 
     match handlers::auth::validate_token_internal(&credentials, &mut conn).await {
-        Ok(_) => Ok(req),
-        Err(err) => Err((err, req)),
+        Ok(_claims) => {
+            // Token is valid, continue to the protected route
+            Ok(req)
+        },
+        Err(err) => {
+            // Return the specific authentication error (401 for invalid token, etc.)
+            // This ensures proper HTTP status codes instead of 404
+            eprintln!("JWT validation failed: {:?}", err);
+            Err((err, req))
+        }
     }
 }
 
@@ -36,25 +60,177 @@ async fn validator(req: ServiceRequest, credentials: BearerAuth) -> Result<Servi
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     
-    // Validate that JWT_SECRET is set
-    if std::env::var("JWT_SECRET").is_err() {
-        eprintln!("\n========== SECURITY CONFIGURATION ERROR ==========");
-        eprintln!("ERROR: JWT_SECRET environment variable must be set");
-        eprintln!("Generate a secure key with: openssl rand -base64 32");
-        eprintln!("Add it to your .env file or environment variables");
-        eprintln!("================================================\n");
-        std::process::exit(1);
-    } else {
-        // Log that we successfully loaded the JWT_SECRET
-        // Don't log the actual secret!
-        println!("JWT_SECRET environment variable is set and loaded");
+    // === SECURITY STARTUP VALIDATION ===
+    println!("🚀 Starting Nosdesk API Server...");
+    
+    // Validate that JWT_SECRET is set and secure
+    let _jwt_secret = match std::env::var("JWT_SECRET") {
+        Ok(secret) => {
+            if secret.len() < 32 {
+                eprintln!("⚠️  WARNING: JWT_SECRET is less than 32 characters - consider using a longer key for production");
+            }
+            secret
+        },
+        Err(_) => {
+            eprintln!("❌ ERROR: JWT_SECRET environment variable must be set");
+            eprintln!("   Generate a secure key with: openssl rand -base64 32");
+            std::process::exit(1);
+        }
+    };
+    
+    // Security: Validate environment
+    let environment = env::var("ENVIRONMENT").unwrap_or("development".to_string());
+    if environment == "production" {
+        // Check for HTTPS in production URLs
+        if let Ok(frontend_url) = env::var("FRONTEND_URL") {
+            if !frontend_url.starts_with("https://") && !frontend_url.starts_with("http://localhost") {
+                eprintln!("⚠️  WARNING: FRONTEND_URL should use HTTPS in production");
+            }
+        }
+        
+        // Check database SSL in production
+        if let Ok(db_url) = env::var("DATABASE_URL") {
+            if !db_url.contains("sslmode=require") && !db_url.contains("localhost") {
+                eprintln!("⚠️  WARNING: DATABASE_URL should use sslmode=require in production");
+            }
+        }
     }
     
-    let host = "0.0.0.0";
+    // === RATE LIMITING CONFIGURATION ===
+    // Get rate limiting configuration from environment with higher defaults for data-heavy operations
+    let rate_limit_per_minute = env::var("RATE_LIMIT_PER_MINUTE")
+        .unwrap_or("300".to_string()) // Increased from 60 to 300 for better UX
+        .parse::<u64>()
+        .unwrap_or(300)
+        .clamp(60, 2000); // Reasonable limits: 60-2000 requests per minute
+
+    let auth_rate_limit_per_minute = env::var("AUTH_RATE_LIMIT_PER_MINUTE")
+        .unwrap_or("600".to_string()) // Higher limit for authenticated users
+        .parse::<u64>()
+        .unwrap_or(600)
+        .clamp(120, 3000); // Higher limits for authenticated users
+
+    // Create rate limiter with Redis backend (fallback to in-memory for development)
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| {
+        if environment == "production" {
+            eprintln!("⚠️  WARNING: REDIS_URL not configured in production - using in-memory rate limiting");
+        }
+        "memory://".to_string()
+    });
+
+    // Build the public limiter (for unauthenticated requests)
+    let public_limiter = Limiter::builder(&redis_url)
+        .key_by(|req: &actix_web::dev::ServiceRequest| {
+            // Use IP address as the key for rate limiting
+            req.peer_addr()
+                .map(|addr| format!("public:{}", addr.ip()))
+        })
+        .limit(rate_limit_per_minute as usize)
+        .period(Duration::from_secs(60)) // 1 minute window
+        .build();
+
+    // Build the authenticated limiter (for authenticated requests)
+    let auth_limiter = Limiter::builder(&redis_url)
+        .key_by(|req: &actix_web::dev::ServiceRequest| {
+            // Use IP address with auth prefix for higher limits
+            req.peer_addr()
+                .map(|addr| format!("auth:{}", addr.ip()))
+        })
+        .limit(auth_rate_limit_per_minute as usize)
+        .period(Duration::from_secs(60)) // 1 minute window
+        .build();
+
+    let public_limiter = match public_limiter {
+        Ok(limiter) => limiter,
+        Err(e) => {
+            eprintln!("⚠️  Rate limiter fallback: {}", e);
+            
+            // Fallback to memory limiter
+            Limiter::builder("memory://")
+                .key_by(|req: &actix_web::dev::ServiceRequest| {
+                    req.peer_addr()
+                        .map(|addr| format!("public:{}", addr.ip()))
+                })
+                .limit(rate_limit_per_minute as usize)
+                .period(Duration::from_secs(60))
+                .build()
+                .expect("Memory limiter should always work")
+        }
+    };
+
+    let _auth_limiter = match auth_limiter {
+        Ok(limiter) => limiter,
+        Err(e) => {
+            eprintln!("⚠️  Auth rate limiter fallback: {}", e);
+            
+            // Fallback to memory limiter
+            Limiter::builder("memory://")
+                .key_by(|req: &actix_web::dev::ServiceRequest| {
+                    req.peer_addr()
+                        .map(|addr| format!("auth:{}", addr.ip()))
+                })
+                .limit(auth_rate_limit_per_minute as usize)
+                .period(Duration::from_secs(60))
+                .build()
+                .expect("Memory limiter should always work")
+        }
+    };
+
+    // Get host and port from environment variables
+    let host = env::var("HOST").unwrap_or("127.0.0.1".to_string());
     let port = env::var("PORT").unwrap_or("8080".to_string()).parse::<u16>().unwrap();
+
+    // Security: Get file upload limits from environment
+    let max_file_size_mb = env::var("MAX_FILE_SIZE_MB")
+        .unwrap_or("50".to_string())
+        .parse::<usize>()
+        .unwrap_or(50)
+        .clamp(1, 500); // 1MB to 500MB limit
+
+    let max_payload_size = max_file_size_mb * 1024 * 1024; // Convert to bytes
+
+    // Validate CORS configuration
+    let frontend_url = env::var("FRONTEND_URL").unwrap_or_else(|_| {
+        if environment == "production" {
+            eprintln!("⚠️  WARNING: FRONTEND_URL not set in production");
+        }
+        "http://localhost:3000".to_string()
+    });
+
+    // Parse additional CORS origins if provided
+    let additional_origins: Vec<String> = env::var("ADDITIONAL_CORS_ORIGINS")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .collect();
 
     // Set up database connection pool
     let pool = db::establish_connection_pool();
+
+    // === ONBOARDING STATUS CHECK ===
+    {
+        let mut conn = match pool.get() {
+            Ok(conn) => conn,
+            Err(e) => {
+                eprintln!("❌ Database connection failed: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        match repository::count_users(&mut conn) {
+            Ok(user_count) => {
+                if user_count == 0 {
+                    println!("📋 Initial setup required - access the application to create an admin account");
+                } else {
+                    println!("✅ System ready with {} user(s)", user_count);
+                }
+            },
+            Err(e) => {
+                eprintln!("⚠️  Warning: Could not check user count: {}", e);
+            }
+        }
+    }
 
     // Create uploads directory structure if it doesn't exist
     std::fs::create_dir_all("uploads").unwrap_or_else(|e| {
@@ -72,31 +248,50 @@ async fn main() -> std::io::Result<()> {
     // Initialize WebSocket app state for collaborative editing
     let yjs_app_state = web::Data::new(handlers::collaboration::YjsAppState::new(web::Data::new(pool.clone())));
 
-    println!("Starting server at http://{}:{}", host, port);
-    println!("You can access the server at:");
-    println!("  - http://localhost:{}", port);
-    println!("  - http://127.0.0.1:{}", port);
+    // Share the limiter across all app instances
+    let limiter_data = web::Data::new(public_limiter);
+
+    println!("🌐 Server running at http://{}:{}", host, port);
+    if environment == "production" {
+        println!("🔒 Production mode active");
+    }
+    if host == "0.0.0.0" {
+        eprintln!("⚠️  WARNING: Server bound to all interfaces (0.0.0.0)");
+    }
     
     HttpServer::new(move || {
-        // Configure CORS
-        let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
+        // Configure CORS with specific allowed origins
+        let mut cors = Cors::default()
+            .allowed_origin(&frontend_url)
+            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+            .allowed_headers(vec![
+                "Authorization", 
+                "Content-Type", 
+                "Accept",
+                "Origin",
+                "X-Requested-With"
+            ])
             .expose_headers(vec!["content-disposition"])
             .supports_credentials()
             .max_age(3600);
 
+        // Add additional allowed origins if specified
+        for origin in &additional_origins {
+            cors = cors.allowed_origin(origin);
+        }
+
         // Configure JSON payload limits for file uploads
         let json_config = web::JsonConfig::default()
-            .limit(50 * 1024 * 1024); // 50MB
+            .limit(max_payload_size);
 
         // Configure multipart form limits for file uploads
         let multipart_config = web::FormConfig::default()
-            .limit(50 * 1024 * 1024); // 50MB
+            .limit(max_payload_size);
 
         App::new()
             .wrap(cors)
+            .wrap(RateLimiter::default())
+            .app_data(limiter_data.clone())
             .app_data(web::Data::new(pool.clone()))
             .app_data(yjs_app_state.clone())
             .app_data(json_config)
@@ -124,15 +319,22 @@ async fn main() -> std::io::Result<()> {
             // Authentication routes (public by design)
             .service(
                 web::scope("/api/auth")
+                    .wrap(RateLimiter::default())
+                    .service(
+                        web::scope("/setup")
+                            .route("/status", web::get().to(handlers::check_setup_status))
+                            .route("/admin", web::post().to(handlers::setup_initial_admin))
+                    )
                     .route("/login", web::post().to(handlers::login))
                     .route("/register", web::post().to(handlers::register))
-                    .route("/providers/enabled", web::get().to(handlers::get_enabled_auth_providers))
+                    .route("/providers", web::get().to(handlers::get_auth_providers))
                     .route("/oauth/authorize", web::post().to(handlers::oauth_authorize))
+                    .route("/oauth/callback", web::get().to(handlers::oauth_callback))
                     .route("/oauth/logout", web::post().to(handlers::oauth_logout))
-                    .route("/microsoft/callback", web::get().to(handlers::oauth_callback))
-                    // Protected auth routes (require authentication)
+                    // Protected auth routes
                     .route("/me", web::get().to(handlers::get_current_user).wrap(HttpAuthentication::bearer(validator)))
                     .route("/change-password", web::post().to(handlers::change_password).wrap(HttpAuthentication::bearer(validator)))
+                    .route("/oauth/connect", web::post().to(handlers::oauth_connect).wrap(HttpAuthentication::bearer(validator)))
             )
             
             // === PROTECTED ROUTES (AUTHENTICATION REQUIRED) ===
@@ -140,15 +342,15 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .wrap(HttpAuthentication::bearer(validator))
                     
-                    // Authentication Provider management (admin only)
-                    .route("/auth/providers", web::get().to(handlers::get_auth_providers))
-                    .route("/auth/providers", web::post().to(handlers::create_auth_provider))
-                    .route("/auth/providers/{id}", web::get().to(handlers::get_auth_provider))
-                    .route("/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
-                    .route("/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
-                    .route("/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
-                    .route("/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
-                    .route("/auth/oauth/connect", web::post().to(handlers::oauth_connect))
+                    // Authentication Provider management (admin only) - moved to /admin to avoid conflicts
+                    .route("/admin/auth/providers", web::get().to(handlers::get_auth_providers))
+                    .route("/admin/auth/providers", web::post().to(handlers::create_auth_provider))
+                    .route("/admin/auth/providers/{id}", web::get().to(handlers::get_auth_provider))
+                    .route("/admin/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
+                    .route("/admin/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
+                    .route("/admin/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
+                    .route("/admin/auth/providers/default", web::post().to(handlers::set_default_auth_provider))
+                    .route("/admin/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
                     
                     // Microsoft Graph API endpoints
                     .route("/auth/microsoft/graph", web::post().to(handlers::process_graph_request))
@@ -264,6 +466,10 @@ async fn main() -> std::io::Result<()> {
                     .service(Files::new("/tickets", "./uploads/tickets").show_files_listing())
                     .service(Files::new("/temp", "./uploads/temp").show_files_listing())
             )
+            
+            // === FRONTEND STATIC FILES (CATCH-ALL) ===
+            // Serve static frontend files - this must be LAST to not interfere with API routes
+            .service(Files::new("/", "./public").index_file("index.html"))
     })
     .bind((host, port))?
     .run()

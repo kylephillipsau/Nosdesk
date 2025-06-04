@@ -2,6 +2,7 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::result::Error;
 use diesel::QueryResult;
+use uuid::Uuid;
 
 use crate::db::DbConnection;
 use crate::models::*;
@@ -32,11 +33,10 @@ pub fn get_paginated_tickets(
             let search_pattern = format!("%{}%", search_term.to_lowercase());
             query = query.filter(
                 tickets::title.ilike(search_pattern.clone())
+                    .or(tickets::description.ilike(search_pattern.clone()))
                     .or(tickets::id.eq_any(
                         search_term.parse::<i32>().ok().map(|id| vec![id]).unwrap_or_default()
                     ))
-                    .or(tickets::requester.ilike(search_pattern.clone()))
-                    .or(tickets::assignee.ilike(search_pattern.clone()))
             );
         }
     }
@@ -76,11 +76,10 @@ pub fn get_paginated_tickets(
             let search_pattern = format!("%{}%", search_term.to_lowercase());
             count_query = count_query.filter(
                 tickets::title.ilike(search_pattern.clone())
+                    .or(tickets::description.ilike(search_pattern.clone()))
                     .or(tickets::id.eq_any(
                         search_term.parse::<i32>().ok().map(|id| vec![id]).unwrap_or_default()
                     ))
-                    .or(tickets::requester.ilike(search_pattern.clone()))
-                    .or(tickets::assignee.ilike(search_pattern))
             );
         }
     }
@@ -124,12 +123,12 @@ pub fn get_paginated_tickets(
         (Some("status"), _) => query = query.order(tickets::status.desc()),
         (Some("priority"), Some("asc")) => query = query.order(tickets::priority.asc()),
         (Some("priority"), _) => query = query.order(tickets::priority.desc()),
-        (Some("created"), Some("asc")) => query = query.order(tickets::created.asc()),
-        (Some("created"), _) => query = query.order(tickets::created.desc()),
-        (Some("requester"), Some("asc")) => query = query.order(tickets::requester.asc()),
-        (Some("requester"), _) => query = query.order(tickets::requester.desc()),
-        (Some("assignee"), Some("asc")) => query = query.order(tickets::assignee.asc()),
-        (Some("assignee"), _) => query = query.order(tickets::assignee.desc()),
+        (Some("created_at"), Some("asc")) => query = query.order(tickets::created_at.asc()),
+        (Some("created_at"), _) => query = query.order(tickets::created_at.desc()),
+        (Some("requester_uuid"), Some("asc")) => query = query.order(tickets::requester_uuid.asc()),
+        (Some("requester_uuid"), _) => query = query.order(tickets::requester_uuid.desc()),
+        (Some("assignee_uuid"), Some("asc")) => query = query.order(tickets::assignee_uuid.asc()),
+        (Some("assignee_uuid"), _) => query = query.order(tickets::assignee_uuid.desc()),
         _ => query = query.order(tickets::id.desc()), // Default sort
     }
     
@@ -176,16 +175,12 @@ pub fn delete_ticket(conn: &mut DbConnection, ticket_id: i32) -> QueryResult<usi
 
 // Composite operations for tickets
 pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<CompleteTicket, Error> {
-    println!("Getting complete ticket data for ticket ID: {}", ticket_id);
-    
+    // Get the main ticket first
     let ticket = get_ticket_by_id(conn, ticket_id)?;
     println!("Found ticket: {} - {}", ticket.id, ticket.title);
     
     // Get devices associated with this ticket through the junction table
     let devices = get_devices_for_ticket(conn, ticket_id).unwrap_or_default();
-    
-    // Get assignees for this ticket through the junction table
-    let assignees = get_assignees_for_ticket(conn, ticket_id).unwrap_or_default();
     
     // Get comments for this ticket
     let comments = crate::repository::comments::get_comments_by_ticket_id(conn, ticket_id)?;
@@ -195,7 +190,7 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
         let attachments = crate::repository::comments::get_attachments_by_comment_id(conn, comment.id)?;
         
         // Get user information for this comment
-        let user = match crate::repository::users::get_user_by_uuid(&comment.user_uuid, conn) {
+        let user = match crate::repository::users::get_user_by_id(comment.user_id, conn) {
             Ok(user) => Some(UserInfo::from(user)),
             Err(_) => None,
         };
@@ -209,11 +204,7 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     
     // Get article content
     let article_content = crate::repository::article_content::get_article_content_by_ticket_id(conn, ticket_id)
-        .map(|content| {
-            // Try to convert binary content to string
-            String::from_utf8(content.content)
-                .unwrap_or_else(|_| String::new())
-        })
+        .map(|content| content.content)
         .ok();
     
     // Get linked tickets
@@ -231,7 +222,6 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
         article_content,
         linked_tickets,
         projects,
-        assignees,
     })
 }
 
@@ -265,13 +255,16 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
     // Create the ticket
     let new_ticket = NewTicket {
         title: ticket_json.title.clone(),
+        description: None, // No description field in TicketJson
         status,
         priority,
-        created,
-        modified,
-        assignee: if ticket_json.assignee.is_empty() { None } else { Some(ticket_json.assignee.clone()) },
-        requester: ticket_json.requester.clone(),
-        closed_at: None,
+        requester_uuid: Uuid::parse_str(&ticket_json.requester).unwrap_or_else(|_| Uuid::new_v4()),
+        assignee_uuid: if ticket_json.assignee.is_empty() { 
+            None 
+        } else { 
+            Uuid::parse_str(&ticket_json.assignee).ok()
+        },
+        device_id: None, // Will be set separately if device exists
     };
     
     let ticket = create_ticket(conn, new_ticket)?;
@@ -280,14 +273,25 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
     if let Some(device_json) = &ticket_json.device {
         let new_device = NewDevice {
             name: device_json.name.clone(),
-            hostname: device_json.hostname.clone(),
-            serial_number: device_json.serial_number.clone(),
-            model: device_json.model.clone(),
-            warranty_status: device_json.warranty_status.clone(),
+            hostname: Some(device_json.hostname.clone()),
+            device_type: None,
+            serial_number: Some(device_json.serial_number.clone()),
             manufacturer: None, // Will be populated during Microsoft Entra sync
+            model: Some(device_json.model.clone()),
+            warranty_status: Some(device_json.warranty_status.clone()),
+            location: None,
+            notes: None,
+            user_id: None,
             primary_user_uuid: None, // Will be populated during Microsoft Entra sync
+            azure_device_id: None,
             intune_device_id: None,
             entra_device_id: None,
+            compliance_state: None,
+            last_sync_time: None,
+            operating_system: None,
+            os_version: None,
+            is_managed: None,
+            enrollment_date: None,
         };
         
         crate::repository::devices::create_device(conn, new_device)?;
@@ -301,9 +305,8 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
             
             let new_comment = NewComment {
                 content: comment_json.content.clone(),
-                user_uuid: comment_json.user_uuid.clone(),
-                created_at: Some(created_at),
                 ticket_id: ticket.id,
+                user_id: 1, // Default user ID since we don't have user mapping from UUID
             };
             
             let comment = crate::repository::comments::create_comment(conn, new_comment)?;
@@ -324,7 +327,7 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
     // Create article content if present
     if let Some(content) = &ticket_json.article_content {
         let new_article_content = NewArticleContent {
-            content: content.as_bytes().to_vec(),
+            content: content.clone(),
             ticket_id: ticket.id,
         };
         
@@ -363,13 +366,16 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     // Create the ticket
     let new_ticket = NewTicket {
         title: ticket_json.title.clone(),
+        description: None, // No description field in TicketJson
         status,
         priority,
-        created,
-        modified,
-        assignee: if ticket_json.assignee.is_empty() { None } else { Some(ticket_json.assignee.clone()) },
-        requester: ticket_json.requester.clone(),
-        closed_at: None,
+        requester_uuid: Uuid::parse_str(&ticket_json.requester).unwrap_or_else(|_| Uuid::new_v4()),
+        assignee_uuid: if ticket_json.assignee.is_empty() { 
+            None 
+        } else { 
+            Uuid::parse_str(&ticket_json.assignee).ok()
+        },
+        device_id: None, // Will be set separately if device exists
     };
     
     let ticket = create_ticket(conn, new_ticket)?;
@@ -378,14 +384,25 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     if let Some(device_json) = &ticket_json.device {
         let new_device = NewDevice {
             name: device_json.name.clone(),
-            hostname: device_json.hostname.clone(),
-            serial_number: device_json.serial_number.clone(),
-            model: device_json.model.clone(),
-            warranty_status: device_json.warranty_status.clone(),
+            hostname: Some(device_json.hostname.clone()),
+            device_type: None,
+            serial_number: Some(device_json.serial_number.clone()),
             manufacturer: None, // Will be populated during Microsoft Entra sync
+            model: Some(device_json.model.clone()),
+            warranty_status: Some(device_json.warranty_status.clone()),
+            location: None,
+            notes: None,
+            user_id: None,
             primary_user_uuid: None, // Will be populated during Microsoft Entra sync
+            azure_device_id: None,
             intune_device_id: None,
             entra_device_id: None,
+            compliance_state: None,
+            last_sync_time: None,
+            operating_system: None,
+            os_version: None,
+            is_managed: None,
+            enrollment_date: None,
         };
         
         crate::repository::devices::create_device(conn, new_device)?;
@@ -399,9 +416,8 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
             
             let new_comment = NewComment {
                 content: comment_json.content.clone(),
-                user_uuid: comment_json.user_uuid.clone(),
-                created_at: Some(created_at),
                 ticket_id: ticket.id,
+                user_id: 1, // Default user ID since we don't have user mapping from UUID
             };
             
             let comment = crate::repository::comments::create_comment(conn, new_comment)?;
@@ -422,7 +438,7 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
     // Create article content if present
     if let Some(content) = &ticket_json.article_content {
         let new_article_content = NewArticleContent {
-            content: content.as_bytes().to_vec(),
+            content: content.clone(),
             ticket_id: ticket.id,
         };
         
@@ -466,70 +482,4 @@ pub fn get_tickets_for_device(conn: &mut DbConnection, device_id: i32) -> QueryR
         .filter(ticket_devices::device_id.eq(device_id))
         .select(tickets::all_columns)
         .load(conn)
-}
-
-// Ticket-Assignee relationship functions
-pub fn add_assignee_to_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuid: String) -> QueryResult<TicketAssignee> {
-    let new_ticket_assignee = NewTicketAssignee {
-        ticket_id,
-        user_uuid,
-    };
-    
-    diesel::insert_into(ticket_assignees::table)
-        .values(&new_ticket_assignee)
-        .on_conflict((ticket_assignees::ticket_id, ticket_assignees::user_uuid))
-        .do_nothing()
-        .get_result(conn)
-}
-
-pub fn remove_assignee_from_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuid: String) -> QueryResult<usize> {
-    diesel::delete(
-        ticket_assignees::table
-            .filter(ticket_assignees::ticket_id.eq(ticket_id))
-            .filter(ticket_assignees::user_uuid.eq(user_uuid))
-    ).execute(conn)
-}
-
-pub fn get_assignees_for_ticket(conn: &mut DbConnection, ticket_id: i32) -> QueryResult<Vec<UserInfo>> {
-    ticket_assignees::table
-        .inner_join(users::table.on(ticket_assignees::user_uuid.eq(users::uuid)))
-        .filter(ticket_assignees::ticket_id.eq(ticket_id))
-        .select((users::uuid, users::name))
-        .load::<(String, String)>(conn)
-        .map(|results| {
-            results.into_iter().map(|(uuid, name)| UserInfo { uuid, name }).collect()
-        })
-}
-
-pub fn get_tickets_for_assignee(conn: &mut DbConnection, user_uuid: String) -> QueryResult<Vec<Ticket>> {
-    ticket_assignees::table
-        .inner_join(tickets::table)
-        .filter(ticket_assignees::user_uuid.eq(user_uuid))
-        .select(tickets::all_columns)
-        .load(conn)
-}
-
-pub fn set_assignees_for_ticket(conn: &mut DbConnection, ticket_id: i32, user_uuids: Vec<String>) -> QueryResult<Vec<TicketAssignee>> {
-    // First remove all existing assignees
-    diesel::delete(
-        ticket_assignees::table
-            .filter(ticket_assignees::ticket_id.eq(ticket_id))
-    ).execute(conn)?;
-    
-    // Then add all new assignees
-    let new_assignees: Vec<NewTicketAssignee> = user_uuids
-        .into_iter()
-        .map(|user_uuid| NewTicketAssignee {
-            ticket_id,
-            user_uuid,
-        })
-        .collect();
-    
-    if new_assignees.is_empty() {
-        return Ok(vec![]);
-    }
-    
-    diesel::insert_into(ticket_assignees::table)
-        .values(&new_assignees)
-        .get_results(conn)
 } 

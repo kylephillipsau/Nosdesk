@@ -1,6 +1,7 @@
 pub mod db;
-pub mod handlers;
+pub mod schema;
 pub mod models;
 pub mod repository;
-pub mod schema;
+pub mod handlers;
+pub mod utils;
 pub mod config_utils;

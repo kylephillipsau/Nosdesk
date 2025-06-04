@@ -21,6 +21,19 @@ const today = new Date()
 const startDate = ref(new Date(today.getFullYear(), today.getMonth(), 1)) // First day of current month
 const endDate = ref(new Date(today.getFullYear(), today.getMonth() + 3, 0)) // Last day of +3 months
 
+// Drag state
+const isDragging = ref(false)
+const draggedTask = ref<any>(null)
+const dragStartX = ref(0)
+const dragStartLeft = ref(0)
+const dragStartWidth = ref(0)
+const dragMode = ref<'move' | 'resize-start' | 'resize-end'>('move')
+const wasDragging = ref(false)
+
+// Tooltip state
+const hoveredTask = ref<any>(null)
+const tooltipPosition = ref({ x: 0, y: 0 })
+
 // Convert tickets to Gantt format
 const processTickets = () => {
   if (!props.tickets || props.tickets.length === 0) {
@@ -29,16 +42,49 @@ const processTickets = () => {
   }
 
   ganttTickets.value = props.tickets.map(ticket => {
-    // Default start date (today if none available)
-    let start = ticket.createdAt ? new Date(ticket.createdAt) : new Date()
+    // Helper to parse date from various field names
+    const getDate = (fieldNames: string[], defaultDate: Date | null): Date | null => {
+      for (const field of fieldNames) {
+        if (ticket[field]) {
+          const date = new Date(ticket[field])
+          if (!isNaN(date.getTime())) {
+            return date
+          }
+        }
+      }
+      return defaultDate
+    }
     
-    // Default end date (7 days from start if none available)
-    let end
-    if (ticket.dueDate) {
-      end = new Date(ticket.dueDate)
-    } else {
+    // Get created date from various possible fields
+    const createdFields = ['created_at', 'createdAt', 'created', 'dateCreated', 'createDate']
+    const start = getDate(createdFields, new Date()) || new Date()
+    
+    // Get due date from various possible fields
+    const dueFields = ['due_date', 'dueDate', 'due', 'deadline', 'target_date', 'targetDate', 'end_date', 'endDate']
+    let end = getDate(dueFields, null)
+    
+    // If no due date, calculate based on priority
+    if (!end) {
       end = new Date(start)
-      end.setDate(end.getDate() + 7) // Default 7 day span
+      switch (ticket.priority) {
+        case 'high':
+          end.setDate(end.getDate() + 3) // 3 days for high priority
+          break
+        case 'medium':
+          end.setDate(end.getDate() + 7) // 7 days for medium priority
+          break
+        case 'low':
+          end.setDate(end.getDate() + 14) // 14 days for low priority
+          break
+        default:
+          end.setDate(end.getDate() + 7) // Default 7 days
+      }
+    }
+    
+    // Ensure end is after start
+    if (!end || end <= start) {
+      end = new Date(start)
+      end.setDate(end.getDate() + 1)
     }
 
     // Define color based on priority
@@ -57,19 +103,59 @@ const processTickets = () => {
         color = '#6b7280' // Gray
     }
 
+    // Calculate progress based on status
+    let progress = 0
+    switch (ticket.status) {
+      case 'closed':
+      case 'completed':
+      case 'done':
+        progress = 100
+        break
+      case 'in-progress':
+      case 'in_progress':
+      case 'active':
+      case 'working':
+        progress = 50
+        break
+      case 'open':
+      case 'new':
+      case 'todo':
+      case 'pending':
+        progress = 0
+        break
+      default:
+        progress = 0
+    }
+
     return {
       id: ticket.id,
-      title: ticket.title,
+      title: ticket.title || `Ticket #${ticket.id}`,
       start,
       end,
       color,
-      progress: ticket.status === 'closed' ? 100 : 
-                ticket.status === 'in-progress' ? 50 : 0,
+      progress,
       status: ticket.status,
-      assignee: ticket.assignee,
-      priority: ticket.priority
+      assignee: ticket.assignee_name || ticket.assignee || ticket.assigned_to || ticket.assignedTo,
+      priority: ticket.priority,
+      description: ticket.description
     }
   })
+  
+  // Sort tickets by start date
+  ganttTickets.value.sort((a, b) => a.start.getTime() - b.start.getTime())
+  
+  // Adjust date range to fit all tickets
+  if (ganttTickets.value.length > 0) {
+    const minDate = new Date(Math.min(...ganttTickets.value.map(t => t.start.getTime())))
+    const maxDate = new Date(Math.max(...ganttTickets.value.map(t => t.end.getTime())))
+    
+    // Add some padding
+    minDate.setDate(minDate.getDate() - 7)
+    maxDate.setDate(maxDate.getDate() + 7)
+    
+    startDate.value = minDate
+    endDate.value = maxDate
+  }
 }
 
 // Initialize data when tickets prop changes
@@ -114,20 +200,64 @@ const timeUnits = computed(() => {
 
 // Helper to calculate position and width of a task bar
 const getTaskBarStyle = (task: any) => {
-  // Calculate total days in the chart
-  const totalDays = Math.ceil((endDate.value.getTime() - startDate.value.getTime()) / (1000 * 60 * 60 * 24))
+  // Calculate which time unit the task starts in and how many units it spans
+  const millisecondsPerUnit = timeScale.value === 'day' ? 
+    (24 * 60 * 60 * 1000) : 
+    timeScale.value === 'week' ? 
+    (7 * 24 * 60 * 60 * 1000) : 
+    (30 * 24 * 60 * 60 * 1000) // approximate month
   
-  // Calculate task start position
-  const taskStartDays = Math.max(0, Math.ceil((task.start.getTime() - startDate.value.getTime()) / (1000 * 60 * 60 * 24)))
-  const startPercent = (taskStartDays / totalDays) * 100
+  // Find which grid unit the task starts in
+  let startUnitIndex = 0
+  for (let i = 0; i < timeUnits.value.length; i++) {
+    const unitStart = timeUnits.value[i]
+    const unitEnd = new Date(unitStart.getTime() + millisecondsPerUnit)
+    
+    if (task.start >= unitStart && task.start < unitEnd) {
+      startUnitIndex = i
+      break
+    } else if (task.start < unitStart) {
+      startUnitIndex = Math.max(0, i - 1)
+      break
+    }
+  }
   
-  // Calculate task duration
-  const taskDurationDays = Math.ceil((task.end.getTime() - task.start.getTime()) / (1000 * 60 * 60 * 24))
-  const widthPercent = (taskDurationDays / totalDays) * 100
+  // Find which grid unit the task ends in
+  let endUnitIndex = timeUnits.value.length - 1
+  for (let i = 0; i < timeUnits.value.length; i++) {
+    const unitStart = timeUnits.value[i]
+    const unitEnd = new Date(unitStart.getTime() + millisecondsPerUnit)
+    
+    if (task.end > unitStart && task.end <= unitEnd) {
+      endUnitIndex = i
+      break
+    } else if (task.end <= unitStart) {
+      endUnitIndex = Math.max(0, i - 1)
+      break
+    }
+  }
+  
+  // Calculate position and width based on grid units
+  const totalUnits = timeUnits.value.length
+  const startPercent = (startUnitIndex / totalUnits) * 100
+  const spanUnits = Math.max(1, endUnitIndex - startUnitIndex + 1)
+  const widthPercent = (spanUnits / totalUnits) * 100
+  
+  // Fine-tune position within the start unit
+  const startUnit = timeUnits.value[startUnitIndex]
+  const startUnitEnd = new Date(startUnit.getTime() + millisecondsPerUnit)
+  const offsetWithinUnit = Math.max(0, (task.start.getTime() - startUnit.getTime()) / millisecondsPerUnit)
+  const adjustedStartPercent = startPercent + (offsetWithinUnit * (100 / totalUnits))
+  
+  // Fine-tune width based on actual task duration within units
+  const endUnit = timeUnits.value[endUnitIndex]
+  const endUnitEnd = new Date(endUnit.getTime() + millisecondsPerUnit)
+  const endOffsetWithinUnit = Math.min(1, (task.end.getTime() - endUnit.getTime()) / millisecondsPerUnit)
+  const adjustedWidthPercent = widthPercent + (endOffsetWithinUnit * (100 / totalUnits)) - (offsetWithinUnit * (100 / totalUnits))
   
   return {
-    left: `${startPercent}%`,
-    width: `${widthPercent}%`,
+    left: `${adjustedStartPercent}%`,
+    width: `${Math.max(1, adjustedWidthPercent)}%`,
     backgroundColor: task.color,
     opacity: task.status === 'closed' ? 0.7 : 1
   }
@@ -135,6 +265,11 @@ const getTaskBarStyle = (task: any) => {
 
 // Navigate to ticket detail
 const openTicket = (ticketId: number) => {
+  // Don't navigate if we just finished dragging
+  if (wasDragging.value) {
+    wasDragging.value = false // Reset the flag
+    return
+  }
   router.push(`/tickets/${ticketId}`)
 }
 
@@ -187,6 +322,138 @@ const resetView = () => {
 // Helper function to check if a date is the same day as today
 const isSameDay = (date: Date, today: Date) => {
   return date.toDateString() === today.toDateString()
+}
+
+// Drag and drop handlers
+const startDrag = (event: MouseEvent, task: any, mode: 'move' | 'resize-start' | 'resize-end' = 'move') => {
+  isDragging.value = true
+  draggedTask.value = task
+  dragMode.value = mode
+  dragStartX.value = event.clientX
+  wasDragging.value = false // Reset at start of drag
+  
+  const taskElement = event.currentTarget as HTMLElement
+  const rect = taskElement.getBoundingClientRect()
+  dragStartLeft.value = rect.left
+  dragStartWidth.value = rect.width
+  
+  // Add event listeners for drag
+  document.addEventListener('mousemove', handleDrag)
+  document.addEventListener('mouseup', endDrag)
+  
+  // Prevent text selection during drag
+  event.preventDefault()
+}
+
+const handleDrag = (event: MouseEvent) => {
+  if (!isDragging.value || !draggedTask.value) return
+  
+  const deltaX = event.clientX - dragStartX.value
+  
+  // If moved more than 3 pixels, consider it a drag operation
+  if (Math.abs(deltaX) > 3) {
+    wasDragging.value = true
+  }
+  
+  const chartTimeline = document.querySelector('.gantt-row-timeline')
+  if (!chartTimeline) return
+  
+  const chartWidth = chartTimeline.clientWidth
+  const totalUnits = timeUnits.value.length
+  const pixelsPerUnit = chartWidth / totalUnits
+  const unitsDelta = Math.round(deltaX / pixelsPerUnit)
+  
+  // Calculate milliseconds per unit based on time scale
+  const millisecondsPerUnit = timeScale.value === 'day' ? 
+    (24 * 60 * 60 * 1000) : 
+    timeScale.value === 'week' ? 
+    (7 * 24 * 60 * 60 * 1000) : 
+    (30 * 24 * 60 * 60 * 1000) // approximate month
+  
+  const timeDelta = unitsDelta * millisecondsPerUnit
+  
+  if (dragMode.value === 'move') {
+    // Update both start and end dates
+    const newStart = new Date(draggedTask.value.start.getTime() + timeDelta)
+    const newEnd = new Date(draggedTask.value.end.getTime() + timeDelta)
+    
+    // Update the task in the array (this will trigger reactivity)
+    const taskIndex = ganttTickets.value.findIndex(t => t.id === draggedTask.value.id)
+    if (taskIndex !== -1) {
+      ganttTickets.value[taskIndex] = {
+        ...ganttTickets.value[taskIndex],
+        start: newStart,
+        end: newEnd
+      }
+    }
+  } else if (dragMode.value === 'resize-start') {
+    // Update start date only
+    const newStart = new Date(draggedTask.value.start.getTime() + timeDelta)
+    
+    // Don't let start go past end
+    if (newStart < draggedTask.value.end) {
+      const taskIndex = ganttTickets.value.findIndex(t => t.id === draggedTask.value.id)
+      if (taskIndex !== -1) {
+        ganttTickets.value[taskIndex] = {
+          ...ganttTickets.value[taskIndex],
+          start: newStart
+        }
+      }
+    }
+  } else if (dragMode.value === 'resize-end') {
+    // Update end date only
+    const newEnd = new Date(draggedTask.value.end.getTime() + timeDelta)
+    
+    // Don't let end go before start
+    if (newEnd > draggedTask.value.start) {
+      const taskIndex = ganttTickets.value.findIndex(t => t.id === draggedTask.value.id)
+      if (taskIndex !== -1) {
+        ganttTickets.value[taskIndex] = {
+          ...ganttTickets.value[taskIndex],
+          end: newEnd
+        }
+      }
+    }
+  }
+}
+
+const endDrag = async () => {
+  if (!isDragging.value || !draggedTask.value) return
+  
+  // Get the updated task
+  const updatedTask = ganttTickets.value.find(t => t.id === draggedTask.value.id)
+  if (updatedTask) {
+    // Update the ticket in the backend
+    try {
+      await ticketService.updateTicket(updatedTask.id, {
+        due_date: updatedTask.end.toISOString().split('T')[0], // Format as YYYY-MM-DD
+        // You might also want to update a start_date field if your backend supports it
+      } as any)
+    } catch (error) {
+      console.error('Failed to update ticket dates:', error)
+      // Revert the change
+      processTickets()
+    }
+  }
+  
+  // Clean up
+  isDragging.value = false
+  draggedTask.value = null
+  document.removeEventListener('mousemove', handleDrag)
+  document.removeEventListener('mouseup', endDrag)
+}
+
+// Tooltip handlers
+const showTooltip = (event: MouseEvent, task: any) => {
+  hoveredTask.value = task
+  tooltipPosition.value = {
+    x: event.clientX,
+    y: event.clientY
+  }
+}
+
+const hideTooltip = () => {
+  hoveredTask.value = null
 }
 </script>
 
@@ -287,7 +554,7 @@ const isSameDay = (date: Date, today: Date) => {
           <div class="text-slate-400">No tickets available for Gantt view</div>
         </div>
         
-        <div v-else class="gantt-chart">
+        <div v-else class="gantt-chart" :class="{ dragging: isDragging }" :style="{ '--timeline-units': timeUnits.length }">
           <!-- Header with timeline -->
           <div class="gantt-header">
             <!-- Left side header (ticket info) -->
@@ -301,7 +568,19 @@ const isSameDay = (date: Date, today: Date) => {
             </div>
             
             <!-- Right side header (timeline) -->
-            <div class="gantt-header-timeline">
+            <div class="gantt-header-timeline relative">
+              <!-- Today line positioned within timeline area -->
+              <div 
+                v-if="today >= startDate && today <= endDate"
+                class="gantt-today-line-header"
+                :style="{
+                  left: `${((today.getTime() - startDate.getTime()) / 
+                         (endDate.getTime() - startDate.getTime())) * 100}%`
+                }"
+              >
+                <div class="today-label">Today</div>
+              </div>
+              
               <div 
                 v-for="(unit, index) in timeUnits" 
                 :key="index" 
@@ -318,7 +597,7 @@ const isSameDay = (date: Date, today: Date) => {
           </div>
           
           <!-- Gantt Body -->
-          <div class="gantt-body">
+          <div class="gantt-body relative">
             <div 
               v-for="ticket in ganttTickets" 
               :key="ticket.id" 
@@ -362,23 +641,65 @@ const isSameDay = (date: Date, today: Date) => {
                   <!-- Assignee avatar -->
                   <div class="ml-auto" @click.stop>
                     <UserAvatar 
-                      v-if="ticket.assignee" 
+                      v-if="ticket.assignee && ticket.assignee !== 'Unassigned'" 
                       :name="ticket.assignee" 
                       size="xs" 
-                      :showName="false"
-                      :clickable="true"
+                      :show-name="false"
+                      :clickable="false"
                     />
+                    <div v-else class="w-5 h-5 rounded-full bg-slate-600 flex items-center justify-center">
+                      <svg class="w-3 h-3 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
               </div>
               
               <!-- Timeline with task bar -->
               <div class="gantt-row-timeline">
+                <!-- Grid units that match header structure -->
+                <div 
+                  v-for="(unit, index) in timeUnits"
+                  :key="`grid-${index}`"
+                  class="gantt-row-unit"
+                ></div>
+                
+                <!-- Today line for this row (aligned with header) -->
+                <div 
+                  v-if="today >= startDate && today <= endDate"
+                  class="gantt-today-line-row"
+                  :style="{
+                    left: `${((today.getTime() - startDate.getTime()) / 
+                           (endDate.getTime() - startDate.getTime())) * 100}%`
+                  }"
+                ></div>
+                
                 <!-- Task bar -->
                 <div 
-                  class="gantt-task-bar relative" 
+                  class="gantt-task-bar relative group" 
                   :style="getTaskBarStyle(ticket)"
+                  @mousedown="startDrag($event, ticket, 'move')"
+                  @mouseenter="showTooltip($event, ticket)"
+                  @mouseleave="hideTooltip"
+                  :class="{ 
+                    'cursor-move': !isDragging, 
+                    'cursor-grabbing': isDragging && draggedTask?.id === ticket.id,
+                    'pointer-events-none': isDragging && draggedTask?.id !== ticket.id
+                  }"
                 >
+                  <!-- Resize handle - left -->
+                  <div 
+                    class="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100 hover:bg-white/20"
+                    @mousedown.stop="startDrag($event, ticket, 'resize-start')"
+                  ></div>
+                  
+                  <!-- Resize handle - right -->
+                  <div 
+                    class="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover:opacity-100 hover:bg-white/20"
+                    @mousedown.stop="startDrag($event, ticket, 'resize-end')"
+                  ></div>
+                  
                   <!-- Progress bar -->
                   <div 
                     class="gantt-task-progress" 
@@ -386,24 +707,12 @@ const isSameDay = (date: Date, today: Date) => {
                   ></div>
                   
                   <!-- Task label (shown on wider bars) -->
-                  <div class="absolute inset-0 flex items-center px-2 overflow-hidden" 
+                  <div class="absolute inset-0 flex items-center px-2 overflow-hidden pointer-events-none" 
                        v-if="parseFloat(getTaskBarStyle(ticket).width.replace('%', '')) > 8">
                     <span class="text-xs text-white truncate drop-shadow-sm">
                       {{ ticket.title }}
                     </span>
                   </div>
-                </div>
-                
-                <!-- Today marker (vertical line) -->
-                <div 
-                  v-if="today >= startDate && today <= endDate"
-                  class="gantt-today-marker"
-                  :style="{
-                    left: `${((today.getTime() - startDate.getTime()) / 
-                           (endDate.getTime() - startDate.getTime())) * 100}%`
-                  }"
-                >
-                  <div class="today-marker-label">Today</div>
                 </div>
               </div>
             </div>
@@ -411,6 +720,30 @@ const isSameDay = (date: Date, today: Date) => {
         </div>
       </div>
     </div>
+    
+    <!-- Tooltip -->
+    <Teleport to="body">
+      <div 
+        v-if="hoveredTask"
+        class="fixed z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 pointer-events-none"
+        :style="{
+          left: `${tooltipPosition.x + 10}px`,
+          top: `${tooltipPosition.y - 60}px`
+        }"
+      >
+        <div class="text-sm space-y-1">
+          <div class="font-medium text-white">{{ hoveredTask.title }}</div>
+          <div class="text-xs text-slate-400">
+            <div>Start: {{ formatDate(hoveredTask.start) }}</div>
+            <div>End: {{ formatDate(hoveredTask.end) }}</div>
+            <div>Duration: {{ Math.ceil((hoveredTask.end - hoveredTask.start) / (1000 * 60 * 60 * 24)) }} days</div>
+            <div v-if="hoveredTask.assignee" class="mt-1">
+              Assignee: {{ hoveredTask.assignee }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -444,6 +777,7 @@ const isSameDay = (date: Date, today: Date) => {
   flex: 1;
   display: flex;
   overflow-x: hidden;
+  position: relative;
 }
 
 .gantt-timeline-unit {
@@ -454,6 +788,7 @@ const isSameDay = (date: Date, today: Date) => {
   font-size: 11px;
   color: #94a3b8; /* slate-400 */
   border-right: 1px solid #334155; /* slate-700 */
+  position: relative;
 }
 
 .gantt-body {
@@ -504,40 +839,70 @@ const isSameDay = (date: Date, today: Date) => {
   border-radius: 3px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+  user-select: none;
 }
 
 .gantt-task-bar:hover {
   opacity: 0.9;
+  transform: translateY(-50%) scale(1.02);
+}
+
+.gantt-task-bar.cursor-grabbing {
+  opacity: 0.8;
+  z-index: 10;
 }
 
 .gantt-task-progress {
   height: 100%;
   background-color: rgba(255, 255, 255, 0.2);
   border-radius: 3px;
+  pointer-events: none;
 }
 
-.gantt-today-marker {
+.gantt-today-line-header {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 2px;
   background-color: #ef4444; /* red-500 */
-  z-index: 1;
+  z-index: 15;
+  pointer-events: none;
 }
 
-.today-marker-label {
+.gantt-today-line-row {
   position: absolute;
-  top: -1px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #ef4444; /* red-500 */
+  z-index: 10;
+  pointer-events: none;
+}
+
+.gantt-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: #ef4444; /* red-500 */
+  z-index: 20;
+  pointer-events: none;
+}
+
+.today-label {
+  position: absolute;
+  top: 8px;
   left: 50%;
   transform: translateX(-50%);
   background-color: #ef4444; /* red-500 */
   color: white;
   font-size: 10px;
-  padding: 1px 3px;
-  border-radius: 0 0 3px 3px;
+  padding: 2px 6px;
+  border-radius: 3px;
   white-space: nowrap;
   font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 /* Add subtle grid lines for better visualization */
@@ -545,13 +910,16 @@ const isSameDay = (date: Date, today: Date) => {
   flex: 1;
   position: relative;
   overflow: hidden;
-  background-image: repeating-linear-gradient(
-    90deg,
-    transparent,
-    transparent 99px,
-    rgba(71, 85, 105, 0.2) 99px,
-    rgba(71, 85, 105, 0.2) 100px
-  );
+  display: flex;
+  /* Remove background grid since we have perfect alignment now */
+  background: transparent;
+}
+
+.gantt-row-unit {
+  flex: 1;
+  min-width: 80px;
+  border-right: 1px solid rgba(71, 85, 105, 0.1); /* Very subtle grid lines */
+  height: 100%;
 }
 
 /* Add alternating row colors for better readability */
@@ -566,5 +934,27 @@ const isSameDay = (date: Date, today: Date) => {
 .gantt-row:nth-child(even):hover,
 .gantt-row:nth-child(even):hover .gantt-row-left {
   background-color: #334155; /* slate-700 */
+}
+
+/* Prevent text selection during drag */
+.gantt-chart.dragging {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.gantt-chart.dragging * {
+  cursor: grabbing !important;
+}
+
+/* Highlight active drag */
+.gantt-task-bar:active {
+  filter: brightness(1.1);
+}
+
+/* Smooth transitions for non-dragging tasks */
+.gantt-task-bar:not(.cursor-grabbing) {
+  transition: all 0.2s ease;
 }
 </style> 

@@ -1,22 +1,25 @@
 use actix_web::{web, HttpResponse, Responder};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
-use chrono::Utc;
+use diesel::prelude::*;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use urlencoding;
 use querystring;
 use serde::Deserialize;
+use reqwest;
+use uuid::Uuid;
 
 use crate::db::{Pool, DbConnection};
 use crate::handlers::auth::{validate_token_internal, JWT_SECRET};
 use crate::models::{
     AuthProvider, AuthProviderConfigRequest, ConfigItem, NewAuthProvider,
     AuthProviderUpdate, OAuthRequest, OAuthExchangeRequest,
-    OAuthState
+    OAuthState, UserAuthIdentity, Claims, NewUserAuthIdentity
 };
 use crate::repository::auth_providers as auth_provider_repo;
 use crate::repository::user_auth_identities;
 use crate::config_utils;
+use crate::utils;
 
 // Structure for OAuth logout requests
 #[derive(Deserialize, Debug)]
@@ -425,28 +428,25 @@ pub async fn oauth_authorize(
     // Check if this is a user connection request
     let is_user_connection = oauth_request.user_connection.unwrap_or(false);
 
-    // Validate user token if this is a connection request
-    let user_uuid = if is_user_connection {
-        // Auth token is required for connection requests
-        let auth_token = match &auth {
-            Some(token) => token,
+    let _user_uuid = if is_user_connection {
+        // Validate token for user connection
+        match &auth {
+            Some(auth_bearer) => {
+                let claims = match validate_token_internal(&auth_bearer, &mut conn).await {
+                    Ok(claims) => claims,
+                    Err(_) => return HttpResponse::Unauthorized().json(json!({
+                        "status": "error",
+                        "message": "Invalid or expired token"
+                    })),
+                };
+
+                Some(claims.sub)
+            },
             None => return HttpResponse::Unauthorized().json(json!({
-                "status": "error", 
-                "message": "Authentication required for connecting accounts"
-            })),
-        };
-
-        // Validate the token and get user info
-        let claims = match validate_token_internal(auth_token, &mut conn).await {
-            Ok(claims) => claims,
-            Err(_) => return HttpResponse::Unauthorized().json(json!({
                 "status": "error",
-                "message": "Invalid or expired token"
+                "message": "Authentication required for user connection"
             })),
-        };
-
-        // Return the user UUID from claims
-        Some(claims.sub)
+        }
     } else {
         None
     };
@@ -1105,14 +1105,14 @@ async fn find_or_create_oauth_user(
                     // User found by email, create an identity for them
                     let new_identity = NewUserAuthIdentity {
                         user_id: user.id,
-                        auth_provider_id: provider.id,
-                        provider_user_id: provider_user_id.clone(),
+                        provider_id: provider.id,
+                        external_id: provider_user_id.clone(),
                         email: Some(email.clone()),
-                        identity_data: Some(user_info.clone()),
+                        metadata: Some(user_info.clone()),
                         password_hash: None, // No password for OAuth identities
                     };
                     
-                    match user_auth_identities::create_identity(new_identity, conn) {
+                    match crate::repository::user_auth_identities::create_identity(new_identity, conn) {
                         Ok(_) => {
                             // Identity created, return the user
                             return Ok(user);
@@ -1136,21 +1136,21 @@ async fn find_or_create_oauth_user(
     
     // Create a new user
     use crate::models::{NewUser, UserRole};
-    use bcrypt::hash;
     use uuid::Uuid;
     
     // Generate a secure random password for the user
     let random_password = format!("{:x}", rand::random::<u128>());
-    let password_hash = match hash(&random_password, bcrypt::DEFAULT_COST) {
-        Ok(hash) => hash.into_bytes(),
+    let password_hash = match crate::utils::auth::hash_password(&random_password) {
+        Ok(hash) => hash,
         Err(e) => return Err(format!("Failed to hash password: {}", e)),
     };
     
     let new_user = NewUser {
-        uuid: Uuid::new_v4().to_string(),
+        uuid: Uuid::new_v4(),
         name,
         email: email.clone(),
-        role: "user".to_string(), // Default to regular user
+        role: UserRole::User, // Default to regular user
+        password_hash: password_hash.as_bytes().to_vec(), // Convert string to bytes for model
         pronouns: None,
         avatar_url: None,
         banner_url: None,
@@ -1163,14 +1163,14 @@ async fn find_or_create_oauth_user(
             // Create an identity for the new user
             let new_identity = NewUserAuthIdentity {
                 user_id: user.id,
-                auth_provider_id: provider.id,
-                provider_user_id,
+                provider_id: provider.id,
+                external_id: provider_user_id,
                 email: Some(email),
-                identity_data: Some(user_info.clone()),
+                metadata: Some(user_info.clone()),
                 password_hash: Some(password_hash), // Add the password hash to the identity
             };
             
-            match user_auth_identities::create_identity(new_identity, conn) {
+            match crate::repository::user_auth_identities::create_identity(new_identity, conn) {
                 Ok(_) => Ok(user),
                 Err(e) => Err(format!("User created but failed to create identity: {:?}", e)),
             }
@@ -1181,18 +1181,17 @@ async fn find_or_create_oauth_user(
 
 // Helper function to generate application JWT token
 fn generate_app_jwt_token(user: &crate::models::User) -> Result<String, String> {
-    use crate::models::Claims;
-    
-    // Get the JWT secret from environment or configuration
-    let secret = JWT_SECRET.clone();
-    
-    // Generate JWT token
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as usize;
+    let secret = crate::handlers::auth::JWT_SECRET.clone();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize;
+
     let claims = Claims {
-        sub: user.uuid.clone(),
+        sub: crate::utils::uuid_to_string(&user.uuid),
         name: user.name.clone(),
         email: user.email.clone(),
-        role: user.role.clone(),
+        role: crate::utils::role_to_string(&user.role),
         exp: now + 24 * 60 * 60, // 24 hours from now
         iat: now,
     };
@@ -1214,14 +1213,20 @@ async fn add_oauth_identity_to_user(
     provider: &AuthProvider,
     conn: &mut DbConnection
 ) -> Result<(), String> {
+    // Parse UUID from string
+    let parsed_uuid = match crate::utils::parse_uuid(user_uuid) {
+        Ok(uuid) => uuid,
+        Err(e) => return Err(format!("Invalid UUID format: {}", e)),
+    };
+    
     // First find the user by UUID
-    let user = match crate::repository::get_user_by_uuid(user_uuid, conn) {
+    let user = match crate::repository::get_user_by_uuid(&parsed_uuid, conn) {
         Ok(user) => user,
         Err(e) => return Err(format!("User not found: {:?}", e)),
     };
     
     // Extract unique identifier for Microsoft (object ID)
-    let provider_user_id = match user_info.get("id") {
+    let external_id = match user_info.get("id") {
         Some(id) => match id.as_str() {
             Some(i) => i.to_string(),
             None => return Err("Invalid id format".to_string()),
@@ -1238,15 +1243,15 @@ async fn add_oauth_identity_to_user(
     // Create a new identity for the user
     let new_identity = crate::models::NewUserAuthIdentity {
         user_id: user.id,
-        auth_provider_id: provider.id,
-        provider_user_id,
+        provider_id: provider.id,
+        external_id,
         email,
-        identity_data: Some(user_info.clone()),
+        metadata: Some(user_info.clone()),
         password_hash: None, // No password for OAuth identities
     };
     
     // Save the identity to the database
-    match user_auth_identities::create_identity(new_identity, conn) {
+    match crate::repository::user_auth_identities::create_identity(new_identity, conn) {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("Failed to create auth identity: {:?}", e)),
     }
@@ -1277,7 +1282,15 @@ pub async fn oauth_connect(
     };
 
     // Verify user exists
-    let user = match crate::repository::get_user_by_uuid(&claims.sub, &mut conn) {
+    let user_uuid = match crate::utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid user UUID in token"
+        })),
+    };
+    
+    let user = match crate::repository::get_user_by_uuid(&user_uuid, &mut conn) {
         Ok(user) => user,
         Err(e) => {
             eprintln!("Error finding user by UUID: {:?}", e);
@@ -1536,6 +1549,82 @@ pub async fn test_microsoft_config(
             HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": "Failed to test Microsoft configuration"
+            }))
+        }
+    }
+}
+
+// Set a provider as default (admin only)
+pub async fn set_default_auth_provider(
+    db_pool: web::Data<Pool>,
+    auth: BearerAuth,
+    request_data: web::Json<serde_json::Value>,
+) -> impl Responder {
+    // Get database connection
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Validate the token and get admin info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid or expired token"
+        })),
+    };
+
+    // Check if the user is an admin
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "status": "error",
+            "message": "Only administrators can manage authentication providers"
+        }));
+    }
+
+    // Extract provider_id from request
+    let provider_id = match request_data.get("provider_id").and_then(|v| v.as_i64()) {
+        Some(id) => id as i32,
+        None => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "provider_id is required"
+        })),
+    };
+
+    // Verify the provider exists
+    match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
+        Ok(_) => {},
+        Err(e) => {
+            if let diesel::result::Error::NotFound = e {
+                return HttpResponse::NotFound().json(json!({
+                    "status": "error",
+                    "message": "Authentication provider not found"
+                }));
+            } else {
+                eprintln!("Error getting auth provider {}: {:?}", provider_id, e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to retrieve authentication provider"
+                }));
+            }
+        }
+    }
+
+    // Set the provider as default
+    match auth_provider_repo::set_default_provider(provider_id, &mut conn) {
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "status": "success",
+            "message": "Default provider updated successfully"
+        })),
+        Err(e) => {
+            eprintln!("Error setting default provider {}: {:?}", provider_id, e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to set default provider"
             }))
         }
     }

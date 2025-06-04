@@ -1,31 +1,30 @@
 // Domain-specific modules
-pub mod auth_providers;
-pub mod documentation;
-pub mod tickets;
-pub mod devices;
-pub mod comments;
-pub mod users;
-pub mod user_emails;
-pub mod projects;
-pub mod linked_tickets;
-pub mod document_updates;
 pub mod article_content;
-pub mod user_auth_identities;
+pub mod auth_providers;
+pub mod comments;
+pub mod devices;
+pub mod documentation;
+pub mod linked_tickets;
+pub mod projects;
 pub mod sync_history;
+pub mod tickets;
+pub mod user_auth_identities;
+pub mod user_emails;
+pub mod users;
 
-// Re-export from domain-specific modules
-pub use documentation::*;
-pub use tickets::*;
-pub use devices::*;
-pub use comments::*;
-pub use users::*;
-pub use user_emails::*;
-pub use projects::*;
-pub use linked_tickets::*;
-pub use document_updates::*;
+// Re-export all functions
 pub use article_content::*;
 pub use auth_providers::*;
+pub use comments::*;
+pub use devices::*;
+pub use documentation::*;
+pub use linked_tickets::*;
+pub use projects::*;
 pub use sync_history::*;
+pub use tickets::*;
+pub use user_auth_identities::*;
+pub use user_emails::*;
+pub use users::*;
 
 // Note: We've completed the transition to a fully modular structure
 // by removing the base.rs file and keeping only domain-specific modules.

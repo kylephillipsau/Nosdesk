@@ -25,6 +25,7 @@ use crate::repository::user_emails as user_emails_repo;
 use crate::repository::sync_history as sync_history_repo;
 use crate::config_utils;
 use crate::models::{NewUser, NewUserAuthIdentity, User, UserAuthIdentity, NewSyncHistory, SyncHistoryUpdate};
+use crate::utils;
 
 // Global progress tracker with cancellation support
 lazy_static::lazy_static! {
@@ -245,44 +246,31 @@ fn update_sync_progress_with_type(session_id: &str, entity: &str, current: usize
 }
 
 fn persist_final_sync_to_db(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str) {
-    let session_id = session_id.to_string();
-    let entity = entity.to_string();
-    let status = status.to_string();
-    let message = message.to_string();
-    let sync_type = sync_type.to_string();
-    
     let pool = crate::db::establish_connection_pool();
     if let Ok(mut conn) = pool.get() {
         let now = Utc::now().naive_utc();
-        
         let update = SyncHistoryUpdate {
-            status: Some(status.clone()),
-            message: Some(message.clone()),
-            current_count: Some(current as i32),
-            total_count: Some(total as i32),
-            updated_at: Some(now),
+            status: Some(status.to_string()),
+            error_message: Some(message.to_string()),
+            records_processed: Some(current as i32),
+            records_created: Some(0), // We don't track this separately in the current implementation
+            records_updated: Some(total as i32),
+            records_failed: Some(0), // We don't track this separately in the current implementation
             completed_at: Some(Some(now)),
         };
         
-        match sync_history_repo::update_sync_history(&mut conn, &session_id, update) {
-            Ok(_) => {},
-            Err(_) => {
-                // If update fails, try to create a new record
-                let new_sync = NewSyncHistory {
-                    session_id: session_id.clone(),
-                    sync_type,
-                    entity,
-                    status: status.clone(),
-                    message,
-                    current_count: current as i32,
-                    total_count: total as i32,
-                    started_at: now,
-                    updated_at: now,
-                    completed_at: Some(now),
-                };
-                
-                let _ = sync_history_repo::create_sync_history(&mut conn, new_sync);
+        // Parse session_id to i32 for the database function
+        if let Ok(sync_id) = session_id.parse::<i32>() {
+            match sync_history_repo::update_sync_history(&mut conn, sync_id, update) {
+                Ok(_) => {
+                    println!("Successfully persisted final sync state to database: {} - {}", session_id, status);
+                },
+                Err(e) => {
+                    eprintln!("Failed to update sync history in database: {:?}", e);
+                }
             }
+        } else {
+            eprintln!("Failed to parse session_id as i32: {}", session_id);
         }
     }
 }
@@ -384,7 +372,12 @@ pub async fn get_active_syncs(
     if let Ok(progress_map) = SYNC_PROGRESS.lock() {
         let active_syncs: Vec<SyncProgressState> = progress_map
             .values()
-            .filter(|progress| progress.status == "running" || progress.status == "starting")
+            .filter(|progress| {
+                // Only return syncs that are truly active (running or starting)
+                progress.status == "running" || 
+                progress.status == "starting" ||
+                progress.status == "cancelling"
+            })
             .cloned()
             .collect();
         
@@ -427,14 +420,14 @@ pub async fn get_last_sync(
         Ok(sync_history) => {
             // Convert database model to API response format
             let response = SyncProgressState {
-                session_id: sync_history.session_id,
-                entity: sync_history.entity,
-                current: sync_history.current_count as usize,
-                total: sync_history.total_count as usize,
+                session_id: sync_history.id.to_string(), // Use ID as session ID
+                entity: sync_history.sync_type.clone(), // sync_type maps to entity 
+                current: sync_history.records_processed.unwrap_or(0) as usize,
+                total: sync_history.records_processed.unwrap_or(0) as usize, // Use processed as both current and total if no other field
                 status: sync_history.status,
-                message: sync_history.message,
+                message: sync_history.error_message.unwrap_or_else(|| "Sync completed".to_string()),
                 started_at: DateTime::from_naive_utc_and_offset(sync_history.started_at, Utc),
-                updated_at: DateTime::from_naive_utc_and_offset(sync_history.updated_at, Utc),
+                updated_at: DateTime::from_naive_utc_and_offset(sync_history.completed_at.unwrap_or(sync_history.started_at), Utc),
                 sync_type: sync_history.sync_type,
             };
             HttpResponse::Ok().json(response)
@@ -704,13 +697,20 @@ pub async fn sync_data(
                 let now = Utc::now().naive_utc();
                 let update = SyncHistoryUpdate {
                     status: Some("completed".to_string()),
-                    message: Some(completion_message),
-                    current_count: Some(sync_result.total_processed as i32),
-                    total_count: Some(sync_result.total_processed as i32),
-                    updated_at: Some(now),
+                    error_message: None, // No error for successful completion
+                    records_processed: Some(sync_result.total_processed as i32),
+                    records_created: Some(0), // We don't track this separately 
+                    records_updated: Some(sync_result.total_processed as i32),
+                    records_failed: Some(sync_result.total_errors as i32),
                     completed_at: Some(Some(now)),
                 };
-                let _ = sync_history_repo::update_sync_history(&mut conn, &session_id_clone, update);
+                
+                // Parse session_id to i32 for the database function
+                if let Ok(sync_id) = session_id_clone.parse::<i32>() {
+                    let _ = sync_history_repo::update_sync_history(&mut conn, sync_id, update);
+                } else {
+                    eprintln!("Failed to parse session_id as i32 for completion: {}", session_id_clone);
+                }
                 }
             },
             Err(error) => {
@@ -733,13 +733,20 @@ pub async fn sync_data(
                 let now = Utc::now().naive_utc();
                 let update = SyncHistoryUpdate {
                     status: Some("error".to_string()),
-                    message: Some(error_message),
-                    current_count: Some(0),
-                    total_count: Some(0),
-                    updated_at: Some(now),
+                    error_message: Some(error_message),
+                    records_processed: Some(0),
+                    records_created: Some(0),
+                    records_updated: Some(0),
+                    records_failed: Some(1), // Mark as 1 failure for the error
                     completed_at: Some(Some(now)),
                 };
-                let _ = sync_history_repo::update_sync_history(&mut conn, &session_id_clone, update);
+                
+                // Parse session_id to i32 for the database function
+                if let Ok(sync_id) = session_id_clone.parse::<i32>() {
+                    let _ = sync_history_repo::update_sync_history(&mut conn, sync_id, update);
+                } else {
+                    eprintln!("Failed to parse session_id as i32 for error: {}", session_id_clone);
+                }
             }
         }
     });
@@ -1339,8 +1346,8 @@ fn find_identity_by_provider_user_id(
     use crate::schema::user_auth_identities;
     
     user_auth_identities::table
-        .filter(user_auth_identities::auth_provider_id.eq(provider_id))
-        .filter(user_auth_identities::provider_user_id.eq(provider_user_id))
+        .filter(user_auth_identities::provider_id.eq(provider_id))
+        .filter(user_auth_identities::external_id.eq(provider_user_id))
         .first::<UserAuthIdentity>(conn)
 }
 
@@ -1391,7 +1398,7 @@ async fn update_existing_microsoft_user(
 
     // Sync profile photo
     let client = reqwest::Client::new();
-    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &user.uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &utils::uuid_to_string(&user.uuid)).await {
         println!("sync_user_profile_photo returned URLs for user: {} - avatar: {:?}, thumb: {:?}", user.name, photo_urls.avatar_url, photo_urls.avatar_thumb);
         if let Err(e) = update_user_avatar_by_id(conn, user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", user.name, e);
@@ -1415,7 +1422,7 @@ fn update_identity_data(
     use crate::schema::user_auth_identities;
     
     diesel::update(user_auth_identities::table.find(identity_id))
-        .set(user_auth_identities::identity_data.eq(identity_data))
+        .set(user_auth_identities::metadata.eq(identity_data))
         .get_result::<UserAuthIdentity>(conn)
 }
 
@@ -1436,10 +1443,10 @@ async fn link_existing_user_to_microsoft(
 
     let new_identity = NewUserAuthIdentity {
         user_id: existing_user.id,
-        auth_provider_id: provider_id,
-        provider_user_id: ms_user.id.clone(),
+        provider_id,
+        external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
-        identity_data: Some(identity_data),
+        metadata: Some(identity_data),
         password_hash: None, // Microsoft identities don't have password hashes
     };
 
@@ -1467,7 +1474,7 @@ async fn link_existing_user_to_microsoft(
 
     // Sync profile photo
     let client = reqwest::Client::new();
-    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &existing_user.uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &utils::uuid_to_string(&existing_user.uuid)).await {
         println!("sync_user_profile_photo returned URLs for user: {} - avatar: {:?}, thumb: {:?}", existing_user.name, photo_urls.avatar_url, photo_urls.avatar_thumb);
         if let Err(e) = update_user_avatar_by_id(conn, existing_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", existing_user.name, e);
@@ -1493,7 +1500,7 @@ async fn create_new_user_from_microsoft(
     println!("Creating new user from Microsoft: {}", ms_user.user_principal_name);
 
     // Generate UUID for new user
-    let user_uuid = Uuid::new_v4().to_string();
+    let user_uuid = Uuid::new_v4();
     
     // Determine name (prefer displayName, fallback to givenName + surname, fallback to userPrincipalName)
     let name = ms_user.display_name.clone()
@@ -1512,10 +1519,11 @@ async fn create_new_user_from_microsoft(
 
     // Create new user with default role 'user'
     let new_user = NewUser {
-        uuid: user_uuid.clone(),
+        uuid: user_uuid,
         name: name.clone(),
         email: email.clone(),
-        role: "user".to_string(), // Default role for Microsoft Graph users
+        role: crate::models::UserRole::User, // Use proper enum
+        password_hash: Vec::new(), // Empty password hash for OAuth users
         pronouns: None,
         avatar_url: None,
         banner_url: None,
@@ -1532,10 +1540,10 @@ async fn create_new_user_from_microsoft(
 
     let new_identity = NewUserAuthIdentity {
         user_id: created_user.id,
-        auth_provider_id: provider_id,
-        provider_user_id: ms_user.id.clone(),
+        provider_id,
+        external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
-        identity_data: Some(identity_data),
+        metadata: Some(identity_data),
         password_hash: None,
     };
 
@@ -1544,7 +1552,7 @@ async fn create_new_user_from_microsoft(
 
     // Sync profile photo
     let client = reqwest::Client::new();
-    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &user_uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(&client, access_token, ms_user, &utils::uuid_to_string(&user_uuid)).await {
         println!("sync_user_profile_photo returned URLs for new user: {} - avatar: {:?}, thumb: {:?}", name, photo_urls.avatar_url, photo_urls.avatar_thumb);
         if let Err(e) = update_user_avatar_by_id(conn, created_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", name, e);
@@ -1592,7 +1600,7 @@ async fn update_existing_microsoft_user_optimized(
         avatar_url: None, // Preserve avatar
         banner_url: None, // Preserve banner
         avatar_thumb: None, // Preserve avatar thumb
-        microsoft_uuid: Some(ms_user.id.clone()), // Always update Microsoft UUID
+        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?), // Always update Microsoft UUID with proper conversion
         updated_at: Some(chrono::Utc::now().naive_utc()),
     };
 
@@ -1651,7 +1659,7 @@ async fn update_existing_microsoft_user_optimized(
         .map_err(|e| format!("Failed to update identity data: {}", e))?;
 
     // Sync profile photo using optimized client
-    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &user.uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &utils::uuid_to_string(&user.uuid)).await {
         if let Err(e) = update_user_avatar_by_id(conn, user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", user.name, e);
         }
@@ -1679,10 +1687,10 @@ async fn link_existing_user_to_microsoft_optimized(
 
     let new_identity = NewUserAuthIdentity {
         user_id: existing_user.id,
-        auth_provider_id: provider_id,
-        provider_user_id: ms_user.id.clone(),
+        provider_id,
+        external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
-        identity_data: Some(identity_data),
+        metadata: Some(identity_data),
         password_hash: None,
     };
 
@@ -1704,7 +1712,7 @@ async fn link_existing_user_to_microsoft_optimized(
         avatar_url: None,
         banner_url: None,
         avatar_thumb: None,
-        microsoft_uuid: Some(ms_user.id.clone()), // Store Microsoft UUID
+        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?), // Store Microsoft UUID with proper conversion
         updated_at: Some(chrono::Utc::now().naive_utc()),
     };
 
@@ -1740,7 +1748,7 @@ async fn link_existing_user_to_microsoft_optimized(
     }
 
     // Sync profile photo using optimized client
-    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &existing_user.uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &utils::uuid_to_string(&existing_user.uuid)).await {
         if let Err(e) = update_user_avatar_by_id(conn, existing_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", existing_user.name, e);
         }
@@ -1782,16 +1790,18 @@ async fn create_new_user_from_microsoft_optimized(
         .unwrap_or_else(|| ms_user.user_principal_name.clone());
 
     // Create new user with default role 'user' and store Microsoft UUID
+    let user_uuid = Uuid::new_v4();
     let new_user = NewUser {
-        uuid: user_uuid.clone(),
+        uuid: user_uuid,
         name: name.clone(),
         email: primary_email.clone(),
-        role: "user".to_string(),
+        role: crate::models::UserRole::User, // Use proper enum
+        password_hash: Vec::new(), // Empty password hash for OAuth users
         pronouns: None,
         avatar_url: None,
         banner_url: None,
         avatar_thumb: None,
-        microsoft_uuid: Some(ms_user.id.clone()), // Store Microsoft UUID
+        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?), // Store Microsoft UUID with proper conversion
     };
 
     let created_user = user_repo::create_user(new_user, conn)
@@ -1830,10 +1840,10 @@ async fn create_new_user_from_microsoft_optimized(
 
     let new_identity = NewUserAuthIdentity {
         user_id: created_user.id,
-        auth_provider_id: provider_id,
-        provider_user_id: ms_user.id.clone(),
+        provider_id,
+        external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
-        identity_data: Some(identity_data),
+        metadata: Some(identity_data),
         password_hash: None,
     };
 
@@ -1841,7 +1851,7 @@ async fn create_new_user_from_microsoft_optimized(
         .map_err(|e| format!("Failed to create Microsoft identity: {}", e))?;
 
     // Sync profile photo using optimized client
-    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &user_uuid).await {
+    if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &utils::uuid_to_string(&user_uuid)).await {
         if let Err(e) = update_user_avatar_by_id(conn, created_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
             println!("Warning: Failed to update avatar for user {}: {}", name, e);
         }
@@ -2568,15 +2578,37 @@ async fn process_microsoft_device(
     let primary_user_uuid = {
         // First, try to match by Microsoft UUID if available (most reliable)
         if let Some(microsoft_user_id) = &ms_device.user_id {
-            match user_repo::get_user_by_microsoft_uuid(conn, microsoft_user_id) {
-                Ok(user) => {
-                    println!("Found user {} for device {} by Microsoft UUID", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
-                    Some(user.uuid)
+            match utils::parse_uuid(microsoft_user_id) {
+                Ok(microsoft_uuid) => {
+                    match user_repo::get_user_by_microsoft_uuid(conn, &microsoft_uuid) {
+                        Ok(user) => {
+                            println!("Found user {} for device {} by Microsoft UUID", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                            Some(user.uuid)
+                        },
+                        Err(_) => {
+                            println!("User with Microsoft UUID {} not found for device {}", microsoft_user_id, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                            
+                            // Fallback to email matching if Microsoft UUID doesn't match
+                            if let Some(user_principal_name) = &ms_device.user_principal_name {
+                                match user_emails_repo::find_user_by_any_email(conn, user_principal_name) {
+                                    Ok(user) => {
+                                        println!("Found user {} for device {} by email fallback", user.name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                                        Some(user.uuid)
+                                    },
+                                    Err(_) => {
+                                        println!("User {} not found for device {} (tried both Microsoft UUID and email)", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    }
                 },
                 Err(_) => {
-                    println!("User with Microsoft UUID {} not found for device {}", microsoft_user_id, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
-                    
-                    // Fallback to email matching if Microsoft UUID doesn't match
+                    println!("Invalid Microsoft UUID format for device {}: {}", ms_device.device_name.as_deref().unwrap_or(&ms_device.id), microsoft_user_id);
+                    // Fallback to email matching
                     if let Some(user_principal_name) = &ms_device.user_principal_name {
                         match user_emails_repo::find_user_by_any_email(conn, user_principal_name) {
                             Ok(user) => {
@@ -2584,7 +2616,7 @@ async fn process_microsoft_device(
                                 Some(user.uuid)
                             },
                             Err(_) => {
-                                println!("User {} not found for device {} (tried both Microsoft UUID and email)", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
+                                println!("User {} not found for device {}", user_principal_name, ms_device.device_name.as_deref().unwrap_or(&ms_device.id));
                                 None
                             }
                         }
@@ -2651,6 +2683,17 @@ async fn process_microsoft_device(
             primary_user_uuid: primary_user_uuid.clone(),
             intune_device_id: Some(ms_device.id.clone()),
             entra_device_id: ms_device.azure_ad_device_id.clone(),
+            device_type: None, // Keep existing device type
+            location: None, // Keep existing location
+            notes: None, // Keep existing notes
+            user_id: None, // Keep existing user_id
+            azure_device_id: ms_device.azure_ad_device_id.clone(),
+            compliance_state: ms_device.compliance_state.clone(),
+            last_sync_time: parse_microsoft_datetime(&ms_device.last_sync_date_time),
+            operating_system: ms_device.operating_system.clone(),
+            os_version: ms_device.os_version.clone(),
+            is_managed: Some(true), // Intune devices are managed
+            enrollment_date: parse_microsoft_datetime(&ms_device.enrolled_date_time),
             updated_at: Some(chrono::Utc::now().naive_utc()),
         };
 
@@ -2667,14 +2710,25 @@ async fn process_microsoft_device(
         // Create new device
         let new_device = crate::models::NewDevice {
             name: device_name.clone(),
-            hostname,
-            serial_number,
-            model,
-            warranty_status,
+            hostname: Some(hostname),
+            serial_number: Some(serial_number),
+            model: Some(model),
+            warranty_status: Some(warranty_status),
             manufacturer: Some(manufacturer),
             primary_user_uuid: primary_user_uuid.clone(),
             intune_device_id: Some(ms_device.id.clone()),
             entra_device_id: ms_device.azure_ad_device_id.clone(),
+            device_type: Some("Computer".to_string()), // Default for Intune devices
+            location: None,
+            notes: None,
+            user_id: None, // This may be deprecated in favor of primary_user_uuid
+            azure_device_id: ms_device.azure_ad_device_id.clone(),
+            compliance_state: ms_device.compliance_state.clone(),
+            last_sync_time: parse_microsoft_datetime(&ms_device.last_sync_date_time),
+            operating_system: ms_device.operating_system.clone(),
+            os_version: ms_device.os_version.clone(),
+            is_managed: Some(true), // Intune devices are managed
+            enrollment_date: parse_microsoft_datetime(&ms_device.enrolled_date_time),
         };
 
         device_repo::create_device(conn, new_device)
@@ -2931,4 +2985,24 @@ fn extract_smtp_address(proxy_address: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Parse Microsoft Graph datetime string to NaiveDateTime
+fn parse_microsoft_datetime(datetime_str: &Option<String>) -> Option<chrono::NaiveDateTime> {
+    datetime_str.as_ref().and_then(|s| {
+        // Microsoft Graph typically returns ISO 8601 format: "2024-01-15T10:30:00Z"
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.naive_utc())
+            .or_else(|| {
+                // Fallback: try parsing without timezone
+                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
+                    .ok()
+                    .or_else(|| {
+                        // Another fallback: try with milliseconds
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+                            .ok()
+                    })
+            })
+    })
 } 

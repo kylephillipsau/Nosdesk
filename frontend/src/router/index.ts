@@ -2,9 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import DashboardView from '../views/DashboardView.vue'
 import TicketView from '../views/TicketView.vue'
 import LoginView from '../views/LoginView.vue'
+import OnboardingView from '../views/OnboardingView.vue'
 import ErrorView from '../views/ErrorView.vue'
 import TicketsListView from '../views/TicketsListView.vue'
-import SettingsView from '../views/SettingsView.vue'
 import ProjectsView from '../views/ProjectsView.vue'
 import ProjectDetailView from '../views/ProjectDetailView.vue'
 import UserProfileView from '../views/UserProfileView.vue'
@@ -12,6 +12,7 @@ import DocumentationPageView from '@/views/DocumentationPageView.vue'
 import ProfileSettingsView from '@/views/ProfileSettingsView.vue'
 import PDFViewerView from '@/views/PDFViewerView.vue'
 import MicrosoftConfigView from '@/views/MicrosoftConfigView.vue'
+import authService from '@/services/authService'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -32,6 +33,16 @@ const router = createRouter({
         layout: 'blank',
         requiresAuth: false,
         title: 'Sign In'
+      }
+    },
+    {
+      path: '/onboarding',
+      name: 'onboarding',
+      component: OnboardingView,
+      meta: {
+        layout: 'blank',
+        requiresAuth: false,
+        title: 'Setup - Nosdesk'
       }
     },
     {
@@ -99,15 +110,6 @@ const router = createRouter({
       },
       beforeEnter: (to) => {
         to.meta.key = to.params.id
-      }
-    },
-    {
-      path: '/settings',
-      name: 'settings',
-      component: SettingsView,
-      meta: {
-        requiresAuth: true,
-        title: 'Settings'
       }
     },
     {
@@ -215,7 +217,8 @@ const router = createRouter({
       name: 'profile-settings',
       component: ProfileSettingsView,
       meta: {
-        requiresAuth: true
+        requiresAuth: true,
+        title: 'Settings'
       }
     },
     {
@@ -346,6 +349,22 @@ router.beforeEach(async (to, from, next) => {
   const { useAuthStore } = await import('@/stores/auth');
   const authStore = useAuthStore();
 
+  // Check for onboarding requirements first (before any other checks)
+  if (to.name !== 'onboarding' && to.name !== 'error') {
+    try {
+      const setupStatus = await authService.checkSetupStatus();
+      if (setupStatus.requires_setup) {
+        // System requires setup, redirect to onboarding
+        next({ name: 'onboarding' });
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to check setup status during navigation:', error);
+      // If we can't check setup status, continue normally
+      // The error will be handled by the onboarding component if needed
+    }
+  }
+
   // Check for unsaved changes
   // @ts-ignore
   if (window.hasUnsavedChanges && !window.confirm('You have unsaved changes. Are you sure you want to leave?')) {
@@ -384,6 +403,9 @@ router.beforeEach(async (to, from, next) => {
     next({ name: 'home' });
   } else if (to.path === '/login' && isAuthenticated) {
     // Redirect to home if already authenticated and trying to access login page
+    next({ name: 'home' });
+  } else if (to.name === 'onboarding' && isAuthenticated) {
+    // If user is authenticated and trying to access onboarding, redirect to home
     next({ name: 'home' });
   } else {
     // Continue to the route

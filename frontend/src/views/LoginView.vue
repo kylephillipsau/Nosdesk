@@ -1,22 +1,34 @@
 <!-- LoginView.vue -->
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import logo from '@/assets/logo.svg';
 import axios from 'axios';
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
 const email = ref('');
 const password = ref('');
 const rememberMe = ref(false);
 const isLoading = ref(false);
 const errorMessage = ref('');
+const successMessage = ref('');
+
+// Check for success message from URL query params (e.g., from onboarding)
+onMounted(() => {
+  if (route.query.message) {
+    successMessage.value = route.query.message as string;
+    // Clean up the URL by removing the message parameter
+    router.replace({ name: 'login' });
+  }
+});
 
 const handleLogin = async () => {
   isLoading.value = true;
   errorMessage.value = '';
+  successMessage.value = '';
   
   try {
     const success = await authStore.login({
@@ -38,6 +50,7 @@ const handleLogin = async () => {
 const handleMicrosoftLogin = async () => {
   isLoading.value = true;
   errorMessage.value = '';
+  successMessage.value = '';
   
   try {
     // Store the current URL to redirect back after authentication
@@ -69,6 +82,7 @@ const handleMicrosoftLogin = async () => {
 const handleMicrosoftLogout = async () => {
   try {
     errorMessage.value = '';
+    successMessage.value = '';
     
     // Get the sign-out URL from backend
     const response = await axios.post('/api/auth/oauth/logout', {
@@ -99,6 +113,16 @@ const handleMicrosoftLogout = async () => {
         <p class="text-slate-400 mt-2">Sign in to your account</p>
       </div>
 
+      <!-- Success Message -->
+      <div v-if="successMessage" class="bg-green-900/50 border border-green-700 text-green-200 px-4 py-3 rounded-lg text-sm">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+          </svg>
+          {{ successMessage }}
+        </div>
+      </div>
+
       <!-- Error Message -->
       <div v-if="errorMessage" class="bg-red-900/50 border border-red-700 text-red-200 px-4 py-3 rounded-lg text-sm">
         {{ errorMessage }}
@@ -113,6 +137,7 @@ const handleMicrosoftLogout = async () => {
             v-model="email"
             type="email"
             required
+            autocomplete="email"
             class="mt-1 block w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             placeholder="Enter your email"
           />
@@ -125,6 +150,7 @@ const handleMicrosoftLogout = async () => {
             v-model="password"
             type="password"
             required
+            autocomplete="current-password"
             class="mt-1 block w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             placeholder="Enter your password"
           />
