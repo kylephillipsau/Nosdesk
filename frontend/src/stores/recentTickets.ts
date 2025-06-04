@@ -32,7 +32,10 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
       return
     }
 
-    console.log(`Adding/updating ticket #${ticket.id} with title: "${ticket.title}" to recent tickets store`)
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.log(`Adding/updating ticket #${ticket.id} with title: "${ticket.title}" to recent tickets store`)
+    }
 
     // Add isDraft flag if specified
     const ticketWithDraftStatus = {
@@ -44,7 +47,9 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
     const existingIndex = recentTickets.value.findIndex(t => t.id === ticket.id)
     
     if (existingIndex !== -1) {
-      console.log(`Ticket #${ticket.id} already exists in recent tickets store with title: "${recentTickets.value[existingIndex].title}"`)
+      if (import.meta.env.DEV) {
+        console.log(`Ticket #${ticket.id} already exists in recent tickets store with title: "${recentTickets.value[existingIndex].title}"`)
+      }
       
       // Preserve the existing title unless explicitly changing it
       // This ensures manual title changes aren't overwritten during refreshes
@@ -52,7 +57,9 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
         const existingTitle = recentTickets.value[existingIndex].title
         // Only preserve the title if it's been manually changed (not the default or same as incoming)
         if (existingTitle !== 'New Ticket' && existingTitle !== ticket.title) {
-          console.log(`Preserving existing title: "${existingTitle}" instead of using: "${ticket.title}"`)
+          if (import.meta.env.DEV) {
+            console.log(`Preserving existing title: "${existingTitle}" instead of using: "${ticket.title}"`)
+          }
           ticketWithDraftStatus.title = existingTitle
         }
       }
@@ -91,13 +98,19 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
 
   // Enhanced method to update ticket data when it's modified in TicketView
   const updateTicketData = (ticketId: number, updatedData: Partial<Ticket>) => {
-    console.log(`Attempting to update ticket #${ticketId} with data:`, updatedData)
+    // Only log detailed updates in development mode
+    if (import.meta.env.DEV) {
+      console.log(`Attempting to update ticket #${ticketId} with data:`, updatedData)
+    }
     
     const ticketIndex = recentTickets.value.findIndex(t => t.id === ticketId)
-    console.log(`Found ticket at index: ${ticketIndex}`)
+    
+    if (import.meta.env.DEV) {
+      console.log(`Found ticket at index: ${ticketIndex}`)
+    }
     
     if (ticketIndex !== -1) {
-      const oldData = { ...recentTickets.value[ticketIndex] }
+      const oldData = import.meta.env.DEV ? { ...recentTickets.value[ticketIndex] } : null
       
       // Update only the provided fields, preserving other data
       recentTickets.value[ticketIndex] = {
@@ -105,15 +118,19 @@ export const useRecentTicketsStore = defineStore('recentTickets', () => {
         ...updatedData
       }
       
-      console.log(`Updated ticket #${ticketId} in recent tickets store:`)
-      console.log(`- Before:`, oldData)
-      console.log(`- After:`, recentTickets.value[ticketIndex])
-      console.log(`- Changes:`, updatedData)
+      if (import.meta.env.DEV) {
+        console.log(`Updated ticket #${ticketId} in recent tickets store:`)
+        console.log(`- Before:`, oldData)
+        console.log(`- After:`, recentTickets.value[ticketIndex])
+        console.log(`- Changes:`, updatedData)
+      }
       
       // Force reactivity update by creating a new array
       recentTickets.value = [...recentTickets.value]
     } else {
-      console.warn(`Ticket #${ticketId} not found in recent tickets store`)
+      if (import.meta.env.DEV) {
+        console.warn(`Ticket #${ticketId} not found in recent tickets store`)
+      }
     }
   }
 

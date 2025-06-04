@@ -40,12 +40,16 @@ const showPlaceholder = ref(false);
 const conversionProgress = ref(0);
 
 const log = (event: string, details?: any) => {
-  console.log(`[AttachmentPreview] ${event}`, details || '');
+  if (import.meta.env.DEV) {
+    console.log(`[AttachmentPreview] ${event}`, details || '');
+  }
 };
 
 // Add a more detailed debug logging function
 const debugLog = (event: string, details?: any) => {
-  console.log(`[AttachmentPreview:DEBUG] ${event}`, details || '', new Date().toISOString());
+  if (import.meta.env.DEV) {
+    console.log(`[AttachmentPreview:DEBUG] ${event}`, details || '', new Date().toISOString());
+  }
 };
 
 // Add DOM visibility logging

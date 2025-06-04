@@ -32,15 +32,23 @@ const isBinaryUpdate = ref(true);
 // Load initial content from backend
 onMounted(async () => {
   isLoading.value = true;
-  console.log('Attempting to load content for ticket', props.ticketId, 'from URL:', `${API_BASE_URL}/collaboration/article/ticket-${props.ticketId}`);
+  if (import.meta.env.DEV) {
+    console.log('Attempting to load content for ticket', props.ticketId, 'from URL:', `${API_BASE_URL}/collaboration/article/ticket-${props.ticketId}`);
+  }
   try {
     const response = await axios.get(`${API_BASE_URL}/collaboration/article/ticket-${props.ticketId}`);
-    console.log('Response received:', response);
+    if (import.meta.env.DEV) {
+      console.log('Response received:', response);
+    }
     if (response.data.content) {
       content.value = response.data.content;
-      console.log('Loaded initial content for ticket', props.ticketId, 'Content length:', content.value.length);
+      if (import.meta.env.DEV) {
+        console.log('Loaded initial content for ticket', props.ticketId, 'Content length:', content.value.length);
+      }
     } else {
-      console.log('No initial content found for ticket', props.ticketId);
+      if (import.meta.env.DEV) {
+        console.log('No initial content found for ticket', props.ticketId);
+      }
       content.value = '';
     }
   } catch (error: any) {
@@ -57,7 +65,9 @@ onMounted(async () => {
   } finally {
     isLoading.value = false;
     emit('initialization-complete');
-    console.log('Initialization complete for ticket', props.ticketId);
+    if (import.meta.env.DEV) {
+      console.log('Initialization complete for ticket', props.ticketId);
+    }
   }
 });
 
@@ -72,13 +82,17 @@ const handleExpand = () => {
 // Save content to backend on update
 const handleContentChange = async (newValue: string) => {
   content.value = newValue;
-  console.log('Attempting to save content for ticket', props.ticketId, 'Content length:', newValue.length);
+  if (import.meta.env.DEV) {
+    console.log('Attempting to save content for ticket', props.ticketId, 'Content length:', newValue.length);
+  }
   try {
     const response = await axios.post(`${API_BASE_URL}/collaboration/sync`, {
       doc_id: `ticket-${props.ticketId}`,
       content: newValue
     });
-    console.log('Content saved successfully for ticket', props.ticketId, 'Response:', response.data);
+    if (import.meta.env.DEV) {
+      console.log('Content saved successfully for ticket', props.ticketId, 'Response:', response.data);
+    }
   } catch (error: any) {
     console.error('Error saving content for ticket', props.ticketId, ':', error);
     if (error.response) {
@@ -94,9 +108,9 @@ const handleContentChange = async (newValue: string) => {
 </script>
 
 <template>
-  <div class="bg-slate-800 rounded-xl border border-slate-700/50 flex flex-col w-full h-auto">
+  <div class="bg-slate-800 rounded-xl border border-slate-700/50 flex flex-col w-full h-auto hover:border-slate-600/50 transition-colors">
     <!-- Header -->
-    <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex justify-between items-center">
+    <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex justify-between items-center rounded-t-xl">
       <h2 class="text-lg font-medium text-white">Ticket Notes</h2>
       <button
         @click="handleExpand"

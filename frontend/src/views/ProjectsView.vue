@@ -104,83 +104,104 @@ const removeProject = async (event: Event, projectId: number) => {
 
 <template>
   <div class="flex flex-col h-full">
-    <div class="flex flex-col gap-4 p-6">
-      <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-semibold text-white">Projects</h1>
+    <!-- Header Section -->
+    <div class="px-6 py-4 bg-slate-800/50 border-b border-slate-700/50">
+      <div class="flex justify-between items-center">
+        <h1 class="text-xl font-medium text-white">Projects</h1>
         <button
           @click="showCreateModal = true"
-          class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          class="px-4 py-2 text-sm font-medium bg-blue-600/20 text-blue-400 rounded-lg hover:bg-blue-600/30 transition-colors flex items-center gap-2"
           :disabled="isLoading"
         >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+          </svg>
           Create Project
         </button>
       </div>
+    </div>
 
+    <div class="flex flex-col gap-4 p-6">
       <!-- Error message -->
-      <div v-if="error" class="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg mb-4">
+      <div v-if="error" class="bg-red-900/30 border border-red-700/30 text-red-400 px-4 py-3 rounded-lg">
         {{ error }}
       </div>
 
+      <!-- Loading State -->
       <div v-if="isLoading" class="flex justify-center items-center py-8">
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
       </div>
 
-      <div v-else-if="projects.length === 0" class="text-center py-8">
+      <!-- Empty State -->
+      <div v-else-if="projects.length === 0" class="bg-slate-800 rounded-xl border border-slate-700/50 p-8 text-center">
         <p class="text-slate-400">No projects found. Create your first project to get started.</p>
       </div>
 
+      <!-- Projects Grid -->
       <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div
           v-for="project in projects"
           @click="openProject(project.id)" 
           :key="project.id"
-          class="bg-slate-800 rounded-lg p-4 group relative hover:bg-slate-700 transition-colors cursor-pointerno"
+          class="bg-slate-800 rounded-xl border border-slate-700/50 overflow-hidden hover:border-slate-600/50 transition-colors cursor-pointer"
         >
-          <div class="flex flex-col gap-2">
-            <div class="flex items-start justify-between">
-              <h3 class="text-lg font-medium text-white">{{ project.name }}</h3>
-              <span
-                :class="{
-                  'text-green-400': project.status === 'active',
-                  'text-blue-400': project.status === 'completed',
-                  'text-gray-400': project.status === 'archived'
-                }"
-                class="text-sm px-2 py-1 rounded-full bg-slate-700/50"
-              >
-                {{ project.status }}
-              </span>
-            </div>
-            <p class="text-slate-400 text-sm mt-3 line-clamp-2">{{ project.description }}</p>
-            <div class="mt-6 flex items-center gap-4 text-sm text-slate-400">
-              <span class="flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd" />
-                </svg>
-                {{ project.ticketCount }} tickets
-              </span>
+          <!-- Project Header -->
+          <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div class="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></div>
+                <h3 class="font-medium text-white truncate">{{ project.name }}</h3>
+                <div 
+                  class="px-2 py-1 rounded-md text-xs font-medium border flex-shrink-0"
+                  :class="{
+                    'bg-green-900/30 text-green-400 border-green-700/30': project.status === 'active',
+                    'bg-blue-900/30 text-blue-400 border-blue-700/30': project.status === 'completed',
+                    'bg-slate-900/30 text-slate-400 border-slate-700/30': project.status === 'archived'
+                  }"
+                >
+                  {{ project.status }}
+                </div>
+              </div>
+              
+              <!-- Action buttons -->
+              <div class="flex items-center gap-1 ml-2">
+                <button 
+                  @click="(e) => openEditModal(e, project)" 
+                  class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-600 rounded-md transition-colors"
+                  title="Edit project"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+                <button 
+                  @click="(e) => removeProject(e, project.id)" 
+                  class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-900/20 rounded-md transition-colors"
+                  title="Delete project"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
           
-          <!-- Action buttons -->
-          <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button 
-              @click="(e) => openEditModal(e, project)" 
-              class="p-1 text-slate-400 hover:text-white"
-              title="Edit project"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-              </svg>
-            </button>
-            <button 
-              @click="(e) => removeProject(e, project.id)" 
-              class="p-1 text-slate-400 hover:text-red-400"
-              title="Delete project"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-              </svg>
-            </button>
+          <!-- Project Content -->
+          <div class="p-4">
+            <div class="flex flex-col gap-3">
+              <p class="text-slate-400 text-sm line-clamp-2">{{ project.description }}</p>
+              
+              <!-- Project Stats -->
+              <div class="pt-2 border-t border-slate-700/50">
+                <div class="flex items-center gap-2 text-sm text-slate-400">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                  {{ project.ticketCount }} tickets
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

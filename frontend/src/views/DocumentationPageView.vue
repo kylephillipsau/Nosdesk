@@ -7,6 +7,7 @@ import documentationService from "@/services/documentationService";
 import ticketService from "@/services/ticketService";
 import type { Article, Page, PageChild } from "@/services/documentationService";
 import BackButton from '@/components/common/BackButton.vue';
+import DeleteButton from '@/components/common/DeleteButton.vue';
 import { useDocumentationNavStore } from "@/stores/documentationNav";
 import mitt from 'mitt';
 import DocumentationTocItem from '@/components/documentationComponents/DocumentationTocItem.vue';
@@ -281,8 +282,7 @@ const saveDocument = async () => {
       // Save page content
       const updatedPage = await documentationService.savePageContent(
         String(page.value.id), 
-        editContent.value,
-        'System Admin' // Default author
+        editContent.value
       );
       
       if (updatedPage) {
@@ -433,7 +433,6 @@ const createNewPage = async () => {
     const newPageData = {
       title: "New Documentation Page",
       content: "# New Documentation Page\n\nStart writing your documentation here...",
-      author: "System Admin",
       description: "Add a description here",
       status: "draft",
       icon: "📄",
@@ -501,7 +500,6 @@ const createFromTicket = async () => {
         title: `Documentation: ${ticket.title}`,
         description: `Documentation created from ticket #${ticket.id}`,
         content: ticket.article_content || '', // Use empty string if article_content is null
-        author: ticket.assignee || 'System Admin',
         lastUpdated: new Date().toISOString(),
         status: 'published',
         icon: 'mdi-text-box-outline'
@@ -516,6 +514,52 @@ const createFromTicket = async () => {
     }
   } catch (error) {
     console.error('Error creating documentation from ticket:', error);
+  }
+};
+
+// Handle delete page
+const handleDeletePage = async () => {
+  if (!article.value && !page.value) {
+    return;
+  }
+  
+  try {
+    isSaving.value = true;
+    saveMessage.value = "Deleting document...";
+    showSuccessMessage.value = true;
+    
+    const pageId = article.value?.id || page.value?.id;
+    if (pageId) {
+      const success = await documentationService.deleteArticle(pageId);
+      
+      if (success) {
+        // Emit a delete event for the documentation nav store
+        docsEmitter.emit('doc:deleted', { id: pageId });
+        
+        // Update the sidebar
+        documentationNavStore.refreshPages();
+        
+        saveMessage.value = "Document deleted successfully";
+        
+        // Navigate back to documentation index after a short delay
+        setTimeout(() => {
+          router.push('/documentation');
+        }, 1000);
+      } else {
+        saveMessage.value = "Error deleting document";
+        setTimeout(() => {
+          showSuccessMessage.value = false;
+        }, 3000);
+      }
+    }
+  } catch (error) {
+    console.error('Error deleting page:', error);
+    saveMessage.value = "Error deleting document";
+    setTimeout(() => {
+      showSuccessMessage.value = false;
+    }, 3000);
+  } finally {
+    isSaving.value = false;
   }
 };
 
@@ -873,6 +917,12 @@ onUnmounted(() => {
             </svg>
             Saving...
           </span>
+          <!-- Delete button for non-ticket notes -->
+          <DeleteButton 
+            v-if="!isTicketNote && !isIndexPage" 
+            :itemName="'documentation page'"
+            @delete="handleDeletePage"
+          />
         </div>
         <div v-else class="flex justify-end">
           <!-- Empty div for consistent grid layout when no metadata -->

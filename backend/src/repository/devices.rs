@@ -2,6 +2,7 @@ use diesel::prelude::*;
 use diesel::QueryResult;
 use diesel::result::Error;
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::db::DbConnection;
 use crate::models::*;
@@ -144,7 +145,7 @@ pub fn get_device_by_entra_id(conn: &mut DbConnection, entra_device_id: &str) ->
         .first(conn)
 }
 
-pub fn get_devices_by_user(conn: &mut DbConnection, user_uuid: &str) -> QueryResult<Vec<Device>> {
+pub fn get_devices_by_user(conn: &mut DbConnection, user_uuid: &Uuid) -> QueryResult<Vec<Device>> {
     devices::table
         .filter(devices::primary_user_uuid.eq(user_uuid))
         .order_by(devices::name.asc())
@@ -222,7 +223,7 @@ pub fn upsert_device_by_entra_id(
         .get_result(conn)
 }
 
-pub fn get_devices_for_user(conn: &mut DbConnection, user_uuid: &str) -> QueryResult<Vec<Device>> {
+pub fn get_devices_for_user(conn: &mut DbConnection, user_uuid: &Uuid) -> QueryResult<Vec<Device>> {
     use crate::schema::devices::dsl::*;
     
     devices

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use uuid::Uuid;
 
 use crate::db;
 use crate::models::{NewTicket, TicketStatus, TicketPriority, TicketUpdate, ArticleContentChunk, TicketsJson, TicketJson};
@@ -250,17 +251,15 @@ pub async fn create_empty_ticket(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    // Create a new ticket with default values
-    let now = Local::now().naive_local();
+    // Create a new ticket with default values using proper model fields
     let empty_ticket = NewTicket {
         title: "New Ticket".to_string(),
+        description: Some("".to_string()),
         status: TicketStatus::Open,
         priority: TicketPriority::Medium,
-        created: now,
-        modified: now,
-        assignee: None,
-        requester: "".to_string(),
-        closed_at: None,
+        requester_uuid: Uuid::new_v4(), // TODO: Get from authenticated user
+        assignee_uuid: None,
+        device_id: None,
     };
 
     // Create the ticket and then add empty article content
@@ -268,7 +267,7 @@ pub async fn create_empty_ticket(
         Ok(ticket) => {
             // Create empty article content for the ticket
             let new_article_content = crate::models::NewArticleContent {
-                content: Vec::new(), // Empty byte vector for binary content
+                content: "".to_string(), // Empty string for content
                 ticket_id: ticket.id,
             };
             
@@ -307,33 +306,14 @@ pub async fn update_ticket_partial(
 
     println!("Received update request for ticket {}: {:?}", ticket_id, ticket_update);
     
-    // Ensure modified date is set if not provided
+    // Ensure updated_at date is set if not provided
     let mut update_data = ticket_update.into_inner();
-    if update_data.modified.is_none() {
-        let now = Local::now().naive_local();
-        println!("No modified date provided, using current time: {}", now);
-        update_data.modified = Some(now);
+    if update_data.updated_at.is_none() {
+        let now = chrono::Utc::now().naive_utc();
+        println!("No updated_at date provided, using current time: {}", now);
+        update_data.updated_at = Some(now);
     } else {
-        println!("Using provided modified date: {:?}", update_data.modified);
-    }
-
-    // If status is being changed to closed, set closed_at timestamp
-    if let Some(status) = &update_data.status {
-        if *status == TicketStatus::Closed {
-            // Check if we're changing to closed status
-            let current_ticket = repository::get_ticket_by_id(&mut conn, ticket_id);
-            if let Ok(ticket) = current_ticket {
-                if ticket.status != TicketStatus::Closed {
-                    // Only set closed_at if it's a transition to closed
-                    let now = Local::now().naive_local();
-                    println!("Setting closed_at to current time: {}", now);
-                    update_data.closed_at = Some(Some(now));
-                }
-            }
-        } else if *status != TicketStatus::Closed {
-            // If changing from closed to another status, clear the closed_at timestamp
-            update_data.closed_at = Some(None);
-        }
+        println!("Using provided updated_at date: {:?}", update_data.updated_at);
     }
 
     match repository::update_ticket_partial(&mut conn, ticket_id, update_data) {

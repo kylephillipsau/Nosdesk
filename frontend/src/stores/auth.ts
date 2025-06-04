@@ -69,7 +69,10 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       loading.value = true;
-      console.log('Fetching user data...');
+      // Only log in development or when explicitly requested
+      if (import.meta.env.DEV) {
+        console.log('Fetching user data...');
+      }
       
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${token.value}`

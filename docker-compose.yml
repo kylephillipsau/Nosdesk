@@ -1,0 +1,113 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: nosdesk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: helpdesk
+      POSTGRES_USER: nosdesk
+      POSTGRES_PASSWORD: nosdesk_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - nosdesk-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nosdesk -d helpdesk"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: nosdesk-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass nosdesk_redis_password
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - nosdesk-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Backend API and Frontend
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: nosdesk-backend
+    restart: unless-stopped
+    environment:
+      # Database Configuration
+      DATABASE_URL: postgres://nosdesk:nosdesk_password@postgres:5432/helpdesk?sslmode=prefer
+      DB_MAX_CONNECTIONS: 10
+      DB_MIN_CONNECTIONS: 1
+      DB_CONNECTION_TIMEOUT: 30
+
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production}
+      JWT_EXPIRY_HOURS: 24
+
+      # Server Configuration
+      HOST: 0.0.0.0
+      PORT: 8080
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Security Configuration
+      RATE_LIMIT_PER_MINUTE: 60
+      MAX_FILE_SIZE_MB: 50
+
+      # CORS Configuration - Updated for single-container setup
+      FRONTEND_URL: http://localhost:3000
+      ADDITIONAL_CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:3000
+
+      # Redis Configuration
+      REDIS_URL: redis://:nosdesk_redis_password@redis:6379
+
+      # Microsoft Entra ID Configuration (optional)
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:3000/auth/microsoft/callback}
+    volumes:
+      - backend_uploads:/app/uploads
+    ports:
+      - "3000:8080"
+      - "8080:8080"
+    networks:
+      - nosdesk-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  nosdesk-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

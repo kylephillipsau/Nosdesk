@@ -1,6 +1,7 @@
 use diesel::prelude::*;
 use diesel::result::Error;
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::db::DbConnection;
 use crate::models::{UserAuthIdentity, NewUserAuthIdentity, UserAuthIdentityDisplay, AuthProvider};
@@ -28,10 +29,10 @@ pub fn get_user_identities(
 
 // Get all auth identities for a user by UUID
 pub fn get_user_identities_by_uuid(
-    user_uuid: &str,
+    user_uuid: &Uuid,
     conn: &mut DbConnection,
 ) -> Result<Vec<UserAuthIdentity>, Error> {
-    let user = crate::repository::get_user_by_uuid(user_uuid, conn)?;
+    let user = crate::repository::users::get_user_by_uuid(user_uuid, conn)?;
     user_auth_identities::table
         .filter(user_auth_identities::user_id.eq(user.id))
         .load::<UserAuthIdentity>(conn)
@@ -71,10 +72,10 @@ pub fn get_user_identities_display(
 
 // Get identities with provider info for display by UUID
 pub fn get_user_identities_display_by_uuid(
-    user_uuid: &str,
+    user_uuid: &Uuid,
     conn: &mut DbConnection,
 ) -> Result<Vec<UserAuthIdentityDisplay>, Error> {
-    let user = crate::repository::get_user_by_uuid(user_uuid, conn)?;
+    let user = crate::repository::users::get_user_by_uuid(user_uuid, conn)?;
     
     user_auth_identities::table
         .inner_join(auth_providers::table)
@@ -116,8 +117,8 @@ pub fn find_user_by_identity(
     
     // Then find the identity and return the user_id
     let result = user_auth_identities::table
-        .filter(user_auth_identities::auth_provider_id.eq(provider.id))
-        .filter(user_auth_identities::provider_user_id.eq(provider_user_id))
+        .filter(user_auth_identities::provider_id.eq(provider.id))
+        .filter(user_auth_identities::external_id.eq(provider_user_id))
         .select(user_auth_identities::user_id)
         .first::<i32>(conn)
         .optional()?;
@@ -142,18 +143,17 @@ pub fn delete_identity(
 // Delete an auth identity by user UUID
 pub fn delete_identity_by_uuid(
     identity_id: i32,
-    user_uuid: &str, // For security, ensure the identity belongs to this user
+    user_uuid: &Uuid, // For security, ensure the identity belongs to this user
     conn: &mut DbConnection,
 ) -> Result<usize, Error> {
     // Get the user ID from UUID
-    let user = crate::repository::get_user_by_uuid(user_uuid, conn)?;
+    let user = crate::repository::users::get_user_by_uuid(user_uuid, conn)?;
     
     diesel::delete(
         user_auth_identities::table
             .filter(user_auth_identities::id.eq(identity_id))
             .filter(user_auth_identities::user_id.eq(user.id))
-    )
-    .execute(conn)
+    ).execute(conn)
 }
 
 // Check if a user has any identities of a specific provider type
@@ -170,7 +170,7 @@ pub fn has_provider_identity(
     // Check if the user has an identity for this provider
     let count = user_auth_identities::table
         .filter(user_auth_identities::user_id.eq(user_id))
-        .filter(user_auth_identities::auth_provider_id.eq(provider.id))
+        .filter(user_auth_identities::provider_id.eq(provider.id))
         .count()
         .get_result::<i64>(conn)?;
     
@@ -183,6 +183,6 @@ pub fn get_identities_by_provider(
     conn: &mut DbConnection,
 ) -> Result<Vec<UserAuthIdentity>, Error> {
     user_auth_identities::table
-        .filter(user_auth_identities::auth_provider_id.eq(provider_id))
+        .filter(user_auth_identities::provider_id.eq(provider_id))
         .load::<UserAuthIdentity>(conn)
 } 

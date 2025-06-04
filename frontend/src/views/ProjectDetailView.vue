@@ -188,6 +188,49 @@ const getPriorityClass = (priority: string) => {
 // Get existing ticket IDs for filtering in the ticket selection modal
 const existingTicketIds = computed(() => tickets.value.map(ticket => ticket.id))
 
+// Format date helper function
+const formatDate = (dateString: string): string => {
+  try {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffTime = now.getTime() - date.getTime();
+    const diffMinutes = Math.floor(diffTime / (1000 * 60));
+
+    if (diffMinutes < 1) {
+      return 'just now';
+    } else if (diffMinutes < 60) {
+      return `${diffMinutes}m ago`;
+    } else if (diffMinutes < 1440) {
+      const hours = Math.floor(diffMinutes / 60);
+      return `${hours}h ago`;
+    } else {
+      const days = Math.floor(diffMinutes / 1440);
+      return `${days}d ago`;
+    }
+  } catch (e) {
+    return 'unknown';
+  }
+}
+
+// Get ticket updated date from various possible field names
+const getTicketUpdatedDate = (ticket: any): string => {
+  const possibleFields = ['updated_at', 'updatedAt', 'updated', 'lastUpdated', 'modifiedAt'];
+  
+  for (const field of possibleFields) {
+    if (ticket[field]) {
+      return formatDate(ticket[field]);
+    }
+  }
+  
+  // Fallback to created date if available
+  if (ticket.created_at || ticket.createdAt || ticket.created) {
+    const dateField = ticket.created_at || ticket.createdAt || ticket.created;
+    return formatDate(dateField);
+  }
+  
+  return 'N/A';
+}
+
 // Update URL when view changes
 const setActiveTab = (tab: string) => {
   router.replace({ 
@@ -274,13 +317,14 @@ watch(() => route.query.view, (newValue) => {
             >
               List View
             </button>
-            <button 
+            <!-- Gantt Planner to be implemented in a future release -->
+            <!-- <button 
               @click="setActiveTab('gantt')"
               class="py-2 px-4 border-b-2 font-medium text-sm"
               :class="activeTab === 'gantt' ? 'border-blue-500 text-blue-500' : 'border-transparent text-slate-400 hover:text-slate-300'"
             >
               Gantt Planner
-            </button>
+            </button> -->
           </div>
         </div>
 
@@ -300,116 +344,158 @@ watch(() => route.query.view, (newValue) => {
             <h2 class="text-xl font-medium text-white">Tickets</h2>
             <button 
               @click="showAddTicketModal = true"
-              class="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+              class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
             >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
               Add Ticket
             </button>
           </div>
           
-          <div v-if="isTicketsLoading" class="flex justify-center items-center py-8">
-            <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+          <div v-if="isTicketsLoading" class="text-center py-8 text-slate-400">
+            <div class="inline-flex items-center gap-3">
+              <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span>Loading tickets...</span>
+            </div>
           </div>
           
-          <div v-else-if="tickets.length === 0" class="text-center py-8 bg-slate-800 rounded-lg">
-            <p class="text-slate-400">No tickets associated with this project.</p>
-            <button 
-              @click="showAddTicketModal = true"
-              class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Add Tickets
-            </button>
-          </div>
-          
-          <div v-else class="bg-slate-800 rounded-lg overflow-hidden">
-            <div class="w-full">
-              <!-- Header - Hidden on mobile -->
-              <div class="hidden md:flex items-center border-b border-slate-700 bg-slate-800 text-xs font-medium text-slate-400 uppercase tracking-wider">
-                <div class="px-6 py-3 w-16">ID</div>
-                <div class="px-6 py-3 flex-1">Title</div>
-                <div class="px-6 py-3 w-28">Status</div>
-                <div class="px-6 py-3 w-28">Priority</div>
-                <div class="px-6 py-3 w-40">Assignee</div>
-                <div class="px-6 py-3 w-20">Actions</div>
+          <div v-else-if="tickets.length === 0" class="text-center py-12 text-slate-400">
+            <div class="inline-flex flex-col items-center gap-4">
+              <svg class="w-16 h-16 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <div class="text-center">
+                <p class="text-lg font-medium text-slate-300">No tickets in this project</p>
+                <p class="text-sm text-slate-500 mt-1">Add tickets to get started with project management</p>
               </div>
-              
-              <!-- Rows -->
-              <div class="divide-y divide-slate-700">
-                <div 
-                  v-for="ticket in tickets" 
-                  :key="ticket.id"
-                  class="flex md:items-center flex-col md:flex-row hover:bg-slate-700 transition-colors p-4 md:p-0"
-                >
-                  <!-- Mobile View Header -->
-                  <div class="flex items-center justify-between w-full mb-2 md:hidden">
-                    <div class="text-sm text-slate-300 font-medium">#{{ ticket.id }}</div>
-                    <div class="flex items-center space-x-2">
-                      <StatusBadge type="status" :value="ticket.status" />
-                      <StatusBadge type="priority" :value="ticket.priority" short />
-                      <button 
-                        @click="handleRemoveTicket(ticket.id)"
-                        class="text-red-400 hover:text-red-300 transition-colors ml-2"
-                        title="Remove from project"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                          <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-                        </svg>
-                      </button>
+              <button 
+                @click="showAddTicketModal = true"
+                class="mt-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Add Your First Ticket
+              </button>
+            </div>
+          </div>
+          
+          <div v-else class="bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden">
+            <!-- Table header -->
+            <div class="bg-slate-700/50 px-4 py-3 border-b border-slate-600/50 sticky top-0 z-10">
+              <div class="grid grid-cols-12 gap-3 text-xs font-medium text-slate-300 uppercase tracking-wide">
+                <div class="col-span-1">ID</div>
+                <div class="col-span-3">Title</div>
+                <div class="col-span-1">Status</div>
+                <div class="col-span-1">Priority</div>
+                <div class="col-span-3">Assignee</div>
+                <div class="col-span-1">Updated</div>
+                <div class="col-span-2 text-right">Actions</div>
+              </div>
+            </div>
+            
+            <!-- Ticket rows -->
+            <div class="divide-y divide-slate-700/30">
+              <div 
+                v-for="ticket in tickets" 
+                :key="ticket.id"
+                class="group relative hover:bg-slate-700/30 transition-colors duration-150"
+              >
+                <div class="px-4 py-3">
+                  <div class="grid grid-cols-12 gap-3 items-center">
+                    <!-- Ticket ID -->
+                    <div class="col-span-1 min-w-0">
+                      <span class="text-sm font-mono text-slate-300">#{{ ticket.id }}</span>
                     </div>
-                  </div>
-                  
-                  <!-- Desktop View - ID Column -->
-                  <div class="hidden md:block px-6 py-4 w-16 text-sm text-slate-300">#{{ ticket.id }}</div>
-                  
-                  <!-- Title - Both Views -->
-                  <div 
-                    @click="goToTicket(ticket.id)"
-                    class="w-full md:px-4 md:py-2 md:flex-1 text-sm text-white cursor-pointer hover:underline font-medium md:font-normal mb-2 md:mb-0"
-                  >
-                    {{ ticket.title }}
-                  </div>
-                  
-                  <!-- Desktop View - Status, Priority, Assignee, Actions -->
-                  <div class="hidden md:block px-2 py-4 w-28 text-nowrap">
-                    <StatusBadge 
-                      type="status" 
-                      :value="ticket.status"
-                    />
-                  </div>
-                  <div class="hidden md:block px-2 py-4 w-28">
-                    <StatusBadge 
-                      type="priority" 
-                      :value="ticket.priority"
-                      short
-                    />
-                  </div>
-                  
-                  <!-- Assignee - Both Views -->
-                  <div class="w-full md:w-40 md:px-4 md:py-2 flex items-center">
-                    <div class="text-xs text-slate-400 md:hidden mr-2">Assigned to:</div>
-                    <UserAvatar 
-                      v-if="ticket.assignee" 
-                      :name="ticket.assignee" 
-                      size="sm" 
-                      :showName="true"
-                      :clickable="false"
-                    />
-                    <span v-else class="text-xs text-slate-400">Unassigned</span>
-                  </div>
-                  
-                  <!-- Desktop View - Actions -->
-                  <div class="hidden md:flex items-center px-6 py-4 w-20">
-                    <button 
-                      @click="handleRemoveTicket(ticket.id)"
-                      class="text-red-400 hover:text-red-300 transition-colors"
-                      title="Remove from project"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
-                      </svg>
-                    </button>
+
+                    <!-- Title -->
+                    <div class="col-span-3 min-w-0">
+                      <div 
+                        @click="goToTicket(ticket.id)"
+                        class="cursor-pointer hover:underline"
+                      >
+                        <div class="font-medium text-white truncate text-sm">{{ ticket.title }}</div>
+                        <div v-if="ticket.description" class="text-xs text-slate-400 truncate mt-1">{{ ticket.description }}</div>
+                      </div>
+                    </div>
+
+                    <!-- Status -->
+                    <div class="col-span-1 min-w-0">
+                      <StatusBadge 
+                        type="status" 
+                        :value="ticket.status"
+                      />
+                    </div>
+
+                    <!-- Priority -->
+                    <div class="col-span-1 min-w-0">
+                      <StatusBadge 
+                        type="priority"
+                        class="text-sm"
+                        :value="ticket.priority"
+                        short
+                      />
+                    </div>
+
+                    <!-- Assignee -->
+                    <div class="col-span-3 min-w-0">
+                      <div v-if="ticket.assignee" class="flex items-center gap-2">
+                        <UserAvatar 
+                          :name="ticket.assignee" 
+                          size="sm" 
+                          :show-name="true"
+                          :clickable="false"
+                        />
+                      </div>
+                      <div v-else class="flex items-center gap-2 text-slate-500">
+                        <div class="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center">
+                          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+                          </svg>
+                        </div>
+                        <span class="text-xs">Unassigned</span>
+                      </div>
+                    </div>
+
+                    <!-- Updated -->
+                    <div class="col-span-1 min-w-0">
+                      <span class="text-xs text-slate-400">
+                        {{ getTicketUpdatedDate(ticket) }}
+                      </span>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="col-span-2 text-right">
+                      <div class="flex items-center justify-end gap-1">
+                        <button 
+                          @click="goToTicket(ticket.id)"
+                          class="text-blue-400 hover:text-blue-300 text-xs font-medium px-2 py-1 rounded hover:bg-blue-900/20 transition-colors"
+                          title="View ticket"
+                        >
+                          View
+                        </button>
+                        <button 
+                          @click="handleRemoveTicket(ticket.id)"
+                          class="text-red-400 hover:text-red-300 text-xs font-medium px-2 py-1 rounded hover:bg-red-900/20 transition-colors"
+                          title="Remove from project"
+                        >
+                          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+            </div>
+            
+            <!-- Footer -->
+            <div class="p-3 text-center border-t border-slate-700/30 bg-slate-700/20">
+              <span class="text-xs text-slate-500">
+                {{ tickets.length }} ticket{{ tickets.length !== 1 ? 's' : '' }} in this project
+              </span>
             </div>
           </div>
         </div>

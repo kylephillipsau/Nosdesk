@@ -55,8 +55,21 @@ const preWarmUserCache = async (devices: Device[]) => {
     
     console.log(`🚀 Pre-warming user cache for ${userUuids.length} device users`);
     
-    // Use our batching system to efficiently load all users
-    await dataStore.getUsersByUuids(userUuids);
+    // Check which users are already cached to avoid unnecessary requests
+    const uncachedUuids = userUuids.filter(uuid => {
+      const cachedName = dataStore.getUserName(uuid);
+      return !cachedName; // If no cached name, user is not cached
+    });
+    
+    if (uncachedUuids.length === 0) {
+      console.log('✅ All device users already cached, skipping pre-warm');
+      return;
+    }
+    
+    console.log(`📡 Loading ${uncachedUuids.length} uncached users (${userUuids.length - uncachedUuids.length} already cached)`);
+    
+    // Use our batching system to efficiently load only uncached users
+    await dataStore.getUsersByUuids(uncachedUuids);
     
     console.log('✅ Device user cache pre-warming completed');
   } catch (error) {

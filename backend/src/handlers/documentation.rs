@@ -1,11 +1,15 @@
 use actix_web::{web, HttpResponse, Responder};
+use actix_web_httpauth::extractors::bearer::BearerAuth;
 use serde_json::json;
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
+use uuid::Uuid;
 
 use crate::db::Pool;
 use crate::models::{NewDocumentationPage, DocumentationPageWithChildren, DocumentationStatus};
 use crate::repository;
+use crate::handlers::auth::validate_token_internal;
+use crate::utils;
 
 // Get all documentation pages
 pub async fn get_documentation_pages(
@@ -58,22 +62,36 @@ pub async fn get_documentation_page_by_slug(
 
 // Create a new documentation page
 pub async fn create_documentation_page(
+    auth: BearerAuth,
     page: web::Json<NewDocumentationPage>,
     pool: web::Data<Pool>,
 ) -> impl Responder {
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Validate token and get user info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
+    };
+
     let mut new_page = page.into_inner();
-    new_page.created_at = Utc::now().naive_utc();
-    new_page.updated_at = Utc::now().naive_utc();
+    
+    // Set the created_by and last_edited_by fields to the authenticated user's UUID
+    let user_uuid = match utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid user UUID in token"),
+    };
+    
+    new_page.created_by = user_uuid;
+    new_page.last_edited_by = user_uuid;
     
     // Set a default display_order if not provided
     if new_page.display_order.is_none() {
         new_page.display_order = Some(0);
     }
-
-    let mut conn = match pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
-    };
 
     match repository::create_documentation_page(new_page, &mut conn) {
         Ok(created_page) => HttpResponse::Created().json(created_page),
@@ -83,6 +101,7 @@ pub async fn create_documentation_page(
 
 // Update an existing documentation page
 pub async fn update_documentation_page(
+    auth: BearerAuth,
     pool: web::Data<Pool>,
     path: web::Path<i32>,
     page: web::Json<NewDocumentationPage>,
@@ -93,24 +112,47 @@ pub async fn update_documentation_page(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
+    // Validate token and get user info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
+    };
+
     // Check if the page exists and get its current state
     match repository::get_documentation_page(page_id, &mut conn) {
-        Ok(mut existing_page) => {
-            // Update the fields from the request
+        Ok(existing_page) => {
+            // Get the user UUID for last_edited_by
+            let user_uuid = match utils::parse_uuid(&claims.sub) {
+                Ok(uuid) => uuid,
+                Err(_) => return HttpResponse::BadRequest().json("Invalid user UUID in token"),
+            };
+            
+            // Create update struct with the fields from the request
             let new_page = page.into_inner();
-            existing_page.slug = new_page.slug;
-            existing_page.title = new_page.title;
-            existing_page.description = new_page.description;
-            existing_page.content = new_page.content;
-            existing_page.author = new_page.author;
-            existing_page.status = new_page.status;
-            existing_page.icon = new_page.icon;
-            existing_page.updated_at = Utc::now().naive_utc();
-            existing_page.parent_id = new_page.parent_id;
-            existing_page.ticket_id = new_page.ticket_id;
+            let page_update = crate::models::DocumentationPageUpdate {
+                title: Some(new_page.title),
+                slug: new_page.slug,
+                icon: new_page.icon,
+                cover_image: new_page.cover_image,
+                status: Some(new_page.status),
+                last_edited_by: Some(user_uuid),
+                parent_id: Some(new_page.parent_id),
+                ticket_id: Some(new_page.ticket_id),
+                display_order: new_page.display_order,
+                is_public: Some(new_page.is_public),
+                is_template: Some(new_page.is_template),
+                archived_at: None,
+                yjs_state_vector: new_page.yjs_state_vector,
+                yjs_document: new_page.yjs_document,
+                yjs_client_id: new_page.yjs_client_id,
+                estimated_reading_time: new_page.estimated_reading_time,
+                word_count: new_page.word_count,
+                has_unsaved_changes: Some(new_page.has_unsaved_changes),
+                updated_at: Some(chrono::Utc::now().naive_utc()),
+            };
 
             // Update the page
-            match repository::update_documentation_page(&mut conn, &existing_page) {
+            match repository::update_documentation_page(&mut conn, page_id, &page_update) {
                 Ok(updated_page) => {
                     println!("Documentation page updated: {}", updated_page.id);
                     HttpResponse::Ok().json(updated_page)
@@ -127,6 +169,7 @@ pub async fn update_documentation_page(
 
 // Delete a documentation page
 pub async fn delete_documentation_page(
+    auth: BearerAuth,
     pool: web::Data<Pool>,
     path: web::Path<i32>,
 ) -> impl Responder {
@@ -136,13 +179,19 @@ pub async fn delete_documentation_page(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
+    // Validate token and get user info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
+    };
+
     // Check if the page exists
     match repository::get_documentation_page(page_id, &mut conn) {
         Ok(_) => {
             // Delete the page
             match repository::delete_documentation_page(page_id, &mut conn) {
                 Ok(_) => {
-                    println!("Documentation page deleted: {}", page_id);
+                    println!("Documentation page deleted by {}: {}", claims.name, page_id);
                     HttpResponse::NoContent().finish()
                 },
                 Err(e) => {
@@ -383,13 +432,13 @@ pub async fn get_documentation_pages_by_ticket_id(
 pub struct CreateDocPageFromTicket {
     pub title: String,
     pub description: Option<String>,
-    pub author: String,
     pub icon: Option<String>,
     pub parent_id: Option<i32>,
 }
 
 // Create a documentation page from a ticket's article content
 pub async fn create_documentation_page_from_ticket(
+    auth: BearerAuth,
     pool: web::Data<Pool>,
     path: web::Path<i32>,
     page_data: web::Json<CreateDocPageFromTicket>,
@@ -398,6 +447,12 @@ pub async fn create_documentation_page_from_ticket(
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+
+    // Validate token and get user info
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
     };
 
     // Get the ticket's article content
@@ -409,21 +464,34 @@ pub async fn create_documentation_page_from_ticket(
     // Generate a slug from the title
     let slug = page_data.title.to_lowercase().replace(" ", "-");
 
-    // Create a new documentation page with the ticket's article content
-    let now = chrono::Utc::now().naive_utc();
-    let new_page = crate::models::NewDocumentationPage {
-        slug,
+    let now = Utc::now().naive_utc();
+    
+    // Get the user UUID for created_by and last_edited_by
+    let user_uuid = match utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid user UUID in token"),
+    };
+
+    let new_page = NewDocumentationPage {
+        uuid: Uuid::new_v4(),
         title: page_data.title.clone(),
-        description: page_data.description.clone(),
-        content: article_content.content,
-        author: page_data.author.clone(),
-        status: crate::models::DocumentationStatus::Draft,
+        slug: Some(slug),
         icon: page_data.icon.clone(),
-        created_at: now,
-        updated_at: now,
+        cover_image: None,
+        status: DocumentationStatus::Draft,
+        created_by: user_uuid,
+        last_edited_by: user_uuid,
         parent_id: page_data.parent_id,
         ticket_id: Some(ticket_id),
-        display_order: Some(0), // Default display order, will be updated when reordering
+        display_order: Some(0),
+        is_public: false,
+        is_template: false,
+        yjs_state_vector: None,
+        yjs_document: None,
+        yjs_client_id: None,
+        estimated_reading_time: None,
+        word_count: None,
+        has_unsaved_changes: false,
     };
 
     // Create the documentation page

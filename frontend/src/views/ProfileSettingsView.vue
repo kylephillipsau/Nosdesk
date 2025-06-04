@@ -14,6 +14,58 @@ const successMessage = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const fetchingUserData = ref(false);
 
+// Active tab for settings
+const activeTab = ref('profile');
+
+// Settings tabs
+const settingsTabs = [
+  { 
+    id: 'profile', 
+    label: 'Profile', 
+    icon: 'user',
+    color: '#FF66B3'
+  },
+  { 
+    id: 'appearance', 
+    label: 'Appearance', 
+    icon: 'palette',
+    color: '#8B5CF6'
+  },
+  { 
+    id: 'notifications', 
+    label: 'Notifications', 
+    icon: 'bell',
+    color: '#FDBD10'
+  },
+  { 
+    id: 'security', 
+    label: 'Security', 
+    icon: 'shield',
+    color: '#00C951'
+  }
+];
+
+// Appearance settings
+const darkMode = ref(true);
+const compactView = ref(false);
+const selectedTheme = ref('slate-dark');
+
+const themes = [
+  { id: 'slate-dark', name: 'Slate Dark', description: 'Default dark blue theme' },
+  { id: 'midnight', name: 'Midnight', description: 'Deep blue/black theme' },
+  { id: 'nord', name: 'Nord', description: 'Cool blue arctic theme' },
+  { id: 'monokai', name: 'Monokai', description: 'Vibrant dark theme with colored accents' },
+  { id: 'solarized-dark', name: 'Solarized Dark', description: 'Ethan Schoonover\'s dark theme' },
+  { id: 'dracula', name: 'Dracula', description: 'Dark theme with purple accents' },
+  { id: 'github-dark', name: 'GitHub Dark', description: 'GitHub\'s dark theme' },
+  { id: 'light', name: 'Light Mode', description: 'Light theme for daytime use' },
+];
+
+// Notification settings
+const emailNotifications = ref(true);
+const desktopNotifications = ref(false);
+const twoFactorAuth = ref(false);
+
 // Original user data for comparison
 const originalData = ref({
   name: '',
@@ -665,8 +717,49 @@ const deleteAuthIdentity = async (identityId: number, retryCount = 0) => {
   }
 };
 
+// Theme and settings functions
+const applyTheme = (themeId: string) => {
+  selectedTheme.value = themeId;
+  // TODO: Implement actual theme application logic
+  console.log(`Theme changed to: ${themeId}`);
+  successMessage.value = `Theme changed to ${themes.find(t => t.id === themeId)?.name}`;
+  setTimeout(() => successMessage.value = null, 3000);
+};
+
+const updateAppearanceSettings = async () => {
+  // TODO: Implement appearance settings save logic
+  console.log('Appearance settings updated:', { darkMode: darkMode.value, compactView: compactView.value });
+  successMessage.value = 'Appearance settings updated successfully';
+  setTimeout(() => successMessage.value = null, 3000);
+};
+
+const updateNotificationSettings = async () => {
+  // TODO: Implement notification settings save logic  
+  console.log('Notification settings updated:', { 
+    emailNotifications: emailNotifications.value, 
+    desktopNotifications: desktopNotifications.value 
+  });
+  successMessage.value = 'Notification preferences updated successfully';
+  setTimeout(() => successMessage.value = null, 3000);
+};
+
+const renderTabIcon = (iconName: string) => {
+  switch (iconName) {
+    case 'user':
+      return `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />`;
+    case 'palette':
+      return `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />`;
+    case 'bell':
+      return `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />`;
+    case 'shield':
+      return `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />`;
+    default:
+      return `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />`;
+  }
+};
+
 onMounted(async () => {
-  document.title = 'Profile Settings | Nosdesk';
+  document.title = 'Settings | Nosdesk';
   
   // Only attempt to fetch user data if we're authenticated
   if (!authStore.isAuthenticated) {
@@ -756,6 +849,14 @@ onMounted(async () => {
     </div>
     
     <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
+      <!-- Page Header -->
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-white">Settings</h1>
+        <p class="text-slate-400 mt-2">
+          Manage your profile, preferences, and security settings
+        </p>
+      </div>
+
       <!-- Success/Error messages -->
       <div v-if="successMessage" class="p-4 bg-green-900/50 text-green-400 rounded-lg">
         {{ successMessage }}
@@ -776,349 +877,505 @@ onMounted(async () => {
       </div>
 
       <!-- Main content when user data is loaded -->
-      <div v-else class="grid-container">
-        <!-- Profile Information Area -->
-        <div class="info-area flex flex-col gap-4">
-          <!-- Discord-inspired Profile Card -->
-          <div class="bg-slate-800 rounded-2xl overflow-hidden">
-            <!-- Cover/Banner Image -->
-            <div 
-              class="h-42 bg-gradient-to-r from-blue-600 to-purple-600 relative"
-              :style="formData.banner_url ? `background-image: url('${formData.banner_url}'); background-size: cover; background-position: center;` : ''"
+      <div v-else class="flex gap-8">
+        <!-- Sidebar Navigation -->
+        <div class="w-64 flex-shrink-0">
+          <nav class="flex flex-col gap-1">
+            <button
+              v-for="tab in settingsTabs"
+              :key="tab.id"
+              @click="activeTab = tab.id"
+              class="rounded-md transition-colors duration-200 text-white flex items-center gap-3 relative overflow-hidden px-3 py-2"
+              :class="[
+                activeTab === tab.id
+                  ? 'bg-slate-700/80 text-white font-medium'
+                  : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'
+              ]"
             >
-              <!-- Add cover image upload option -->
-              <button 
-                class="absolute bottom-2 right-2 bg-slate-800/50 hover:bg-slate-800/80 text-white rounded-full p-2 transition-colors"
-                @click="handleBannerClick"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </button>
-              <!-- Hidden banner file input -->
-              <input
-                ref="bannerFileInput"
-                type="file"
-                accept="image/*"
-                class="hidden"
-                @change="handleBannerChange"
-              />
-            </div>
-            
-            <!-- Profile Content -->
-            <div class="px-6 pt-20 pb-6 relative">
-              <!-- Avatar that overlaps the banner -->
+              <!-- Active indicator bar -->
+              <div
+                v-if="activeTab === tab.id"
+                class="absolute left-0 top-0 bottom-0 w-1"
+                :style="{ backgroundColor: tab.color }"
+              ></div>
+              
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" v-html="renderTabIcon(tab.icon)"></svg>
+              <span class="text-sm whitespace-nowrap">{{ tab.label }}</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- Content Area -->
+        <div class="flex-1">
+          <!-- Profile Tab -->
+          <div v-if="activeTab === 'profile'" class="space-y-6">
+            <!-- Discord-inspired Profile Card -->
+            <div class="bg-slate-800 rounded-2xl overflow-hidden">
+              <!-- Cover/Banner Image -->
               <div 
-                class="absolute -top-16 left-8 w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800 cursor-pointer shadow-lg"
-                @click="handleAvatarClick"
+                class="h-42 bg-gradient-to-r from-blue-600 to-purple-600 relative"
+                :style="formData.banner_url ? `background-image: url('${formData.banner_url}'); background-size: cover; background-position: center;` : ''"
               >
-                <UserAvatar
-                  :name="authStore.user?.name || ''"
-                  size="full"
-                  :avatar="formData.avatar_url || null"
-                  :showName="false"
-                  :clickable="false"
-                  class="w-full h-full"
-                  ref="userAvatarComponent"
-                />
-                <!-- Hover Overlay -->
-                <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-                  <div class="text-white flex flex-col items-center gap-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <span class="text-xs">Change Photo</span>
-                  </div>
-                </div>
-                <!-- Hidden file input -->
+                <!-- Add cover image upload option -->
+                <button 
+                  class="absolute bottom-2 right-2 bg-slate-800/50 hover:bg-slate-800/80 text-white rounded-full p-2 transition-colors"
+                  @click="handleBannerClick"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+                <!-- Hidden banner file input -->
                 <input
-                  ref="fileInput"
+                  ref="bannerFileInput"
                   type="file"
                   accept="image/*"
                   class="hidden"
-                  @change="handleFileChange"
+                  @change="handleBannerChange"
                 />
               </div>
               
-              <!-- User info section -->
-              <div class="flex justify-between items-start mb-8">
-                <div class="flex flex-col gap-2">
-                  <!-- Role badges section -->
-                  <div class="flex gap-2 mb-3">
-                    <div class="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">
-                      {{ authStore.user?.role || 'User' }}
-                    </div>
-                    <div v-if="authStore.isAdmin" class="px-3 py-1 bg-red-600/20 text-red-400 rounded-full text-sm font-medium">
-                      Admin
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <!-- Always Editable Fields -->
-              <div class="space-y-6">
-                <!-- Display name section with always-editable field -->
-                <div>
-                  <h3 class="text-sm font-medium text-slate-400 mb-2">Display Name</h3>
-                  <div class="flex items-start gap-2">
-                    <input
-                      v-model="formData.name"
-                      type="text"
-                      class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      placeholder="Your display name"
-                    />
-                    <button
-                      @click="updateName"
-                      :disabled="!nameModified || loading"
-                      class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
-                    >
-                      <span v-if="loading && nameModified" class="animate-spin h-4 w-4 mr-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </span>
-                      Save
-                    </button>
-                  </div>
-                </div>
-                
-                <!-- Pronouns field -->
-                <div>
-                  <h3 class="text-sm font-medium text-slate-400 mb-2">Pronouns</h3>
-                  <div class="flex items-start gap-2 w-full">
-                    <input
-                      v-model="formData.pronouns"
-                      type="text"
-                      class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      placeholder="Add pronouns (e.g., he/him, she/her, they/them)"
-                    />
-                    <button
-                      @click="updatePronouns"
-                      :disabled="!pronounsModified || loading"
-                      class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
-                    >
-                      <span v-if="loading && pronounsModified" class="animate-spin h-4 w-4 mr-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </span>
-                      Save
-                    </button>
-                  </div>
-                </div>
-                
-                <!-- Email section with always-editable field -->
-                <div>
-                  <h3 class="text-sm font-medium text-slate-400 mb-2">Email</h3>
-                  <div class="flex items-start gap-2">
-                    <input
-                      v-model="formData.email"
-                      type="email"
-                      class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                      placeholder="your.email@example.com"
-                    />
-                    <button
-                      @click="updateEmail"
-                      :disabled="!emailModified || loading"
-                      class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
-                    >
-                      <span v-if="loading && emailModified" class="animate-spin h-4 w-4 mr-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                      </span>
-                      Save
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Security Area -->
-        <div class="security-area flex flex-col gap-4">
-          <!-- Password Change Section -->
-          <div class="bg-slate-800 rounded-2xl p-6">
-            <h2 class="text-lg font-medium text-white mb-6">Security Settings</h2>
-            
-            <form @submit.prevent="updatePassword" class="flex flex-col gap-6">
-              <!-- Success/Error messages -->
-              <div v-if="successMessage" class="p-4 bg-green-900/50 text-green-400 rounded-lg">
-                {{ successMessage }}
-              </div>
-              <div v-if="error" class="p-4 bg-red-900/50 text-red-400 rounded-lg">
-                {{ error }}
-              </div>
-              
-              <!-- Current Password -->
-              <div class="flex flex-col gap-2">
-                <label for="currentPassword" class="text-sm font-medium text-slate-300">Current Password</label>
-                <input
-                  id="currentPassword"
-                  v-model="formData.currentPassword"
-                  type="password"
-                  class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  placeholder="Enter your current password"
-                />
-              </div>
-
-              <!-- New Password -->
-              <div class="flex flex-col gap-2">
-                <label for="newPassword" class="text-sm font-medium text-slate-300">New Password</label>
-                <input
-                  id="newPassword"
-                  v-model="formData.newPassword"
-                  type="password"
-                  class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  placeholder="Enter new password"
-                />
-              </div>
-
-              <!-- Confirm Password -->
-              <div class="flex flex-col gap-2">
-                <label for="confirmPassword" class="text-sm font-medium text-slate-300">Confirm New Password</label>
-                <input
-                  id="confirmPassword"
-                  v-model="formData.confirmPassword"
-                  type="password"
-                  class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  placeholder="Confirm new password"
-                />
-              </div>
-
-              <!-- Submit button for password change -->
-              <div class="flex justify-end pt-2">
-                <button
-                  type="submit"
-                  :disabled="loading"
-                  class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              <!-- Profile Content -->
+              <div class="px-6 pt-20 pb-6 relative">
+                <!-- Avatar that overlaps the banner -->
+                <div 
+                  class="absolute -top-16 left-8 w-32 h-32 rounded-full overflow-hidden border-4 border-slate-800 cursor-pointer shadow-lg"
+                  @click="handleAvatarClick"
                 >
-                  <span v-if="loading" class="animate-spin h-4 w-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  </span>
-                  {{ loading ? 'Updating...' : 'Update Password' }}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <!-- Authentication Methods Section -->
-          <div class="flex flex-col gap-2 bg-slate-800 rounded-2xl p-6 mt-4">
-            <h2 class="text-lg font-medium text-white mb-4">Authentication Methods</h2>
-            
-            <!-- Error message for identities -->
-            <div v-if="identityError" class="p-4 bg-red-900/50 text-red-400 rounded-lg mb-4">
-              {{ identityError }}
-            </div>
-            
-            <!-- Loading state -->
-            <div v-if="loadingIdentities" class="flex justify-center my-4">
-              <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
-            </div>
-            
-            <!-- Auth identities list -->
-            <div v-else-if="authIdentities.length" class="flex flex-col gap-2">
-              <div v-for="identity in authIdentities" :key="`auth-identity-${identity.id}-${identity.provider_type}`" 
-                   class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg"
-                   :title="'ID: ' + identity.id + ', Type: ' + identity.provider_type"
-              >
-                <div class="flex items-center gap-3">
-                  <!-- Provider icon with better visualization -->
-                  <div 
-                    class="w-8 h-8 flex items-center justify-center rounded-full text-white"
-                    :class="{
-                      'bg-blue-600': identity.provider_type === 'microsoft',
-                      'bg-green-600': identity.provider_type === 'google',
-                      'bg-gray-600': identity.provider_type === 'local',
-                      'bg-slate-600': !['microsoft', 'google', 'local'].includes(identity.provider_type)
-                    }"
-                  >
-                    <!-- Microsoft Logo -->
-                    <template v-if="identity.provider_type === 'microsoft'">
-                      <svg width="16" height="16" viewBox="0 0 21 21">
-                        <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                        <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-                        <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-                        <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                  <UserAvatar
+                    :name="authStore.user?.name || ''"
+                    size="full"
+                    :avatar="formData.avatar_url || null"
+                    :showName="false"
+                    :clickable="false"
+                    class="w-full h-full"
+                    ref="userAvatarComponent"
+                  />
+                  <!-- Hover Overlay -->
+                  <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                    <div class="text-white flex flex-col items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
-                    </template>
-                    
-                    <!-- Local Account Icon -->
-                    <template v-else-if="identity.provider_type === 'local'">
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                      </svg>
-                    </template>
-                    
-                    <!-- Fallback letter for other providers -->
-                    <template v-else>
-                      {{ identity.provider_type.charAt(0).toUpperCase() }}
-                    </template>
+                      <span class="text-xs">Change Photo</span>
+                    </div>
+                  </div>
+                  <!-- Hidden file input -->
+                  <input
+                    ref="fileInput"
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    @change="handleFileChange"
+                  />
+                </div>
+                
+                <!-- User info section -->
+                <div class="flex justify-between items-start mb-8">
+                  <div class="flex flex-col gap-2">
+                    <!-- Role badges section -->
+                    <div class="flex gap-2 mb-3">
+                      <div class="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">
+                        {{ authStore.user?.role || 'User' }}
+                      </div>
+                      <div v-if="authStore.isAdmin" class="px-3 py-1 bg-red-600/20 text-red-400 rounded-full text-sm font-medium">
+                        Admin
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Profile Fields -->
+                <div class="space-y-6">
+                  <!-- Display name section -->
+                  <div>
+                    <h3 class="text-sm font-medium text-slate-400 mb-2">Display Name</h3>
+                    <div class="flex items-start gap-2">
+                      <input
+                        v-model="formData.name"
+                        type="text"
+                        class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        placeholder="Your display name"
+                      />
+                      <button
+                        @click="updateName"
+                        :disabled="!nameModified || loading"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
+                      >
+                        <span v-if="loading && nameModified" class="animate-spin h-4 w-4 mr-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        </span>
+                        Save
+                      </button>
+                    </div>
                   </div>
                   
+                  <!-- Pronouns field -->
                   <div>
-                    <div class="text-white">{{ identity.provider_name || identity.provider_type }}</div>
-                    <div class="text-sm text-slate-400">{{ identity.email || 'No email associated' }}</div>
+                    <h3 class="text-sm font-medium text-slate-400 mb-2">Pronouns</h3>
+                    <div class="flex items-start gap-2 w-full">
+                      <input
+                        v-model="formData.pronouns"
+                        type="text"
+                        class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        placeholder="Add pronouns (e.g., he/him, she/her, they/them)"
+                      />
+                      <button
+                        @click="updatePronouns"
+                        :disabled="!pronounsModified || loading"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
+                      >
+                        <span v-if="loading && pronounsModified" class="animate-spin h-4 w-4 mr-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        </span>
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- Email section -->
+                  <div>
+                    <h3 class="text-sm font-medium text-slate-400 mb-2">Email</h3>
+                    <div class="flex items-start gap-2">
+                      <input
+                        v-model="formData.email"
+                        type="email"
+                        class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        placeholder="your.email@example.com"
+                      />
+                      <button
+                        @click="updateEmail"
+                        :disabled="!emailModified || loading"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-600 flex items-center"
+                      >
+                        <span v-if="loading && emailModified" class="animate-spin h-4 w-4 mr-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        </span>
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Appearance Tab -->
+          <div v-if="activeTab === 'appearance'" class="space-y-6">
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h2 class="text-lg font-medium text-white mb-6">Appearance Settings</h2>
+              
+              <!-- Display Options -->
+              <div class="space-y-6">
+                <div>
+                  <h3 class="text-sm font-medium text-slate-300 mb-4">Display Options</h3>
+                  
+                  <!-- Dark Mode Toggle -->
+                  <div class="flex items-center justify-between py-3">
+                    <div>
+                      <div class="text-white font-medium">Dark Mode</div>
+                      <div class="text-sm text-slate-400">Enable dark mode throughout the application</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="darkMode" class="sr-only peer" @change="updateAppearanceSettings">
+                      <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                  
+                  <!-- Compact View Toggle -->
+                  <div class="flex items-center justify-between py-3">
+                    <div>
+                      <div class="text-white font-medium">Compact View</div>
+                      <div class="text-sm text-slate-400">Show more content with reduced spacing</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="compactView" class="sr-only peer" @change="updateAppearanceSettings">
+                      <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
                   </div>
                 </div>
                 
-                <button 
-                  @click="deleteAuthIdentity(identity.id)"
-                  class="p-2 text-slate-400 hover:text-red-400"
-                  :disabled="authIdentities.length <= 1"
-                  :title="authIdentities.length <= 1 ? 'Cannot remove your only authentication method' : 'Remove this authentication method'"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <!-- Theme Selection -->
+                <div>
+                  <h3 class="text-sm font-medium text-slate-300 mb-4">Theme Selection</h3>
+                  <p class="text-sm text-slate-400 mb-4">Choose a theme for the application interface</p>
+                  
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div 
+                      v-for="theme in themes" 
+                      :key="theme.id"
+                      @click="applyTheme(theme.id)"
+                      class="relative flex cursor-pointer rounded-lg border p-4 focus:outline-none"
+                      :class="selectedTheme === theme.id ? 'bg-slate-700 border-blue-500 ring-2 ring-blue-500' : 'bg-slate-700/50 border-slate-600 hover:bg-slate-700'"
+                    >
+                      <span class="flex flex-1">
+                        <span class="flex flex-col">
+                          <span class="block text-sm font-medium text-white">{{ theme.name }}</span>
+                          <span class="mt-1 flex items-center text-xs text-slate-400">{{ theme.description }}</span>
+                        </span>
+                      </span>
+                      <span 
+                        class="pointer-events-none absolute -inset-px rounded-lg" 
+                        aria-hidden="true" 
+                      ></span>
+                    </div>
+                  </div>
+                  
+                  <!-- Theme Preview Section -->
+                  <div class="mt-6 p-4 bg-slate-700/50 rounded-lg border border-slate-600">
+                    <h4 class="text-sm font-medium text-white mb-2">Preview</h4>
+                    <div class="h-32 rounded-md border border-slate-600 flex items-center justify-center">
+                      <p class="text-sm text-slate-400">Theme preview coming soon</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            
-            <!-- Empty state -->
-            <div v-else class="text-center py-4 text-slate-400">
-              No authentication methods found
-            </div>
-            
-            <!-- Add Authentication Method Button -->
-            <div class="mt-4">
-              <button 
-                v-if="!hasMicrosoftAccount"
-                @click="connectMicrosoftAccount" 
-                class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors w-full justify-center disabled:bg-blue-800 disabled:cursor-not-allowed"
-                :disabled="loadingIdentities"
-              >
-                <div v-if="loadingIdentities" class="animate-spin h-5 w-5 mr-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
+          </div>
+
+          <!-- Notifications Tab -->
+          <div v-if="activeTab === 'notifications'" class="space-y-6">
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h2 class="text-lg font-medium text-white mb-6">Notification Preferences</h2>
+              
+              <div class="space-y-6">
+                <!-- Email Notifications -->
+                <div class="flex items-center justify-between py-3">
+                  <div>
+                    <div class="text-white font-medium">Email Notifications</div>
+                    <div class="text-sm text-slate-400">Receive email notifications for important updates</div>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="emailNotifications" class="sr-only peer" @change="updateNotificationSettings">
+                    <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
                 </div>
-                <div v-else class="w-5 h-5 flex items-center justify-center">
-                  <svg width="16" height="16" viewBox="0 0 21 21">
-                    <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                    <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-                    <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-                    <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-                  </svg>
+                
+                <!-- Desktop Notifications -->
+                <div class="flex items-center justify-between py-3">
+                  <div>
+                    <div class="text-white font-medium">Desktop Notifications</div>
+                    <div class="text-sm text-slate-400">Show desktop notifications when you're using the app</div>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="desktopNotifications" class="sr-only peer" @change="updateNotificationSettings">
+                    <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
                 </div>
-                {{ loadingIdentities ? 'Connecting...' : 'Connect Microsoft Account' }}
-              </button>
+              </div>
             </div>
-            
-            <!-- Info text -->
-            <p class="text-sm text-slate-400 mt-4">
-              You can sign in using any of these methods. Adding multiple methods gives you alternative ways to access your account.
-            </p>
+          </div>
+
+          <!-- Security Tab -->
+          <div v-if="activeTab === 'security'" class="space-y-6">
+            <!-- Password Change Section -->
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h2 class="text-lg font-medium text-white mb-6">Security Settings</h2>
+              
+              <form @submit.prevent="updatePassword" class="flex flex-col gap-6">
+                <!-- Hidden username field for password managers -->
+                <input
+                  type="email"
+                  :value="authStore.user?.email || formData.email"
+                  autocomplete="username"
+                  style="display: none;"
+                  readonly
+                />
+                
+                <!-- Current Password -->
+                <div class="flex flex-col gap-2">
+                  <label for="currentPassword" class="text-sm font-medium text-slate-300">Current Password</label>
+                  <input
+                    id="currentPassword"
+                    v-model="formData.currentPassword"
+                    type="password"
+                    autocomplete="current-password"
+                    class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    placeholder="Enter your current password"
+                  />
+                </div>
+
+                <!-- New Password -->
+                <div class="flex flex-col gap-2">
+                  <label for="newPassword" class="text-sm font-medium text-slate-300">New Password</label>
+                  <input
+                    id="newPassword"
+                    v-model="formData.newPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    placeholder="Enter new password"
+                  />
+                </div>
+
+                <!-- Confirm Password -->
+                <div class="flex flex-col gap-2">
+                  <label for="confirmPassword" class="text-sm font-medium text-slate-300">Confirm New Password</label>
+                  <input
+                    id="confirmPassword"
+                    v-model="formData.confirmPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    class="w-full px-4 py-2 bg-slate-700 text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    placeholder="Confirm new password"
+                  />
+                </div>
+
+                <!-- Submit button for password change -->
+                <div class="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    :disabled="loading"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <span v-if="loading" class="animate-spin h-4 w-4">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </span>
+                    {{ loading ? 'Updating...' : 'Update Password' }}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Two-Factor Authentication -->
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h3 class="text-lg font-medium text-white mb-4">Two-Factor Authentication</h3>
+              <div class="flex items-center justify-between py-3">
+                <div>
+                  <div class="text-white font-medium">Enable 2FA</div>
+                  <div class="text-sm text-slate-400">Add an extra layer of security to your account</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" v-model="twoFactorAuth" class="sr-only peer">
+                  <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Two-factor authentication setup coming soon</p>
+            </div>
+
+            <!-- Authentication Methods Section -->
+            <div class="bg-slate-800 rounded-2xl p-6">
+              <h3 class="text-lg font-medium text-white mb-4">Authentication Methods</h3>
+              
+              <!-- Error message for identities -->
+              <div v-if="identityError" class="p-4 bg-red-900/50 text-red-400 rounded-lg mb-4">
+                {{ identityError }}
+              </div>
+              
+              <!-- Loading state -->
+              <div v-if="loadingIdentities" class="flex justify-center my-4">
+                <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
+              </div>
+              
+              <!-- Auth identities list -->
+              <div v-else-if="authIdentities.length" class="flex flex-col gap-2">
+                <div v-for="identity in authIdentities" :key="`auth-identity-${identity.id}-${identity.provider_type}`" 
+                     class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg"
+                     :title="'ID: ' + identity.id + ', Type: ' + identity.provider_type"
+                >
+                  <div class="flex items-center gap-3">
+                    <!-- Provider icon with better visualization -->
+                    <div 
+                      class="w-8 h-8 flex items-center justify-center rounded-full text-white"
+                      :class="{
+                        'bg-blue-600': identity.provider_type === 'microsoft',
+                        'bg-green-600': identity.provider_type === 'google',
+                        'bg-gray-600': identity.provider_type === 'local',
+                        'bg-slate-600': !['microsoft', 'google', 'local'].includes(identity.provider_type)
+                      }"
+                    >
+                      <!-- Microsoft Logo -->
+                      <template v-if="identity.provider_type === 'microsoft'">
+                        <svg width="16" height="16" viewBox="0 0 21 21">
+                          <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                          <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                          <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                        </svg>
+                      </template>
+                      
+                      <!-- Local Account Icon -->
+                      <template v-else-if="identity.provider_type === 'local'">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      </template>
+                      
+                      <!-- Fallback letter for other providers -->
+                      <template v-else>
+                        {{ identity.provider_type.charAt(0).toUpperCase() }}
+                      </template>
+                    </div>
+                    
+                    <div>
+                      <div class="text-white">{{ identity.provider_name || identity.provider_type }}</div>
+                      <div class="text-sm text-slate-400">{{ identity.email || 'No email associated' }}</div>
+                    </div>
+                  </div>
+                  
+                  <button 
+                    @click="deleteAuthIdentity(identity.id)"
+                    class="p-2 text-slate-400 hover:text-red-400"
+                    :disabled="authIdentities.length <= 1"
+                    :title="authIdentities.length <= 1 ? 'Cannot remove your only authentication method' : 'Remove this authentication method'"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Empty state -->
+              <div v-else class="text-center py-4 text-slate-400">
+                No authentication methods found
+              </div>
+              
+              <!-- Add Authentication Method Button -->
+              <div class="mt-4">
+                <button 
+                  v-if="!hasMicrosoftAccount"
+                  @click="connectMicrosoftAccount" 
+                  class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors w-full justify-center disabled:bg-blue-800 disabled:cursor-not-allowed"
+                  :disabled="loadingIdentities"
+                >
+                  <div v-if="loadingIdentities" class="animate-spin h-5 w-5 mr-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  </div>
+                  <div v-else class="w-5 h-5 flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 21 21">
+                      <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                      <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                      <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                      <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                    </svg>
+                  </div>
+                  {{ loadingIdentities ? 'Connecting...' : 'Connect Microsoft Account' }}
+                </button>
+              </div>
+              
+              <!-- Info text -->
+              <p class="text-sm text-slate-400 mt-4">
+                You can sign in using any of these methods. Adding multiple methods gives you alternative ways to access your account.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -1127,24 +1384,41 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.grid-container {
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-template-rows: auto;
-  grid-template-areas: "info" "security";
-  gap: 1rem;
-
-  @media (min-width: 1024px) {
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-areas: "info security";
-  }
+/* Custom toggle switch styling */
+.peer:checked ~ div {
+  background-color: rgb(37 99 235);
 }
 
-.info-area {
-  grid-area: info;
+.peer:checked ~ div:after {
+  transform: translateX(100%);
+  border-color: white;
 }
 
-.security-area {
-  grid-area: security;
+/* Smooth transitions for theme selection */
+.theme-option {
+  transition: all 0.2s ease-in-out;
+}
+
+.theme-option:hover {
+  transform: translateY(-1px);
+}
+
+/* Custom scrollbar for long content */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: rgb(51 65 85);
+  border-radius: 3px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: rgb(100 116 139);
+  border-radius: 3px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: rgb(148 163 184);
 }
 </style> 

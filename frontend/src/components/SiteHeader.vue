@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from "vue-router";
-import { computed, ref, onMounted, onUnmounted, nextTick } from "vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
 import UserAvatar from "./UserAvatar.vue";
+import UserDropdownMenu from "./UserDropdownMenu.vue";
 import HeaderTitle from "./HeaderTitle.vue";
 import DocumentIconSelector from "./DocumentIconSelector.vue";
 import TicketIdentifier from "./TicketIdentifier.vue";
 import PageUrlDisplay from "./PageUrlDisplay.vue";
 import ticketService from '@/services/ticketService';
 import { useAuthStore } from '@/stores/auth';
-import { RouterLink } from "vue-router";
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -43,14 +43,16 @@ const isDocumentView = computed(() => {
   return props.document !== null;
 });
 
-// Add console log to debug title
-console.log("SiteHeader rendering with:", {
-  isTicketView: isTicketView.value,
-  isDocumentView: isDocumentView.value,
-  ticket: props.ticket,
-  document: props.document,
-  title: props.title,
-});
+// Only log in development mode
+if (import.meta.env.DEV) {
+  console.log("SiteHeader rendering with:", {
+    isTicketView: isTicketView.value,
+    isDocumentView: isDocumentView.value,
+    ticket: props.ticket,
+    document: props.document,
+    title: props.title,
+  });
+}
 
 // Use the provided title if available
 const displayTitle = computed(() => {
@@ -74,14 +76,18 @@ const handlePreviewTitle = (newTitle: string) => {
 
 const handleUpdateDocumentTitle = (newTitle: string) => {
   if (props.document) {
-    console.log(`SiteHeader: Updating document title to "${newTitle}" for document:`, props.document);
+    if (import.meta.env.DEV) {
+      console.log(`SiteHeader: Updating document title to "${newTitle}" for document:`, props.document);
+    }
     emit("updateDocumentTitle", newTitle);
   }
 };
 
 const handlePreviewDocumentTitle = (newTitle: string) => {
   if (props.document) {
-    console.log(`SiteHeader: Previewing document title as "${newTitle}" for document:`, props.document);
+    if (import.meta.env.DEV) {
+      console.log(`SiteHeader: Previewing document title as "${newTitle}" for document:`, props.document);
+    }
     emit("previewDocumentTitle", newTitle);
   }
 };
@@ -93,7 +99,6 @@ const handleUpdateDocumentIcon = (newIcon: string) => {
 };
 
 const showUserMenu = ref(false);
-const menuRef = ref<HTMLElement | null>(null);
 const buttonRef = ref<HTMLElement | null>(null);
 
 // Replace mock user data with actual user data from auth store
@@ -112,85 +117,59 @@ const user = computed(() => {
   };
 });
 
-const handleClickOutside = (event: MouseEvent) => {
-  if (!menuRef.value || !buttonRef.value) return;
-
-  const target = event.target as Node;
-  if (!menuRef.value.contains(target) && !buttonRef.value.contains(target)) {
-    showUserMenu.value = false;
-  }
-};
-
-const handleKeydown = (event: KeyboardEvent) => {
-  if (event.key === "Escape") {
-    showUserMenu.value = false;
-    buttonRef.value?.focus();
-  }
-};
-
 const toggleUserMenu = () => {
   showUserMenu.value = !showUserMenu.value;
-  if (showUserMenu.value) {
-    // Focus first interactive element in menu when opened
-    nextTick(() => {
-      const firstFocusable = menuRef.value?.querySelector(
-        "a, button"
-      ) as HTMLElement;
-      firstFocusable?.focus();
-    });
-  }
+};
+
+const closeUserMenu = () => {
+  showUserMenu.value = false;
 };
 
 // Add isCreatingTicket ref
 const isCreatingTicket = ref(false);
 
 const navigateToCreateTicket = async () => {
-  console.log('navigateToCreateTicket called');
+  if (import.meta.env.DEV) {
+    console.log('navigateToCreateTicket called');
+  }
   if (isCreatingTicket.value) {
-    console.log('Already creating ticket, returning');
+    if (import.meta.env.DEV) {
+      console.log('Already creating ticket, returning');
+    }
     return; // Prevent multiple clicks
   }
   
   try {
-    console.log('Setting isCreatingTicket to true');
+    if (import.meta.env.DEV) {
+      console.log('Setting isCreatingTicket to true');
+    }
     isCreatingTicket.value = true;
     
-    console.log('Creating empty ticket');
+    if (import.meta.env.DEV) {
+      console.log('Creating empty ticket');
+    }
     // Create an empty ticket
     const newTicket = await ticketService.createEmptyTicket();
     
-    console.log('Empty ticket created:', newTicket);
+    if (import.meta.env.DEV) {
+      console.log('Empty ticket created:', newTicket);
+    }
     // Navigate to the new ticket
     router.push(`/tickets/${newTicket.id}`);
   } catch (error) {
     console.error('Failed to create empty ticket:', error);
     // You could show an error notification here
     
-    console.log('Falling back to create ticket page');
+    if (import.meta.env.DEV) {
+      console.log('Falling back to create ticket page');
+    }
     // Fallback to the tickets page if creation fails
     router.push("/tickets");
   } finally {
-    console.log('Setting isCreatingTicket to false');
+    if (import.meta.env.DEV) {
+      console.log('Setting isCreatingTicket to false');
+    }
     isCreatingTicket.value = false;
-  }
-};
-
-const navigateToSettings = () => {
-  showUserMenu.value = false;
-  router.push("/settings");
-};
-
-const handleLogout = () => {
-  try {
-    // Close the user menu
-    showUserMenu.value = false;
-    
-    // Log the user out using the auth store
-    // The auth store will handle the redirect to the login page
-    authStore.logout();
-  } catch (error) {
-    console.error('Logout failed:', error);
-    // You could show an error notification here
   }
 };
 
@@ -204,17 +183,11 @@ const updateMobileStatus = () => {
 
 // Event listeners for click outside
 onMounted(() => {
-  document.addEventListener("mousedown", handleClickOutside);
-  document.addEventListener("keydown", handleKeydown);
-  
   // Add resize listener
   window.addEventListener('resize', updateMobileStatus);
 });
 
 onUnmounted(() => {
-  document.removeEventListener("mousedown", handleClickOutside);
-  document.removeEventListener("keydown", handleKeydown);
-  
   // Remove resize listener
   window.removeEventListener('resize', updateMobileStatus);
 });
@@ -322,86 +295,11 @@ defineExpose({
             />
           </button>
 
-          <!-- Dropdown Menu -->
-          <div
-            v-if="showUserMenu"
-            ref="menuRef"
-            class="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg py-1 z-50"
-            role="menu"
-            tabindex="-1"
-          >
-            <!-- User Info -->
-            <div
-              class="px-4 py-3 border-b border-slate-700 hover:bg-slate-700 cursor-pointer flex items-center gap-3 min-w-0"
-              @click="authStore.user ? router.push(`/users/${authStore.user.uuid}`) : {}"
-            >
-              <UserAvatar
-                :name="user.name"
-                :avatar="user.avatar"
-                size="xl" 
-                :showName="false"
-                :clickable="false"
-                class="flex-shrink-0"
-              />
-              <div class="min-w-0 flex-1">
-                <div class="text-sm font-medium text-white truncate">{{ user.name }}</div>
-                <div class="text-xs text-blue-400 mt-1">View Profile</div>
-              </div>
-            </div>
-
-            <!-- Menu Items -->
-            <div class="py-1">
-              <RouterLink
-                to="/profile/settings"
-                class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
-                role="menuitem"
-                @click="showUserMenu = false"
-              >
-                <div class="flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  Profile Settings
-                </div>
-              </RouterLink>
-              <button
-                @click="navigateToSettings"
-                class="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
-                role="menuitem"
-              >
-                <div class="flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                  </svg>
-                  Preferences
-                </div>
-              </button>
-              <router-link
-                v-if="authStore.user?.role === 'admin'"
-                to="/admin/settings"
-                class="block w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
-                role="menuitem"
-              >
-                <div class="flex items-center gap-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  Administration
-                </div>
-              </router-link>
-              
-              <div v-if="authStore.user?.role === 'admin'" class="border-t border-slate-600 my-1"></div>
-              
-              <button
-                @click="handleLogout"
-                class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-slate-700 focus:bg-slate-700 focus:outline-none"
-                role="menuitem"
-              >
-                Sign Out
-              </button>
-            </div>
-          </div>
+          <!-- User Dropdown Menu -->
+          <UserDropdownMenu
+            :showMenu="showUserMenu"
+            @close="closeUserMenu"
+          />
         </div>
       </div>
     </div>

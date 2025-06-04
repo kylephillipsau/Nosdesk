@@ -15,6 +15,7 @@ use crate::models::{NewUser, UserResponse, UserUpdate, UserUpdateWithPassword, U
 use crate::repository;
 use crate::repository::user_emails as user_emails_repo;
 use crate::handlers::auth::validate_token_internal;
+use crate::utils;
 
 // Pagination query parameters
 #[derive(Deserialize)]
@@ -134,16 +135,23 @@ pub async fn get_user_by_id(
 }
 
 pub async fn get_user_by_uuid(
-    uuid: web::Path<String>,
+    uuid_path: web::Path<String>,
     pool: web::Data<crate::db::Pool>,
 ) -> impl Responder {
-    let user_uuid = uuid.into_inner();
+    let uuid_str = uuid_path.into_inner();
+    
+    // Parse the UUID string into a proper UUID type
+    let user_uuid_parsed = match utils::parse_uuid(&uuid_str) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
+    };
+    
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+    match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
         Err(_) => HttpResponse::NotFound().json("User not found"),
     }
@@ -167,8 +175,8 @@ pub async fn get_users_batch(
     // Validate UUIDs and remove duplicates
     let mut valid_uuids = HashSet::new();
     for uuid_str in &batch_request.uuids {
-        if let Ok(_) = Uuid::parse_str(uuid_str) {
-            valid_uuids.insert(uuid_str.clone());
+        if let Ok(uuid) = Uuid::parse_str(uuid_str) {
+            valid_uuids.insert(uuid);
         }
     }
 
@@ -177,7 +185,7 @@ pub async fn get_users_batch(
     }
 
     // Convert to Vec for the repository function
-    let uuids_vec: Vec<String> = valid_uuids.into_iter().collect();
+    let uuids_vec: Vec<Uuid> = valid_uuids.into_iter().collect();
 
     match repository::get_users_by_uuids(&uuids_vec, &mut conn) {
         Ok(users) => {
@@ -203,6 +211,58 @@ pub async fn create_user(
         })),
     };
 
+    // Comprehensive input validation using our validation utilities
+    let mut validation_errors = Vec::new();
+
+    // Validate name
+    let trimmed_name = user_data.name.trim();
+    if trimmed_name.is_empty() {
+        validation_errors.push("name: Name is required".to_string());
+    } else if trimmed_name.len() > 255 {
+        validation_errors.push("name: Name must be less than 255 characters".to_string());
+    }
+
+    // Validate email
+    if user_data.email.is_empty() {
+        validation_errors.push("email: Email is required".to_string());
+    } else if !user_data.email.contains('@') {
+        validation_errors.push("email: Invalid email format".to_string());
+    }
+
+    // Validate role
+    let role_enum = match user_data.role {
+        crate::models::UserRole::Admin => "admin",
+        crate::models::UserRole::Technician => "technician", 
+        crate::models::UserRole::User => "user",
+    };
+    // Role is already validated by the enum type
+
+    // Validate optional fields
+    if let Some(ref pronouns) = user_data.pronouns {
+        if pronouns.len() > 50 {
+            validation_errors.push("pronouns: Pronouns must be less than 50 characters".to_string());
+        }
+    }
+
+    if let Some(ref avatar_url) = user_data.avatar_url {
+        if avatar_url.len() > 500 {
+            validation_errors.push("avatar_url: URL must be less than 500 characters".to_string());
+        }
+    }
+
+    if let Some(ref banner_url) = user_data.banner_url {
+        if banner_url.len() > 500 {
+            validation_errors.push("banner_url: URL must be less than 500 characters".to_string());
+        }
+    }
+
+    if let Some(ref avatar_thumb) = user_data.avatar_thumb {
+        if avatar_thumb.len() > 500 {
+            validation_errors.push("avatar_thumb: URL must be less than 500 characters".to_string());
+        }
+    }
+
+    // Check if user with this email already exists
     if let Ok(_) = repository::get_user_by_email(&user_data.email, &mut conn) {
         return HttpResponse::BadRequest().json(json!({
             "status": "error",
@@ -210,24 +270,21 @@ pub async fn create_user(
         }));
     }
 
-    // Generate UUID if not provided
-    let uuid = if user_data.uuid.is_empty() {
-        Uuid::new_v4().to_string()
-    } else {
-        user_data.uuid.clone()
-    };
+    // Generate UUID if provided
+    let user_uuid = user_data.uuid;
 
-    // Create new user
+    // Create new user with normalized data
     let new_user = NewUser {
-        uuid: uuid.clone(),
-        name: user_data.name.clone(),
-        email: user_data.email.clone(),
-        role: user_data.role.clone(),
-        pronouns: user_data.pronouns.clone(),
-        avatar_url: user_data.avatar_url.clone(),
-        banner_url: user_data.banner_url.clone(),
-        avatar_thumb: user_data.avatar_thumb.clone(),
-        microsoft_uuid: None, // New users don't have Microsoft UUID initially
+        uuid: user_uuid,
+        name: user_data.name.trim().to_string(),
+        email: user_data.email.trim().to_lowercase(), // Normalize email to lowercase
+        role: user_data.role,   // Use the UserRole enum directly
+        password_hash: Vec::new(), // Empty password hash, will be set via auth identity
+        pronouns: user_data.pronouns.as_ref().map(|p| p.trim().to_string()),
+        avatar_url: user_data.avatar_url.as_ref().map(|u| u.trim().to_string()),
+        banner_url: user_data.banner_url.as_ref().map(|u| u.trim().to_string()),
+        avatar_thumb: user_data.avatar_thumb.as_ref().map(|u| u.trim().to_string()),
+        microsoft_uuid: user_data.microsoft_uuid, // Use the Uuid directly
     };
 
     match repository::create_user(new_user, &mut conn) {
@@ -237,7 +294,7 @@ pub async fn create_user(
             use crate::models::NewUserAuthIdentity;
             
             let password_hash = match hash("changeme", DEFAULT_COST) {
-                Ok(hash) => hash.into_bytes(),
+                Ok(hash) => hash,
                 Err(e) => {
                     eprintln!("Error hashing password: {:?}", e);
                     return HttpResponse::InternalServerError().json(json!({
@@ -247,18 +304,23 @@ pub async fn create_user(
                 }
             };
             
+            println!("Created user with ID: {}", user.id);
+            
             // Create local auth identity with default password
             let new_identity = NewUserAuthIdentity {
                 user_id: user.id,
-                auth_provider_id: 1, // Local auth provider
-                provider_user_id: uuid.clone(),
+                provider_id: 1, // Local auth provider
+                external_id: utils::uuid_to_string(&user.uuid),
                 email: Some(user.email.clone()),
-                identity_data: None,
+                metadata: None,
                 password_hash: Some(password_hash),
             };
             
             match repository::user_auth_identities::create_identity(new_identity, &mut conn) {
-                Ok(_) => HttpResponse::Created().json(UserResponse::from(user)),
+                Ok(_) => {
+                    println!("✅ New user created successfully: {} (default password: changeme)", user.email);
+                    HttpResponse::Created().json(UserResponse::from(user))
+                },
                 Err(e) => {
                     eprintln!("Error creating auth identity: {:?}", e);
                     // If identity creation fails, still return the user
@@ -268,29 +330,52 @@ pub async fn create_user(
         },
         Err(e) => {
             eprintln!("Error creating user: {:?}", e);
+            
+            // Provide more specific error messages for common issues
+            let error_message = if format!("{:?}", e).contains("duplicate") || format!("{:?}", e).contains("unique") {
+                if format!("{:?}", e).contains("email") {
+                    "Email address already exists in the system"
+                } else if format!("{:?}", e).contains("uuid") {
+                    "UUID already exists in the system"
+                } else {
+                    "Duplicate entry detected"
+                }
+            } else {
+                "Error creating user"
+            };
+            
             HttpResponse::InternalServerError().json(json!({
                 "status": "error",
-                "message": "Error creating user"
+                "message": error_message
             }))
         }
     }
 }
 
 pub async fn update_user(
+    path: web::Path<String>,
+    user_data: web::Json<UserUpdate>,
+    _auth: BearerAuth,
     db_pool: web::Data<crate::db::Pool>,
-    auth: BearerAuth,
-    path: web::Path<i32>,
-    user_data: web::Json<UserUpdateWithPassword>,
 ) -> impl Responder {
-    let user_id = path.into_inner();
+    let user_id_str = path.into_inner();
+    let user_id = match user_id_str.parse::<i32>() {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid user ID"
+        })),
+    };
+
     let mut conn = match db_pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Could not get database connection"
+            "message": "Database connection failed"
         })),
     };
 
+    // Check if user exists
     if let Err(_) = repository::get_user_by_id(user_id, &mut conn) {
         return HttpResponse::NotFound().json(json!({
             "status": "error",
@@ -304,117 +389,27 @@ pub async fn update_user(
             if existing_user.id != user_id {
                 return HttpResponse::BadRequest().json(json!({
                     "status": "error",
-                    "message": "Email already in use by another user"
+                    "message": "Email already exists"
                 }));
-            }
-        }
-    }
-
-    // Create password hash if password is provided
-    if let Some(password) = &user_data.password {
-        use bcrypt::hash;
-        use crate::models::NewUserAuthIdentity;
-        
-        // Hash the new password
-        let password_hash = match hash(password, DEFAULT_COST) {
-            Ok(hash) => hash.into_bytes(),
-            Err(_) => return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Error hashing password"
-            })),
-        };
-        
-        // Find existing local auth identity
-        let auth_identities = match repository::user_auth_identities::get_user_identities(user_id, &mut conn) {
-            Ok(identities) => identities,
-            Err(e) => {
-                eprintln!("Error fetching auth identities: {:?}", e);
-                return HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "Error processing user identities"
-                }));
-            }
-        };
-        
-        // Find local identity
-        let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
-        
-        match local_identity {
-            Some(identity) => {
-                // Update existing local identity
-                // Delete the old identity 
-                match diesel::delete(
-                    crate::schema::user_auth_identities::table.filter(crate::schema::user_auth_identities::id.eq(identity.id))
-                ).execute(&mut conn) {
-                    Ok(_) => {},
-                    Err(e) => {
-                        eprintln!("Error deleting auth identity: {:?}", e);
-                        return HttpResponse::InternalServerError().json(json!({
-                            "status": "error",
-                            "message": "Error updating password"
-                        }));
-                    }
-                }
-                
-                // Create new identity with updated password
-                let new_auth_identity = NewUserAuthIdentity {
-                    user_id,
-                    auth_provider_id: identity.auth_provider_id,
-                    provider_user_id: identity.provider_user_id.clone(),
-                    email: identity.email.clone(),
-                    identity_data: identity.identity_data.clone(),
-                    password_hash: Some(password_hash),
-                };
-                
-                if let Err(e) = repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
-                    eprintln!("Error creating updated auth identity: {:?}", e);
-                    return HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": "Error updating password"
-                    }));
-                }
-            },
-            None => {
-                // Create new local identity if none exists
-                let new_auth_identity = NewUserAuthIdentity {
-                    user_id,
-                    auth_provider_id: 1, // Local provider
-                    provider_user_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
-                    email: user_data.email.clone(),
-                    identity_data: None,
-                    password_hash: Some(password_hash),
-                };
-                
-                if let Err(e) = repository::user_auth_identities::create_identity(new_auth_identity, &mut conn) {
-                    eprintln!("Error creating auth identity: {:?}", e);
-                    return HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": "Error setting password"
-                    }));
-                }
             }
         }
     }
 
     // Update user
-    let user_update = UserUpdate {
-        name: user_data.name.clone(),
-        email: user_data.email.clone(),
-        role: user_data.role.clone(),
-        pronouns: user_data.pronouns.clone(),
-        avatar_url: user_data.avatar_url.clone(),
-        banner_url: user_data.banner_url.clone(),
-        avatar_thumb: user_data.avatar_thumb.clone(),
-        microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
-        updated_at: Some(chrono::Utc::now().naive_utc()),
-    };
-
-    match repository::update_user(user_id, user_update, &mut conn) {
-        Ok(user) => HttpResponse::Ok().json(UserResponse::from(user)),
-        Err(_) => HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Error updating user"
-        })),
+    match repository::update_user(user_id, user_data.into_inner(), &mut conn) {
+        Ok(updated_user) => {
+            HttpResponse::Ok().json(json!({
+                "status": "success",
+                "user": UserResponse::from(updated_user)
+            }))
+        },
+        Err(e) => {
+            eprintln!("Error updating user: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error", 
+                "message": "Error updating user"
+            }))
+        }
     }
 }
 
@@ -429,7 +424,12 @@ pub async fn delete_user(
     };
 
     // First get the user by UUID
-    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
+    };
+
+    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(_) => return HttpResponse::NotFound().json("User not found"),
     };
@@ -468,13 +468,24 @@ pub async fn get_user_auth_identities(
         },
     };
 
-    // Get user ID from UUID
-    let user = match repository::get_user_by_uuid(&claims.sub, &mut conn) {
+    // Get the user ID
+    let user_uuid_parsed = match utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID in token"
+        })),
+    };
+
+    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(e) => {
-            eprintln!("Error finding user by UUID {}: {:?}", claims.sub, e);
-            return HttpResponse::NotFound().json("User not found");
-        },
+            eprintln!("Error getting user by UUID: {:?}", e);
+            return HttpResponse::NotFound().json(json!({
+                "status": "error",
+                "message": "User not found"
+            }));
+        }
     };
 
     // Get auth identities for the user
@@ -532,25 +543,22 @@ pub async fn get_user_auth_identities_by_uuid(
     }
 
     // Get auth identities for the user by UUID
-    match repository::user_auth_identities::get_user_identities_display_by_uuid(&user_uuid, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID format"
+        })),
+    };
+
+    match repository::user_auth_identities::get_user_identities_display_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(identities) => HttpResponse::Ok().json(identities),
         Err(e) => {
             eprintln!("Error fetching auth identities for UUID {}: {:?}", user_uuid, e);
-            match e {
-                diesel::result::Error::NotFound => {
-                    HttpResponse::NotFound().json(json!({
-                        "status": "error",
-                        "message": "User not found"
-                    }))
-                },
-                _ => {
-                    HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": "Failed to retrieve auth identities",
-                        "error": format!("{:?}", e)
-                    }))
-                }
-            }
+            return HttpResponse::NotFound().json(json!({
+                "status": "error",
+                "message": "User not found or no auth identities"
+            }));
         }
     }
 }
@@ -580,7 +588,15 @@ pub async fn delete_user_auth_identity(
     };
 
     // Get the user ID
-    let user = match repository::get_user_by_uuid(&claims.sub, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID in token"
+        })),
+    };
+
+    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(e) => {
             eprintln!("Error getting user by UUID: {:?}", e);
@@ -670,24 +686,22 @@ pub async fn delete_user_auth_identity_by_uuid(
 
     // Ensure the user has at least one other auth method before deleting
     // (to prevent locking themselves out)
-    let identities = match repository::user_auth_identities::get_user_identities_by_uuid(&user_uuid, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID format"
+        })),
+    };
+
+    let identities = match repository::user_auth_identities::get_user_identities_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(identities) => identities,
         Err(e) => {
             eprintln!("Error getting user auth identities: {:?}", e);
-            return match e {
-                diesel::result::Error::NotFound => {
-                    HttpResponse::NotFound().json(json!({
-                        "status": "error",
-                        "message": "User not found"
-                    }))
-                },
-                _ => {
-                    HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": "Failed to get authentication identities"
-                    }))
-                }
-            };
+            return HttpResponse::NotFound().json(json!({
+                "status": "error",
+                "message": "User not found"
+            }));
         }
     };
 
@@ -699,7 +713,7 @@ pub async fn delete_user_auth_identity_by_uuid(
     }
 
     // Delete the identity
-    match repository::user_auth_identities::delete_identity_by_uuid(identity_id, &user_uuid, &mut conn) {
+    match repository::user_auth_identities::delete_identity_by_uuid(identity_id, &user_uuid_parsed, &mut conn) {
         Ok(count) => {
             if count == 0 {
                 HttpResponse::NotFound().json(json!({
@@ -715,30 +729,21 @@ pub async fn delete_user_auth_identity_by_uuid(
         },
         Err(e) => {
             eprintln!("Error deleting user auth identity: {:?}", e);
-            match e {
-                diesel::result::Error::NotFound => {
-                    HttpResponse::NotFound().json(json!({
-                        "status": "error",
-                        "message": "User or auth identity not found"
-                    }))
-                },
-                _ => {
-                    HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "message": "Failed to delete authentication identity"
-                    }))
-                }
-            }
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to delete authentication identity"
+            }))
         }
     }
 }
 
 pub async fn update_user_profile(
+    _path: web::Path<String>,
+    profile_data: web::Json<UserProfileUpdate>,
+    _auth: BearerAuth,
     db_pool: web::Data<crate::db::Pool>,
-    auth: BearerAuth,
-    user_data: web::Json<UserProfileUpdate>,
 ) -> impl Responder {
-    let user_id = user_data.id;
+    let user_id = profile_data.id;
     let mut conn = match db_pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json(json!({
@@ -755,7 +760,7 @@ pub async fn update_user_profile(
     }
 
     // Check if email is being updated and if it's already in use
-    if let Some(email) = &user_data.email {
+    if let Some(email) = &profile_data.email {
         if let Ok(existing_user) = repository::get_user_by_email(email, &mut conn) {
             if existing_user.id != user_id {
                 return HttpResponse::BadRequest().json(json!({
@@ -767,13 +772,13 @@ pub async fn update_user_profile(
     }
 
     // Create password hash if password is provided
-    if let Some(password) = &user_data.password {
+    if let Some(password) = &profile_data.password {
         use bcrypt::hash;
         use crate::models::NewUserAuthIdentity;
         
         // Hash the new password
         let password_hash = match hash(password, DEFAULT_COST) {
-            Ok(hash) => hash.into_bytes(),
+            Ok(hash) => hash,
             Err(_) => return HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": "Error hashing password"
@@ -793,7 +798,7 @@ pub async fn update_user_profile(
         };
         
         // Find local identity
-        let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
+        let local_identity = auth_identities.iter().find(|identity| identity.provider_id == 1);
         
         match local_identity {
             Some(identity) => {
@@ -815,10 +820,10 @@ pub async fn update_user_profile(
                 // Create new identity with updated password
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    auth_provider_id: identity.auth_provider_id,
-                    provider_user_id: identity.provider_user_id.clone(),
+                    provider_id: identity.provider_id,
+                    external_id: identity.external_id.clone(),
                     email: identity.email.clone(),
-                    identity_data: identity.identity_data.clone(),
+                    metadata: identity.metadata.clone(),
                     password_hash: Some(password_hash),
                 };
                 
@@ -834,10 +839,10 @@ pub async fn update_user_profile(
                 // Create new local identity if none exists
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    auth_provider_id: 1, // Local provider
-                    provider_user_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
-                    email: user_data.email.clone(),
-                    identity_data: None,
+                    provider_id: 1, // Local provider
+                    external_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
+                    email: profile_data.email.clone(),
+                    metadata: None,
                     password_hash: Some(password_hash),
                 };
                 
@@ -854,13 +859,13 @@ pub async fn update_user_profile(
 
     // Update user
     let user_update = UserUpdate {
-        name: user_data.name.clone(),
-        email: user_data.email.clone(),
-        role: user_data.role.clone(),
-        pronouns: user_data.pronouns.clone(),
-        avatar_url: user_data.avatar_url.clone(),
-        banner_url: user_data.banner_url.clone(),
-        avatar_thumb: user_data.avatar_thumb.clone(),
+        name: profile_data.name.clone(),
+        email: profile_data.email.clone(),
+        role: profile_data.role.as_ref().and_then(|r| utils::parse_role(r).ok()),
+        pronouns: profile_data.pronouns.clone(),
+        avatar_url: profile_data.avatar_url.clone(),
+        banner_url: profile_data.banner_url.clone(),
+        avatar_thumb: profile_data.avatar_thumb.clone(),
         microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
         updated_at: Some(chrono::Utc::now().naive_utc()),
     };
@@ -899,7 +904,12 @@ pub async fn upload_user_image(
     };
     
     // Validate that the user exists
-    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
+    };
+    
+    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(_) => {
             return HttpResponse::NotFound().json(json!({
@@ -1077,8 +1087,8 @@ async fn cleanup_old_user_images(
 
 /// Clean up all stale user images (admin endpoint)
 pub async fn cleanup_stale_images(
+    _auth: BearerAuth,
     db_pool: web::Data<crate::db::Pool>,
-    auth: BearerAuth,
 ) -> impl Responder {
     let mut conn = match db_pool.get() {
         Ok(conn) => conn,
@@ -1089,7 +1099,7 @@ pub async fn cleanup_stale_images(
     };
 
     // Validate token and check admin permissions
-    let claims = match validate_token_internal(&auth, &mut conn).await {
+    let claims = match validate_token_internal(&_auth, &mut conn).await {
         Ok(claims) => claims,
         Err(_) => return HttpResponse::Unauthorized().json(json!({
             "status": "error",
@@ -1187,7 +1197,7 @@ async fn cleanup_directory_stale_files(
     use std::collections::HashSet;
     
     // Create a set of valid file prefixes (user UUIDs)
-    let valid_uuids: HashSet<String> = users.iter().map(|u| u.uuid.clone()).collect();
+    let valid_uuids: HashSet<String> = users.iter().map(|u| utils::uuid_to_string(&u.uuid)).collect();
     
     // Read the directory
     let mut dir = match fs::read_dir(dir_path).await {
@@ -1282,7 +1292,12 @@ pub async fn update_user_by_uuid(
     };
 
     // First get the user by UUID to get the ID
-    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+    let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
+    };
+
+    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(_) => return HttpResponse::NotFound().json(json!({
             "status": "error",
@@ -1311,7 +1326,7 @@ pub async fn update_user_by_uuid(
         
         // Hash the new password
         let password_hash = match hash(password, DEFAULT_COST) {
-            Ok(hash) => hash.into_bytes(),
+            Ok(hash) => hash,
             Err(_) => return HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": "Error hashing password"
@@ -1331,7 +1346,7 @@ pub async fn update_user_by_uuid(
         };
         
         // Find local identity
-        let local_identity = auth_identities.iter().find(|identity| identity.auth_provider_id == 1);
+        let local_identity = auth_identities.iter().find(|identity| identity.provider_id == 1);
         
         match local_identity {
             Some(identity) => {
@@ -1353,10 +1368,10 @@ pub async fn update_user_by_uuid(
                 // Create new identity with updated password
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    auth_provider_id: identity.auth_provider_id,
-                    provider_user_id: identity.provider_user_id.clone(),
+                    provider_id: identity.provider_id,
+                    external_id: identity.external_id.clone(),
                     email: identity.email.clone(),
-                    identity_data: identity.identity_data.clone(),
+                    metadata: identity.metadata.clone(),
                     password_hash: Some(password_hash),
                 };
                 
@@ -1372,10 +1387,10 @@ pub async fn update_user_by_uuid(
                 // Create new local identity if none exists
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    auth_provider_id: 1, // Local provider
-                    provider_user_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
+                    provider_id: 1, // Local provider
+                    external_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
                     email: user_data.email.clone(),
-                    identity_data: None,
+                    metadata: None,
                     password_hash: Some(password_hash),
                 };
                 
@@ -1394,7 +1409,7 @@ pub async fn update_user_by_uuid(
     let user_update = UserUpdate {
         name: user_data.name.clone(),
         email: user_data.email.clone(),
-        role: user_data.role.clone(),
+        role: user_data.role.as_ref().and_then(|r| utils::parse_role(r).ok()),
         pronouns: user_data.pronouns.clone(),
         avatar_url: user_data.avatar_url.clone(),
         banner_url: user_data.banner_url.clone(),
@@ -1446,7 +1461,15 @@ pub async fn get_user_emails(
     }
 
     // Get user emails
-    match user_emails_repo::get_user_emails_by_uuid(&mut conn, &user_uuid) {
+    let uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID format"
+        })),
+    };
+
+    match user_emails_repo::get_user_emails_by_uuid(&mut conn, &uuid_parsed) {
         Ok(emails) => HttpResponse::Ok().json(json!({
             "status": "success",
             "emails": emails
@@ -1505,7 +1528,15 @@ pub async fn get_user_with_emails(
     }
 
     // Get user
-    let user = match repository::get_user_by_uuid(&user_uuid, &mut conn) {
+    let uuid_parsed = match utils::parse_uuid(&user_uuid) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid UUID format"
+        })),
+    };
+
+    let user = match repository::get_user_by_uuid(&uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(_) => return HttpResponse::NotFound().json(json!({
             "status": "error",

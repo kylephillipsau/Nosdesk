@@ -1,26 +1,18 @@
 <template>
-  <div class="min-h-screen bg-slate-900 text-white">
-    <!-- Header -->
-    <div class="bg-slate-800 border-b border-slate-700">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex items-center justify-between h-16">
-          <div class="flex items-center">
-            <button
-              @click="$router.go(-1)"
-              class="mr-4 p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <h1 class="text-2xl font-bold text-white">System Settings</h1>
-          </div>
-        </div>
-      </div>
+  <div class="flex-1">
+    <!-- Navigation and actions bar -->
+    <div class="pt-4 px-6 flex justify-between items-center">
+      <BackButton fallbackRoute="/admin/settings" label="Back to Administration" />
     </div>
+    
+    <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-white">System Settings</h1>
+        <p class="text-slate-400 mt-2">
+          Manage system maintenance, storage, and configuration options
+        </p>
+      </div>
 
-    <!-- Main content -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <!-- Storage Management Section -->
       <div class="mb-8">
         <h2 class="text-xl font-semibold text-white mb-4">Storage Management</h2>
@@ -172,18 +164,40 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
+import BackButton from '@/components/common/BackButton.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
 
+// Define types for cleanup results
+interface CleanupStats {
+  avatars_removed: number
+  banners_removed: number
+  thumbnails_removed?: number
+  total_files_checked: number
+  errors: string[]
+}
+
+interface CleanupResults {
+  success: boolean
+  message: string
+  stats?: CleanupStats
+}
+
+interface SystemInfo {
+  version: string
+  environment: string
+  uptime: string
+}
+
 // Reactive data
 const isCleaningUp = ref(false)
-const cleanupResults = ref(null)
-const systemInfo = ref({
+const cleanupResults = ref<CleanupResults | null>(null)
+const systemInfo = ref<SystemInfo>({
   version: '1.0.0',
   environment: 'Development',
   uptime: 'Loading...'
@@ -204,12 +218,12 @@ const loadSystemInfo = () => {
   // Mock system info for now
   systemInfo.value = {
     version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
+    environment: import.meta.env.MODE || 'development',
     uptime: formatUptime(Date.now() - (performance.timeOrigin || 0))
   }
 }
 
-const formatUptime = (milliseconds) => {
+const formatUptime = (milliseconds: number): string => {
   const seconds = Math.floor(milliseconds / 1000)
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)

@@ -13,10 +13,25 @@ const emit = defineEmits<{
 }>()
 
 const isOpen = ref(false)
+const dropdownRef = ref<HTMLElement | null>(null)
 
 const selectedOption = computed(() =>
   props.options.find(option => option.value === props.value)
 )
+
+// Computed position for the dropdown
+const dropdownPosition = computed(() => {
+  if (!dropdownRef.value || !isOpen.value) {
+    return { top: '0px', left: '0px', width: '0px' }
+  }
+  
+  const rect = dropdownRef.value.getBoundingClientRect()
+  return {
+    top: `${rect.bottom + (window as any).scrollY + 4}px`,
+    left: `${rect.left + (window as any).scrollX}px`,
+    width: `${rect.width}px`
+  }
+})
 
 const toggleDropdown = () => {
   isOpen.value = !isOpen.value
@@ -28,7 +43,6 @@ const selectOption = (option: { value: string; label: string }) => {
 }
 
 // Close dropdown when clicking outside
-const dropdownRef = ref<HTMLElement | null>(null)
 const handleClickOutside = (event: MouseEvent) => {
   if (dropdownRef.value && !dropdownRef.value.contains(event.target as Node)) {
     isOpen.value = false
@@ -99,25 +113,31 @@ onUnmounted(() => {
     </button>
 
     <!-- Dropdown menu -->
-    <div 
-      v-if="isOpen" 
-      class="absolute z-50 w-full mt-1 bg-slate-700 border border-slate-600/50 rounded-lg shadow-lg overflow-hidden"
-    >
-      <div class="py-1">
-        <button
-          v-for="option in options" 
-          :key="option.value"
-          @click="selectOption(option)"
-          class="w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-600 transition-colors flex items-center gap-2"
-          :class="{ 'bg-slate-600': option.value === value }"
-        >
-          <div 
-            class="w-2 h-2 rounded-full"
-            :class="getStatusColor(option.value)"
-          ></div>
-          <span class="text-sm">{{ option.label }}</span>
-        </button>
+    <Teleport to="body">
+      <div 
+        v-if="isOpen && dropdownRef" 
+        class="fixed bg-slate-700 border border-slate-600/50 rounded-lg shadow-lg overflow-hidden min-w-max"
+        :style="{
+          ...dropdownPosition,
+          zIndex: 9999
+        }"
+      >
+        <div class="py-1">
+          <button
+            v-for="option in options" 
+            :key="option.value"
+            @click="selectOption(option)"
+            class="w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-600 transition-colors flex items-center gap-2"
+            :class="{ 'bg-slate-600': option.value === value }"
+          >
+            <div 
+              class="w-2 h-2 rounded-full"
+              :class="getStatusColor(option.value)"
+            ></div>
+            <span class="text-sm">{{ option.label }}</span>
+          </button>
+        </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>

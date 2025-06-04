@@ -326,12 +326,12 @@ const handleDrop = (event: DragEvent) => {
 </script>
 
 <template>
-  <div class="flex flex-col bg-slate-800 rounded-xl border border-slate-700/50 h-fit">
+  <div class="w-full bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
     <!-- Header -->
     <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
       <h2 class="text-lg font-medium text-white">Comments and Attachments</h2>
     </div>
-
+    
     <!-- Content -->
     <div class="p-4 flex flex-col gap-4">
       <!-- Add New Comment Form -->

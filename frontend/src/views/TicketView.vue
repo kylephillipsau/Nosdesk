@@ -105,7 +105,10 @@ const fetchTicket = async (ticketId: string | string[]) => {
   loading.value = true;
   error.value = null;
   
-  console.log(`Fetching ticket #${id} from server...`);
+  // Only log in development mode
+  if (import.meta.env.DEV) {
+    console.log(`Fetching ticket #${id} from server...`);
+  }
   
   try {
     const fetchedTicket = await ticketService.getTicketById(id);
@@ -115,10 +118,13 @@ const fetchTicket = async (ticketId: string | string[]) => {
       return;
     }
 
-    console.log(`Received ticket data from server:`, fetchedTicket);
-    console.log(`Devices from server:`, fetchedTicket.devices);
-    console.log(`Linked tickets from server:`, fetchedTicket.linked_tickets);
-    console.log(`Projects from server:`, fetchedTicket.projects);
+    // Only log detailed data in development mode
+    if (import.meta.env.DEV) {
+      console.log(`Received ticket data from server:`, fetchedTicket);
+      console.log(`Devices from server:`, fetchedTicket.devices);
+      console.log(`Linked tickets from server:`, fetchedTicket.linked_tickets);
+      console.log(`Projects from server:`, fetchedTicket.projects);
+    }
 
     // Check if this is a new ticket (title is "New Ticket")
     isNewTicket.value = fetchedTicket.title === 'New Ticket';
@@ -172,7 +178,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
       }));
     }
     
-    console.log('Transformed devices:', transformedDevices);
+    if (import.meta.env.DEV) {
+      console.log('Transformed devices:', transformedDevices);
+    }
 
     // Update the ticket with the fetched data
     ticket.value = {
@@ -182,7 +190,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
       commentsAndAttachments
     } as unknown as LocalTicket;
 
-    console.log(`Processed linked tickets:`, ticket.value.linkedTickets);
+    if (import.meta.env.DEV) {
+      console.log(`Processed linked tickets:`, ticket.value.linkedTickets);
+    }
 
     // Update the selected values to match the ticket
     selectedStatus.value = ticket.value.status;
@@ -194,8 +204,11 @@ const fetchTicket = async (ticketId: string | string[]) => {
     const existingTicket = recentTicketsStore.recentTickets.find(t => t.id === id);
     
     if (existingTicket) {
-      console.log(`Ticket #${id} already exists in recent tickets store with title: "${existingTicket.title}"`);
-      console.log(`Server returned title: "${fetchedTicket.title}"`);
+      // Only log in development mode
+      if (import.meta.env.DEV) {
+        console.log(`Ticket #${id} already exists in recent tickets store with title: "${existingTicket.title}"`);
+        console.log(`Server returned title: "${fetchedTicket.title}"`);
+      }
       
       // Only update specific fields, preserving the title if it was manually changed
       recentTicketsStore.updateTicketData(id, {
@@ -206,7 +219,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
       });
     } else {
       // If the ticket doesn't exist in the store, add it
-      console.log(`Adding ticket #${id} to recent tickets store with title: "${fetchedTicket.title}"`);
+      if (import.meta.env.DEV) {
+        console.log(`Adding ticket #${id} to recent tickets store with title: "${fetchedTicket.title}"`);
+      }
       recentTicketsStore.addRecentTicket(
         {
           id: ticket.value.id,
@@ -231,7 +246,9 @@ const fetchTicket = async (ticketId: string | string[]) => {
       await fetchProjectDetails(ticket.value.project);
     }
     
-    console.log('Ticket data refreshed:', ticket.value);
+    if (import.meta.env.DEV) {
+      console.log('Ticket data refreshed:', ticket.value);
+    }
   } catch (err) {
     console.error(`Error fetching ticket ${id}:`, err);
     error.value = 'Failed to load ticket. Please try again later.';
@@ -244,23 +261,30 @@ const fetchTicket = async (ticketId: string | string[]) => {
 const refreshTicket = async () => {
   if (ticket.value) {
     const ticketId = ticket.value.id;
-    console.log(`Refreshing ticket #${ticketId} data...`);
     
-    // Store the current title and linked tickets before refreshing
-    const currentTitle = ticket.value.title;
-    const currentLinkedTickets = [...(ticket.value.linkedTickets || [])];
-    console.log(`Current title before refresh: "${currentTitle}"`);
-    console.log(`Current linked tickets before refresh: ${JSON.stringify(currentLinkedTickets)}`);
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.log(`Refreshing ticket #${ticketId} data...`);
+      
+      // Store the current title and linked tickets before refreshing
+      const currentTitle = ticket.value.title;
+      const currentLinkedTickets = [...(ticket.value.linkedTickets || [])];
+      console.log(`Current title before refresh: "${currentTitle}"`);
+      console.log(`Current linked tickets before refresh: ${JSON.stringify(currentLinkedTickets)}`);
+    }
     
     // Fetch fresh data from the server
     await fetchTicket(String(ticketId));
     
-    // Check if the title was preserved
-    console.log(`Title after refresh: "${ticket.value?.title}"`);
-    console.log(`Linked tickets after refresh: ${JSON.stringify(ticket.value?.linkedTickets)}`);
+    if (import.meta.env.DEV) {
+      // Check if the title was preserved
+      console.log(`Title after refresh: "${ticket.value?.title}"`);
+      console.log(`Linked tickets after refresh: ${JSON.stringify(ticket.value?.linkedTickets)}`);
+    }
     
     // Ensure the recent tickets store has the latest title
-    if (ticket.value && ticket.value.title !== currentTitle) {
+    if (ticket.value && import.meta.env.DEV) {
+      const currentTitle = ticket.value.title;
       console.log(`Title changed during refresh. Updating recent tickets store with new title: "${ticket.value.title}"`);
       recentTicketsStore.updateTicketData(ticketId, {
         title: ticket.value.title
@@ -1015,7 +1039,7 @@ const navigateToDeviceView = (deviceId: number) => {
           </div>
 
           <!-- Collaborative Ticket Article Body -->
-          <div class="article-area">
+          <div class="article-area rounded-xl">
             <CollaborativeTicketArticle 
               :initial-content="ticket.article_content || ''"
               :ticket-id="ticket.id"
@@ -1023,7 +1047,7 @@ const navigateToDeviceView = (deviceId: number) => {
           </div>
 
           <!-- Comments and Attachments -->
-          <div class="comments-area">
+          <div class="comments-area rounded-xl">
             <CommentsAndAttachments 
               :comments="ticket?.commentsAndAttachments || []"
               :current-user="authStore.user?.uuid || 'Unknown User'"

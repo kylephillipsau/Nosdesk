@@ -1,5 +1,6 @@
 use diesel::prelude::*;
 use diesel::result::Error;
+use uuid::Uuid;
 
 use crate::db::DbConnection;
 use crate::models::*;
@@ -32,7 +33,6 @@ pub fn get_paginated_users(
             query = query.filter(
                 users::name.ilike(search_pattern.clone())
                     .or(users::email.ilike(search_pattern.clone()))
-                    .or(users::role.ilike(search_pattern.clone()))
                     .or(users::id.eq_any(
                         search_term.parse::<i32>().ok().map(|id| vec![id]).unwrap_or_default()
                     ))
@@ -40,10 +40,18 @@ pub fn get_paginated_users(
         }
     }
     
-    // Handle role filter
+    // Handle role filter - convert string to UserRole enum
     if let Some(role_filter) = role.clone() {
         if role_filter != "all" {
-            query = query.filter(users::role.eq(role_filter));
+            if let Ok(role_enum) = role_filter.parse::<String>() {
+                let user_role = match role_enum.as_str() {
+                    "admin" => UserRole::Admin,
+                    "technician" => UserRole::Technician,
+                    "user" => UserRole::User,
+                    _ => UserRole::User,
+                };
+                query = query.filter(users::role.eq(user_role));
+            }
         }
     }
     
@@ -57,7 +65,6 @@ pub fn get_paginated_users(
             count_query = count_query.filter(
                 users::name.ilike(search_pattern.clone())
                     .or(users::email.ilike(search_pattern.clone()))
-                    .or(users::role.ilike(search_pattern.clone()))
                     .or(users::id.eq_any(
                         search_term.parse::<i32>().ok().map(|id| vec![id]).unwrap_or_default()
                     ))
@@ -68,7 +75,15 @@ pub fn get_paginated_users(
     // Handle role filter for count query
     if let Some(role_filter) = role {
         if role_filter != "all" {
-            count_query = count_query.filter(users::role.eq(role_filter));
+            if let Ok(role_enum) = role_filter.parse::<String>() {
+                let user_role = match role_enum.as_str() {
+                    "admin" => UserRole::Admin,
+                    "technician" => UserRole::Technician,
+                    "user" => UserRole::User,
+                    _ => UserRole::User,
+                };
+                count_query = count_query.filter(users::role.eq(user_role));
+            }
         }
     }
     
@@ -104,21 +119,21 @@ pub fn get_user_by_id(id: i32, conn: &mut DbConnection) -> Result<User, Error> {
         .first::<User>(conn)
 }
 
-pub fn get_user_by_uuid(uuid: &str, conn: &mut DbConnection) -> Result<User, Error> {
+pub fn get_user_by_uuid(uuid: &Uuid, conn: &mut DbConnection) -> Result<User, Error> {
     users::table
         .filter(users::uuid.eq(uuid))
         .first::<User>(conn)
+}
+
+/// Get user by Microsoft UUID
+pub fn get_user_by_microsoft_uuid(conn: &mut DbConnection, microsoft_uuid: &Uuid) -> QueryResult<User> {
+    users::table.filter(users::microsoft_uuid.eq(microsoft_uuid)).first(conn)
 }
 
 pub fn get_user_by_email(email: &str, conn: &mut DbConnection) -> Result<User, Error> {
     users::table
         .filter(users::email.eq(email))
         .first::<User>(conn)
-}
-
-/// Get user by Microsoft UUID
-pub fn get_user_by_microsoft_uuid(conn: &mut DbConnection, microsoft_uuid: &str) -> QueryResult<User> {
-    users::table.filter(users::microsoft_uuid.eq(microsoft_uuid)).first(conn)
 }
 
 pub fn create_user(
@@ -145,9 +160,14 @@ pub fn delete_user(id: i32, conn: &mut DbConnection) -> Result<usize, Error> {
 }
 
 // Batch get users by UUIDs
-pub fn get_users_by_uuids(uuids: &[String], conn: &mut DbConnection) -> Result<Vec<User>, Error> {
+pub fn get_users_by_uuids(uuids: &[Uuid], conn: &mut DbConnection) -> Result<Vec<User>, Error> {
     users::table
         .filter(users::uuid.eq_any(uuids))
         .order_by(users::name.asc())
         .load::<User>(conn)
+}
+
+// Count total users in the database (for onboarding check)
+pub fn count_users(conn: &mut DbConnection) -> Result<i64, Error> {
+    users::table.count().get_result(conn)
 } 

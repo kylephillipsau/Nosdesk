@@ -13,18 +13,18 @@ const emit = defineEmits<{
   (e: 'add-device', device: Device): void;
 }>();
 
-// Generate a simple unique ID
+// Generate a simple unique ID as number
 const generateId = () => {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2);
+  return Date.now();
 };
 
 const createEmptyDevice = (): Device => ({
   id: generateId(),
   name: '',
   hostname: '',
-  serialNumber: '',
+  serial_number: '',
   model: '',
-  warrantyStatus: ''
+  warranty_status: ''
 });
 
 const device = ref<Device>(createEmptyDevice());
@@ -67,10 +67,10 @@ const handleSubmit = () => {
 
       <!-- Serial Number -->
       <div class="flex flex-col gap-1">
-        <label for="serialNumber" class="text-sm text-slate-400">Serial Number</label>
+        <label for="serial_number" class="text-sm text-slate-400">Serial Number</label>
         <input
-          id="serialNumber"
-          v-model="device.serialNumber"
+          id="serial_number"
+          v-model="device.serial_number"
           type="text"
           required
           class="bg-slate-700 text-slate-200 rounded-lg p-2 border-none focus:ring-2 focus:ring-blue-500"
@@ -93,10 +93,10 @@ const handleSubmit = () => {
 
       <!-- Warranty Status -->
       <div class="flex flex-col gap-1">
-        <label for="warrantyStatus" class="text-sm text-slate-400">Warranty Status</label>
+        <label for="warranty_status" class="text-sm text-slate-400">Warranty Status</label>
         <input
-          id="warrantyStatus"
-          v-model="device.warrantyStatus"
+          id="warranty_status"
+          v-model="device.warranty_status"
           type="text"
           required
           class="bg-slate-700 text-slate-200 rounded-lg p-2 border-none focus:ring-2 focus:ring-blue-500"
