@@ -10,6 +10,7 @@ pub mod documentation;
 pub mod auth_providers;
 pub mod microsoft_graph;
 pub mod msgraph_integration;
+pub mod sse;
 
 // Import all handlers from modules
 pub use auth::*;
@@ -79,12 +80,13 @@ pub async fn get_comments_by_ticket_id(
 pub async fn add_comment_to_ticket(
     path: web::Path<i32>,
     comment_data: web::Json<crate::models::NewCommentWithAttachments>,
-    pool: web::Data<crate::db::Pool>
+    pool: web::Data<crate::db::Pool>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
+    auth: actix_web_httpauth::extractors::bearer::BearerAuth,
 ) -> impl Responder {
     let ticket_id = path.into_inner();
     println!("Adding comment to ticket {}", ticket_id);
     println!("Comment content: {}", comment_data.content);
-    println!("Comment user ID: {}", comment_data.user_id);  // Use user_id
     println!("Attachments count: {}", comment_data.attachments.len());
     
     let mut conn = match pool.get() {
@@ -95,22 +97,34 @@ pub async fn add_comment_to_ticket(
         }
     };
 
-    // Validate user ID by getting user info
-    let user_info = match crate::repository::users::get_user_by_id(comment_data.user_id, &mut conn) {
+    // Validate JWT token and get authenticated user information (SECURE)
+    let claims = match crate::handlers::auth::validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json(json!({"error": "Invalid or expired token"})),
+    };
+
+    // Parse the authenticated user's UUID from the JWT claims
+    let user_uuid_parsed = match crate::utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json(json!({"error": "Invalid user UUID in token"})),
+    };
+
+    // Get the authenticated user's information
+    let (user_id, user_info) = match crate::repository::users::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => {
-            println!("Found valid user: {} ({})", user.name, user.uuid);
-            Some(crate::models::UserInfo::from(user))
+            println!("Authenticated user: {} ({})", user.name, user.uuid);
+            (user.id, Some(crate::models::UserInfo::from(user)))
         },
         Err(e) => {
-            println!("Warning: User with ID '{}' not found: {:?}", comment_data.user_id, e);
-            return HttpResponse::BadRequest().json(json!({"error": "Invalid user ID"}));
+            println!("Error: Authenticated user UUID '{}' not found in database: {:?}", claims.sub, e);
+            return HttpResponse::InternalServerError().json(json!({"error": "User account not found"}));
         }
     };
 
-    // Create the new comment (removing created_at since it's not in the model)
+    // Create the new comment using the authenticated user's ID
     let new_comment = crate::models::NewComment {
         content: comment_data.content.clone(),
-        user_id: comment_data.user_id,  // Use user_id
+        user_id: user_id,  // Use the user_id looked up from JWT token
         ticket_id,
     };
 
@@ -208,6 +222,7 @@ pub async fn add_comment_to_ticket(
             let response = json!({
                 "id": comment.id,
                 "content": comment.content,
+                "user_uuid": user_uuid_parsed.to_string(),  // Return user_uuid for frontend compatibility
                 "user_id": comment.user_id,
                 "created_at": created_at,
                 "createdAt": created_at,
@@ -215,6 +230,9 @@ pub async fn add_comment_to_ticket(
                 "attachments": attachments,
                 "user": user
             });
+            
+            // Broadcast SSE event for the new comment
+            crate::handlers::sse::broadcast_comment_added(&sse_state, ticket_id, response.clone());
             
             println!("Successfully created comment with {} attachments", attachments.len());
             println!("Returning JSON response: {}", response);
@@ -229,7 +247,8 @@ pub async fn add_comment_to_ticket(
 
 pub async fn delete_comment(
     path: web::Path<i32>,
-    pool: web::Data<crate::db::Pool>
+    pool: web::Data<crate::db::Pool>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let comment_id = path.into_inner();
     println!("Deleting comment with ID: {}", comment_id);
@@ -242,9 +261,20 @@ pub async fn delete_comment(
         }
     };
     
+    // Get the comment first to find the ticket_id for SSE broadcasting
+    let ticket_id = match crate::repository::comments::get_comment_by_id(&mut conn, comment_id) {
+        Ok(comment) => comment.ticket_id,
+        Err(_) => {
+            return HttpResponse::NotFound().json(json!({"error": "Comment not found"}));
+        }
+    };
+    
     match crate::repository::comments::delete_comment(&mut conn, comment_id) {
         Ok(deleted) => {
             if deleted > 0 {
+                // Broadcast SSE event for the deleted comment
+                crate::handlers::sse::broadcast_comment_deleted(&sse_state, ticket_id, comment_id);
+                
                 println!("Successfully deleted comment");
                 HttpResponse::Ok().json(json!({"success": true, "message": "Comment deleted"}))
             } else {

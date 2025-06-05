@@ -5,14 +5,13 @@ import BaseListView from '@/components/common/BaseListView.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import DebouncedSearchInput from '@/components/common/DebouncedSearchInput.vue'
 import PaginationControls from '@/components/common/PaginationControls.vue'
-import Modal from '@/components/Modal.vue'
-import DeviceForm from '@/components/DeviceForm.vue'
+
 import { IdCell, TextCell, StatusBadgeCell, UserAvatarCell } from '@/components/common/cells'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { useListManagement } from '@/composables/useListManagement'
 import { useDataStore } from '@/stores/dataStore'
-import { getPaginatedDevices, createDevice } from '@/services/deviceService'
-import type { Device, DeviceFormData } from '@/types/device'
+import { getPaginatedDevices } from '@/services/deviceService'
+import type { Device } from '@/types/device'
 
 const router = useRouter()
 const dataStore = useDataStore()
@@ -123,26 +122,11 @@ const filterOptions = computed(() => {
 // Custom grid template for responsive layout
 const gridClass = "grid-cols-[auto_1fr_minmax(100px,auto)] md:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(120px,auto)_minmax(120px,auto)_minmax(100px,auto)] lg:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(120px,auto)_minmax(120px,auto)_minmax(120px,auto)_minmax(120px,auto)_minmax(100px,auto)]";
 
-// Modal state
-const showAddDeviceModal = ref(false);
-const isCreatingDevice = ref(false);
-const createDeviceError = ref<string | null>(null);
 
-// Handle device creation
-const handleCreateDevice = async (deviceData: DeviceFormData) => {
-  isCreatingDevice.value = true;
-  createDeviceError.value = null;
-  
-  try {
-    await createDevice(deviceData);
-    showAddDeviceModal.value = false;
-    await listManager.fetchItems();
-  } catch (err) {
-    console.error('Error creating device:', err);
-    createDeviceError.value = 'Failed to create device. Please try again.';
-  } finally {
-    isCreatingDevice.value = false;
-  }
+
+// Navigate to create device
+const navigateToCreateDevice = () => {
+  router.push('/devices/new');
 };
 
 // Format date function
@@ -200,9 +184,12 @@ const formatDate = (dateString: string) => {
 
         <!-- Add button -->
         <button
-          @click="showAddDeviceModal = true"
-          class="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:ring-2 focus:outline-none focus:ring-green-800 ml-auto"
+          @click="navigateToCreateDevice"
+          class="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:ring-2 focus:outline-none focus:ring-green-800 ml-auto flex items-center gap-1"
         >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
           Add Device
         </button>
 
@@ -365,25 +352,7 @@ const formatDate = (dateString: string) => {
       @import="() => {}"
     />
 
-    <!-- Add Device Modal -->
-    <Modal
-      :show="showAddDeviceModal"
-      title="Add New Device"
-      @close="showAddDeviceModal = false"
-    >
-      <div v-if="createDeviceError" class="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-white">
-        {{ createDeviceError }}
-      </div>
-      
-      <DeviceForm
-        @submit="handleCreateDevice"
-        @cancel="showAddDeviceModal = false"
-      />
-      
-      <div v-if="isCreatingDevice" class="mt-4 flex justify-center">
-        <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    </Modal>
+
   </div>
 </template>
 

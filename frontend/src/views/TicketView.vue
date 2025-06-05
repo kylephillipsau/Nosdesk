@@ -1,10 +1,11 @@
 <!-- TicketView.vue -->
 <script setup lang="ts">
-import { ref, watch, computed, onMounted } from "vue";
+import { ref, watch, computed, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useRecentTicketsStore } from "@/stores/recentTickets";
 import { useTitleManager } from '@/composables/useTitleManager';
 import { useAuthStore } from '@/stores/auth';
+import { useSSE } from '@/services/sseService';
 import CollaborativeTicketArticle from '@/components/ticketComponents/CollaborativeTicketArticle.vue';
 import TicketDetails from '@/components/ticketComponents/TicketDetails.vue'
 import DeviceDetails from '@/components/ticketComponents/DeviceDetails.vue';
@@ -67,6 +68,8 @@ const projectDetails = ref<Project | null>(null);
 const recentTicketsStore = useRecentTicketsStore();
 const titleManager = useTitleManager();
 const authStore = useAuthStore();
+// Setup SSE
+const { addEventListener, removeEventListener, isConnected, connect, disconnect } = useSSE();
 
 // Add users state
 const users = ref<User[]>([]);
@@ -76,6 +79,18 @@ const usersError = ref<string | null>(null);
 const selectedStatus = ref<TicketStatus>("open");
 const selectedPriority = ref<TicketPriority>("low");
 const showDeviceModal = ref(false);
+
+// Add a watcher to debug the requester value when modal opens
+watch(showDeviceModal, (isOpen) => {
+  if (isOpen && import.meta.env.DEV) {
+    console.log('TicketView: DeviceModal opened, ticket data:', {
+      ticketId: ticket.value?.id,
+      requester: ticket.value?.requester,
+      requesterUser: ticket.value?.requester_user,
+      fullTicket: ticket.value
+    });
+  }
+});
 const showProjectModal = ref(false);
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -318,6 +333,28 @@ onMounted(async () => {
   if (route.params.id) {
     fetchTicket(route.params.id);
   }
+  
+  // Set up SSE event listeners
+  addEventListener('ticket-updated', handleTicketUpdated);
+  addEventListener('comment-added', handleCommentAdded);
+  addEventListener('comment-deleted', handleCommentDeleted);
+  addEventListener('device-linked', handleDeviceLinked);
+  addEventListener('device-unlinked', handleDeviceUnlinked);
+  
+  // Connect to SSE for real-time updates
+  if (authStore.token) {
+    connect(route.params.id ? Number(route.params.id) : undefined);
+  }
+});
+
+// Clean up SSE when component unmounts
+onUnmounted(() => {
+  removeEventListener('ticket-updated', handleTicketUpdated);
+  removeEventListener('comment-added', handleCommentAdded);
+  removeEventListener('comment-deleted', handleCommentDeleted);
+  removeEventListener('device-linked', handleDeviceLinked);
+  removeEventListener('device-unlinked', handleDeviceUnlinked);
+  disconnect();
 });
 
 watch(
@@ -336,148 +373,157 @@ const getCurrentUTCDateTime = () => {
 };
 
 const updateStatus = async (newStatus: string) => {
-  // Convert string to TicketStatus type
-  const typedStatus = newStatus as TicketStatus;
-  selectedStatus.value = typedStatus;
+  if (!ticket.value) return;
   
-  if (ticket.value) {
-    try {
-      // Update the local state
-      ticket.value.status = typedStatus;
-      // Get current UTC datetime
-      const nowDateTime = getCurrentUTCDateTime();
-      ticket.value.modified = nowDateTime;
-      
-      // Send the update to the backend
-      await ticketService.updateTicket(ticket.value.id, { 
-        status: typedStatus,
-        modified: nowDateTime
-      });
-      
-      // Update the ticket in the recent tickets store
-      recentTicketsStore.updateTicketData(ticket.value.id, {
-        status: typedStatus
-      });
-      
-      // Refresh the ticket data to ensure it's up to date
-      await refreshTicket();
-    } catch (err) {
-      console.error(`Error updating ticket status:`, err);
-      // Revert UI if update fails
-      ticket.value.status = selectedStatus.value;
-    }
+  const typedStatus = newStatus as TicketStatus;
+  if (ticket.value.status === typedStatus) return; // No change needed
+  
+  try {
+    console.log(`Updating status from ${ticket.value.status} to ${typedStatus}`);
+    
+    // Get current UTC datetime
+    const nowDateTime = getCurrentUTCDateTime();
+    
+    // Send the update to the backend first
+    const updateData = { 
+      status: typedStatus,
+      modified: nowDateTime
+    };
+    
+    const updatedTicket = await ticketService.updateTicket(ticket.value.id, updateData);
+    console.log(`Status updated successfully:`, updatedTicket);
+    
+    // Update local state with the response from server
+    ticket.value.status = updatedTicket.status;
+    ticket.value.modified = updatedTicket.modified;
+    selectedStatus.value = updatedTicket.status;
+    
+    // Update the ticket in the recent tickets store
+    recentTicketsStore.updateTicketData(ticket.value.id, {
+      status: updatedTicket.status,
+      modified: updatedTicket.modified
+    });
+    
+  } catch (err) {
+    console.error(`Error updating ticket status:`, err);
+    // Show error notification if needed
   }
 };
 
 const updatePriority = async (newPriority: string) => {
-  // Convert string to TicketPriority type
-  const typedPriority = newPriority as TicketPriority;
-  selectedPriority.value = typedPriority;
+  if (!ticket.value) return;
   
-  if (ticket.value) {
-    try {
-      // Update the local state
-      ticket.value.priority = typedPriority;
-      // Get current UTC datetime
-      const nowDateTime = getCurrentUTCDateTime();
-      ticket.value.modified = nowDateTime;
-      
-      // Send the update to the backend
-      await ticketService.updateTicket(ticket.value.id, { 
-        priority: typedPriority,
-        modified: nowDateTime
-      });
-      
-      // Update the ticket in the recent tickets store
-      recentTicketsStore.updateTicketData(ticket.value.id, {
-        // Priority is not stored in the recent tickets, but we'll update modified date
-        modified: nowDateTime
-      });
-      
-      // Refresh the ticket data to ensure it's up to date
-      await refreshTicket();
-    } catch (err) {
-      console.error(`Error updating ticket priority:`, err);
-      // Revert UI if update fails
-      ticket.value.priority = selectedPriority.value;
-    }
+  const typedPriority = newPriority as TicketPriority;
+  if (ticket.value.priority === typedPriority) return; // No change needed
+  
+  try {
+    console.log(`Updating priority from ${ticket.value.priority} to ${typedPriority}`);
+    
+    // Get current UTC datetime
+    const nowDateTime = getCurrentUTCDateTime();
+    
+    // Send the update to the backend first
+    const updateData = { 
+      priority: typedPriority,
+      modified: nowDateTime
+    };
+    
+    const updatedTicket = await ticketService.updateTicket(ticket.value.id, updateData);
+    console.log(`Priority updated successfully:`, updatedTicket);
+    
+    // Update local state with the response from server
+    ticket.value.priority = updatedTicket.priority;
+    ticket.value.modified = updatedTicket.modified;
+    selectedPriority.value = updatedTicket.priority;
+    
+    // Update the ticket in the recent tickets store
+    recentTicketsStore.updateTicketData(ticket.value.id, {
+      // Priority is not stored in the recent tickets, but we'll update modified date
+      modified: updatedTicket.modified
+    });
+    
+  } catch (err) {
+    console.error(`Error updating ticket priority:`, err);
+    // Show error notification if needed
   }
 };
 
 // Add handlers for requester and assignee updates
 const updateRequester = async (newRequester: string) => {
-  if (ticket.value) {
-    const oldRequester = ticket.value.requester;
-    try {
-      console.log(`Updating requester from ${oldRequester} to ${newRequester}`);
-      
-      // Update the local state
-      ticket.value.requester = newRequester;
-      // Get current UTC datetime
-      const nowDateTime = getCurrentUTCDateTime();
-      ticket.value.modified = nowDateTime;
-      
-      // Send the update to the backend
-      const updateData = { 
-        requester: newRequester,
-        modified: nowDateTime
-      };
-      console.log('Sending update to backend:', updateData);
-      
-      await ticketService.updateTicket(ticket.value.id, updateData);
-      console.log(`Requester updated to: ${newRequester}`);
-      
-      // Update the ticket in the recent tickets store
-      recentTicketsStore.updateTicketData(ticket.value.id, {
-        requester: newRequester,
-        modified: nowDateTime
-      });
-      
-      // Refresh the ticket data to ensure it's up to date
-      await refreshTicket();
-    } catch (err) {
-      console.error(`Error updating ticket requester:`, err);
-      // Revert UI if update fails
-      ticket.value.requester = oldRequester;
-    }
+  if (!ticket.value) return;
+  
+  const oldRequester = ticket.value.requester;
+  if (oldRequester === newRequester) return; // No change needed
+  
+  try {
+    console.log(`Updating requester from ${oldRequester} to ${newRequester}`);
+    
+    // Get current UTC datetime
+    const nowDateTime = getCurrentUTCDateTime();
+    
+    // Send the update to the backend first
+    const updateData = { 
+      requester: newRequester,
+      modified: nowDateTime
+    };
+    console.log('Sending update to backend:', updateData);
+    
+    const updatedTicket = await ticketService.updateTicket(ticket.value.id, updateData);
+    console.log(`Requester updated successfully:`, updatedTicket);
+    
+    // Update local state with the response from server
+    ticket.value.requester = updatedTicket.requester;
+    ticket.value.requester_user = updatedTicket.requester_user;
+    ticket.value.modified = updatedTicket.modified;
+    
+    // Update the ticket in the recent tickets store
+    recentTicketsStore.updateTicketData(ticket.value.id, {
+      requester: updatedTicket.requester,
+      modified: updatedTicket.modified
+    });
+    
+  } catch (err) {
+    console.error(`Error updating ticket requester:`, err);
+    // Show error notification if needed
   }
 };
 
 const updateAssignee = async (newAssignee: string) => {
-  if (ticket.value) {
-    const oldAssignee = ticket.value.assignee;
-    try {
-      console.log(`Updating assignee from ${oldAssignee} to ${newAssignee}`);
-      
-      // Update the local state
-      ticket.value.assignee = newAssignee;
-      // Get current UTC datetime
-      const nowDateTime = getCurrentUTCDateTime();
-      ticket.value.modified = nowDateTime;
-      
-      // Send the update to the backend
-      const updateData = { 
-        assignee: newAssignee,
-        modified: nowDateTime
-      };
-      console.log('Sending update to backend:', updateData);
-      
-      await ticketService.updateTicket(ticket.value.id, updateData);
-      console.log(`Assignee updated to: ${newAssignee}`);
-      
-      // Update the ticket in the recent tickets store
-      recentTicketsStore.updateTicketData(ticket.value.id, {
-        assignee: newAssignee,
-        modified: nowDateTime
-      });
-      
-      // Refresh the ticket data to ensure it's up to date
-      await refreshTicket();
-    } catch (err) {
-      console.error(`Error updating ticket assignee:`, err);
-      // Revert UI if update fails
-      ticket.value.assignee = oldAssignee;
-    }
+  if (!ticket.value) return;
+  
+  const oldAssignee = ticket.value.assignee;
+  if (oldAssignee === newAssignee) return; // No change needed
+  
+  try {
+    console.log(`Updating assignee from ${oldAssignee} to ${newAssignee}`);
+    
+    // Get current UTC datetime
+    const nowDateTime = getCurrentUTCDateTime();
+    
+    // Send the update to the backend first
+    const updateData = { 
+      assignee: newAssignee,
+      modified: nowDateTime
+    };
+    console.log('Sending update to backend:', updateData);
+    
+    const updatedTicket = await ticketService.updateTicket(ticket.value.id, updateData);
+    console.log(`Assignee updated successfully:`, updatedTicket);
+    
+    // Update local state with the response from server
+    ticket.value.assignee = updatedTicket.assignee;
+    ticket.value.assignee_user = updatedTicket.assignee_user;
+    ticket.value.modified = updatedTicket.modified;
+    
+    // Update the ticket in the recent tickets store
+    recentTicketsStore.updateTicketData(ticket.value.id, {
+      assignee: updatedTicket.assignee,
+      modified: updatedTicket.modified
+    });
+    
+  } catch (err) {
+    console.error(`Error updating ticket assignee:`, err);
+    // Show error notification if needed
   }
 };
 
@@ -485,14 +531,13 @@ const emit = defineEmits<{
   (e: 'update:ticket', ticket: { id: number; title: string } | null): void;
 }>();
 
-// Watch ticket changes to emit updates
+// Simple watcher to emit ticket updates when ticket loads or changes
 watch(ticket, (newTicket) => {
   if (newTicket) {
     emit('update:ticket', {
       id: newTicket.id,
       title: newTicket.title
     });
-    titleManager.setCustomTitle(`#${newTicket.id} ${newTicket.title}`);
   } else {
     emit('update:ticket', null);
   }
@@ -512,9 +557,6 @@ const updateTicketTitle = async (newTitle: string) => {
       // Get current UTC datetime
       const nowDateTime = getCurrentUTCDateTime();
       ticket.value.modified = nowDateTime;
-      
-      // Update the title in the UI
-      titleManager.setCustomTitle(`#${ticket.value.id} ${newTitle}`);
       
       // Update the ticket in the recent tickets store BEFORE the API call
       console.log('Updating title in recent tickets store...');
@@ -538,7 +580,6 @@ const updateTicketTitle = async (newTitle: string) => {
       console.error(`Error updating ticket title:`, err);
       // Revert UI if update fails
       ticket.value.title = oldTitle;
-      titleManager.setCustomTitle(`#${ticket.value.id} ${oldTitle}`);
       
       // Also revert the title in the recent tickets store
       recentTicketsStore.updateTicketData(ticketId, {
@@ -751,11 +792,10 @@ const handleAddComment = async (data: { content: string; user_uuid: string; atta
     
     console.log("Sending comment data to API:", data);
     
-    // Create the comment with attachments
+    // Create the comment with attachments (user info extracted from JWT token)
     const newComment = await ticketService.addCommentToTicket(
       ticket.value.id,
       data.content,
-      data.user_uuid,
       data.attachments
     );
     
@@ -881,6 +921,129 @@ const navigateToDeviceView = (deviceId: number) => {
     query: { fromTicket: String(ticket.value?.id) }
   });
 };
+
+// SSE Event Handlers
+const handleTicketUpdated = (eventData: any) => {
+  console.log('SSE: Raw event data:', eventData);
+  
+  // The event data structure is { type: "TicketUpdated", data: { ticket_id, field, value, ... } }
+  const data = eventData.data || eventData;
+  
+  console.log('SSE: Received event for ticket', data.ticket_id, 'current ticket:', ticket.value?.id);
+  if (!ticket.value || data.ticket_id !== ticket.value.id) return;
+  
+  console.log('SSE: Update by user', data.updated_by, 'current user:', authStore.user?.uuid);
+  // Don't update if the change was made by the current user
+  if (data.updated_by === authStore.user?.uuid) {
+    console.log('SSE: Ignoring update from current user');
+    return;
+  }
+  
+  console.log('SSE: Processing ticket update:', data);
+  
+  // Update the specific field that was changed
+  if (data.field === 'title') {
+    console.log('SSE: Updating title from', ticket.value.title, 'to', data.value);
+    ticket.value.title = data.value;
+    // Directly emit the update to the parent for immediate reactivity
+    emit('update:ticket', {
+      id: ticket.value.id,
+      title: data.value
+    });
+    console.log('SSE: Title updated, new value:', ticket.value.title);
+  } else if (data.field === 'status') {
+    ticket.value.status = data.value;
+    selectedStatus.value = data.value;
+  } else if (data.field === 'priority') {
+    ticket.value.priority = data.value;
+    selectedPriority.value = data.value;
+  } else if (data.field === 'requester') {
+    console.log('SSE: Updating requester from', ticket.value.requester, 'to', data.value);
+    // Handle both old format (just UUID string) and new format (object with user_info)
+    if (typeof data.value === 'string') {
+      ticket.value.requester = data.value;
+    } else if (data.value && data.value.uuid) {
+      ticket.value.requester = data.value.uuid;
+      if (data.value.user_info) {
+        ticket.value.requester_user = data.value.user_info;
+      }
+    }
+    console.log('SSE: Requester updated, new value:', ticket.value.requester, 'user:', ticket.value.requester_user);
+  } else if (data.field === 'assignee') {
+    console.log('SSE: Updating assignee from', ticket.value.assignee, 'to', data.value);
+    // Handle both old format (just UUID string) and new format (object with user_info)
+    if (typeof data.value === 'string') {
+      ticket.value.assignee = data.value;
+    } else if (data.value && data.value.uuid) {
+      ticket.value.assignee = data.value.uuid;
+      if (data.value.user_info) {
+        ticket.value.assignee_user = data.value.user_info;
+      }
+    }
+    console.log('SSE: Assignee updated, new value:', ticket.value.assignee, 'user:', ticket.value.assignee_user);
+  }
+  
+  // Update the recent tickets store
+  recentTicketsStore.updateTicketData(ticket.value.id, {
+    title: ticket.value.title,
+    status: ticket.value.status,
+    requester: ticket.value.requester,
+    assignee: ticket.value.assignee,
+  });
+};
+
+const handleCommentAdded = (data: any) => {
+  if (!ticket.value || data.ticket_id !== ticket.value.id) return;
+  
+  console.log('SSE: Received new comment:', data);
+  
+  // Add the new comment to the local state
+  if (ticket.value.commentsAndAttachments) {
+    // Convert the comment to the expected format
+    const newComment = {
+      id: data.comment.id,
+      content: data.comment.content,
+      user_uuid: data.comment.user_id,
+      createdAt: data.comment.created_at,
+      created_at: data.comment.created_at,
+      ticket_id: data.comment.ticket_id,
+      attachments: data.comment.attachments || [],
+      user: data.comment.user
+    };
+    
+    // Add to the beginning of the array (newest first)
+    ticket.value.commentsAndAttachments.unshift(newComment);
+  }
+};
+
+const handleCommentDeleted = (data: any) => {
+  if (!ticket.value || data.ticket_id !== ticket.value.id) return;
+  
+  console.log('SSE: Comment deleted:', data);
+  
+  // Remove the comment from the local state
+  if (ticket.value.commentsAndAttachments) {
+    ticket.value.commentsAndAttachments = ticket.value.commentsAndAttachments.filter(
+      comment => comment.id !== data.comment_id
+    );
+  }
+};
+
+const handleDeviceLinked = (data: any) => {
+  if (!ticket.value || data.ticket_id !== ticket.value.id) return;
+  
+  console.log('SSE: Device linked:', data);
+  // Refresh the ticket to get the updated device information
+  refreshTicket();
+};
+
+const handleDeviceUnlinked = (data: any) => {
+  if (!ticket.value || data.ticket_id !== ticket.value.id) return;
+  
+  console.log('SSE: Device unlinked:', data);
+  // Refresh the ticket to get the updated device information
+  refreshTicket();
+};
 </script>
 
 <template>
@@ -888,16 +1051,34 @@ const navigateToDeviceView = (deviceId: number) => {
     <div v-if="ticket" class="flex flex-col">
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
-        <BackButton 
-          v-if="ticket.project" 
-          context="project" 
-          :contextId="ticket.project" 
-          :fallbackRoute="'/tickets'" 
-        />
-        <BackButton 
-          v-else 
-          fallbackRoute="/tickets" 
-        />
+        <div class="flex items-center gap-4">
+          <BackButton 
+            v-if="ticket.project" 
+            context="project" 
+            :contextId="ticket.project" 
+            :fallbackRoute="'/tickets'" 
+          />
+          <BackButton 
+            v-else 
+            fallbackRoute="/tickets" 
+          />
+          
+          <!-- SSE Connection Status -->
+          <div class="flex items-center gap-2 text-sm">
+            <div 
+              class="w-2 h-2 rounded-full"
+              :class="{
+                            'bg-green-400': isConnected,
+            'bg-yellow-400 animate-pulse': !isConnected,
+            'bg-red-400': !isConnected
+              }"
+            ></div>
+            <span class="text-slate-400">
+              {{ isConnected ? 'Live updates' : 'Connecting...' }}
+            </span>
+          </div>
+        </div>
+        
         <DeleteButton 
           fallbackRoute="/tickets" 
           itemName="Ticket" 
@@ -918,7 +1099,6 @@ const navigateToDeviceView = (deviceId: number) => {
               :selected-priority="selectedPriority"
               :status-options="STATUS_OPTIONS" 
               :priority-options="PRIORITY_OPTIONS"
-              :users="formattedUsers"
               @update:selectedStatus="updateStatus" 
               @update:selectedPriority="updatePriority"
               @update:requester="updateRequester"

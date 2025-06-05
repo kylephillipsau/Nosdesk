@@ -196,7 +196,7 @@ const isRouteActive = (path: string, exact = false) => {
         />
       </RouterLink>
 
-      <div class="flex flex-col space-y-1 mb-2">
+      <div class="flex flex-col gap-1 mb-2">
         <RouterLink 
           v-for="link in navLinks" 
           :key="link.to"

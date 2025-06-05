@@ -226,7 +226,7 @@ const isRouteActive = (path: string, exact = false) => {
       isSmallScreen ? 'hidden' : '',
     ]"
   >
-    <div class="flex flex-col pt-2 px-2 flex-shrink-0 gap-1">
+    <div class="flex flex-col p-2 px-2 flex-shrink-0 gap-1">
       <!-- Show logo only when navbar is expanded -->
       <RouterLink
         v-if="!isCollapsed"
@@ -245,7 +245,7 @@ const isRouteActive = (path: string, exact = false) => {
         <img alt="Nosdesk Logo" class="px-3 py-1" src="@/assets/logo.svg" />
       </RouterLink>
 
-      <div class="flex flex-col space-y-1 mb-2">
+      <div class="flex flex-col gap-1 mb-2">
         <RouterLink
           v-for="link in navLinks"
           :key="link.to"

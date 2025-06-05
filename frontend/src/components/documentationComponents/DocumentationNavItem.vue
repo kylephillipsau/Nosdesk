@@ -160,7 +160,7 @@ const hasChildren = computed(() => {
 </script>
 
 <template>
-  <li class="space-y-0.5 relative nav-item">
+  <li class="flex flex-col gap-0.5 relative nav-item">
     <!-- Main Page Item -->
     <div
       class="flex gap-1 text-xs font-medium px-2 py-1 hover:text-white hover:bg-slate-700/70 rounded transition-colors items-center relative"
@@ -210,7 +210,7 @@ const hasChildren = computed(() => {
     
     <!-- Child Pages (only shown when expanded) -->
     <div v-if="docNavStore.expandedPages[page.id] && hasChildren" class="pl-1.5">
-      <ul class="space-y-0.5 border-l border-slate-700 pl-1 relative">
+      <ul class="flex flex-col gap-0.5 border-l border-slate-700 pl-1 relative">
         <!-- Show a subtle expanding line animation when first expanded -->
         <div class="absolute left-0 top-0 bottom-0 w-px bg-slate-600 expand-line"></div>
         

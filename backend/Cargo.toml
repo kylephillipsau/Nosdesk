@@ -43,6 +43,9 @@ lazy_static = "1.5.0"        # For static mutable state
 dashmap = "6.1.0"            # Thread-safe concurrent hashmap
 env_logger = "0.11.0"
 log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-actix-web = "0.7"
 mockall = { version = "0.13.0", optional = true }
 actix-service = "2.0.2"
 derive_more = "0.99.17"
@@ -73,6 +76,11 @@ image = { version = "0.24", features = ["webp", "jpeg", "png"] }
 
 # Rate limiting for security
 actix-limitation = "0.5.1"
+
+# MFA (Multi-Factor Authentication) dependencies
+totp-rs = "5.4.0"         # TOTP (Time-based One-Time Password) implementation
+qrcode = "0.14.1"         # QR code generation
+base32 = "0.4.0"          # Base32 encoding for TOTP secrets
 
 # For testing only
 [dev-dependencies]

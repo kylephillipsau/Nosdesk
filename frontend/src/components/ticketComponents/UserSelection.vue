@@ -25,8 +25,26 @@ const isSearching = ref(false);
 const searchError = ref<string | null>(null);
 const selectedUser = ref<{ id: string; name: string; email: string } | null>(null);
 
+// Add reference for input positioning
+const inputRef = ref<HTMLElement | null>(null);
+const containerRef = ref<HTMLElement | null>(null);
+
 // Debounce timer for search
 let searchTimeout: number | null = null;
+
+// Computed position for the dropdown
+const dropdownPosition = computed(() => {
+  if (!containerRef.value || !isDropdownOpen.value) {
+    return { top: '0px', left: '0px', width: '0px' }
+  }
+  
+  const rect = containerRef.value.getBoundingClientRect()
+  return {
+    top: `${rect.bottom + window.scrollY + 4}px`,
+    left: `${rect.left + window.scrollX}px`,
+    width: `${rect.width}px`
+  }
+})
 
 // Find user info by UUID
 const getUserInfo = async (id: string) => {
@@ -134,6 +152,7 @@ const selectUser = (user: { id: string; name: string; email: string }) => {
   selectedUser.value = user;
   inputValue.value = user.name;
   console.log(`UserSelection: Emitting update:modelValue with ID: ${user.id}`);
+  console.log(`UserSelection: Previous modelValue was: ${props.modelValue}`);
   emit('update:modelValue', user.id);
   isDropdownOpen.value = false;
   searchResults.value = [];
@@ -143,6 +162,8 @@ const selectUser = (user: { id: string; name: string; email: string }) => {
 const clearSelection = () => {
   selectedUser.value = null;
   inputValue.value = '';
+  console.log(`UserSelection: Clearing selection, emitting empty string`);
+  console.log(`UserSelection: Previous modelValue was: ${props.modelValue}`);
   emit('update:modelValue', '');
   isDropdownOpen.value = false;
   searchResults.value = [];
@@ -153,17 +174,15 @@ const handleFocus = (event: Event) => {
   isInputFocused.value = true;
   isDropdownOpen.value = true;
   
-  // If there's no current search and no selected user, don't search yet
-  if (!inputValue.value || inputValue.value === selectedUser.value?.name) {
-    // Clear the input to allow fresh search
-    if (selectedUser.value) {
-      inputValue.value = '';
-    }
-  }
-  
-  // Select all text when input receives focus
+  // Select all text when input receives focus to allow easy replacement
   const input = event.target as HTMLInputElement;
   setTimeout(() => input.select(), 0);
+  
+  // If we have a selected user, search for users matching the current name
+  // This allows finding other users with the same name
+  if (selectedUser.value && inputValue.value) {
+    debouncedSearch(inputValue.value);
+  }
 };
 
 // Handle input changes
@@ -173,6 +192,7 @@ const handleInput = () => {
   // If user clears the input, clear the selection
   if (inputValue.value === '') {
     if (selectedUser.value) {
+      console.log(`UserSelection: Input cleared, emitting empty string`);
       emit('update:modelValue', '');
       selectedUser.value = null;
     }
@@ -180,10 +200,9 @@ const handleInput = () => {
     return;
   }
   
-  // If the input doesn't match the selected user, start searching
-  if (!selectedUser.value || inputValue.value !== selectedUser.value.name) {
-    debouncedSearch(inputValue.value);
-  }
+  // Always search when input changes (even if it matches current user's name)
+  // This allows selecting different users with the same name
+  debouncedSearch(inputValue.value);
 };
 
 // Handle input blur
@@ -207,10 +226,9 @@ const handleBlur = () => {
 // Handle clicks outside
 const handleClickOutside = (event: MouseEvent) => {
   const dropdown = document.querySelector('.user-autocomplete-dropdown');
-  const input = document.querySelector('.user-autocomplete-input');
   
-  if (dropdown && !dropdown.contains(event.target as Node) && 
-      input && !input.contains(event.target as Node)) {
+  if (containerRef.value && !containerRef.value.contains(event.target as Node) && 
+      dropdown && !dropdown.contains(event.target as Node)) {
     if (!isInputFocused.value) {
       isDropdownOpen.value = false;
       searchResults.value = [];
@@ -233,116 +251,165 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative">
-    <div class="flex items-center gap-2">
-      <!-- Show UserAvatar when a user is selected and dropdown is not open -->
-      <UserAvatar
-        v-if="inputValue && inputValue !== 'Loading...' && !isDropdownOpen"
-        :name="props.modelValue"
-        :showName="false"
-        class="w-8 h-8"
-      />
+  <div ref="containerRef" class="relative w-full">
+    <!-- User Selection Container -->
+    <div class="flex items-center gap-2 px-2.5 py-1.5 min-h-[36px]">
+      <!-- Avatar Space - Always present for consistent alignment -->
+      <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center">
+        <UserAvatar
+          v-if="selectedUser && !isDropdownOpen"
+          :name="selectedUser.id"
+          :showName="false"
+          size="sm"
+        />
+        <!-- Placeholder when no user selected -->
+        <div
+          v-else
+          class="w-6 h-6 rounded-full bg-slate-700/30 border border-slate-600/30 flex items-center justify-center transition-all duration-200"
+          :class="{ 'border-slate-500/50': isInputFocused }"
+        >
+          <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </div>
+      </div>
       
-      <!-- Input container with clear button -->
-      <div class="relative flex-1">
+      <!-- Input Container -->
+      <div class="flex-1 relative">
         <input
+          ref="inputRef"
           type="text"
           v-model="inputValue"
           @focus="handleFocus"
           @input="handleInput"
           @blur="handleBlur"
-          :placeholder="placeholder || 'Search or select user...'"
-          class="user-autocomplete-input px-2 py-1 pr-8 text-sm rounded bg-slate-600 text-slate-200 w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+          :placeholder="placeholder || 'Select user...'"
+          class="w-full bg-transparent text-slate-200 placeholder-slate-400 focus:outline-none text-sm transition-all duration-200 leading-tight"
+          :class="{
+            'text-slate-300': selectedUser && !isDropdownOpen,
+            'text-slate-200': !selectedUser || isDropdownOpen
+          }"
         />
-        
+      </div>
+      
+      <!-- Action Buttons -->
+      <div class="flex items-center gap-1 flex-shrink-0">
         <!-- Clear button -->
         <button
-          v-if="inputValue && inputValue !== 'Loading...'"
-          @click="clearSelection"
-          class="absolute right-2 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors"
+          v-if="selectedUser"
+          @click.stop="clearSelection"
+          class="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-600/30 rounded transition-all duration-200 group"
           type="button"
+          title="Clear selection"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-3 h-3 group-hover:scale-110 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
         
-        <!-- Loading indicator -->
-        <div
-          v-if="inputValue === 'Loading...'"
-          class="absolute right-2 top-1/2 transform -translate-y-1/2"
-        >
-          <svg class="w-4 h-4 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        <!-- Search/Loading indicator -->
+        <div class="flex items-center justify-center w-5 h-5">
+          <div v-if="isSearching" class="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+          <svg v-else-if="isDropdownOpen" class="w-3 h-3 text-slate-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+          </svg>
+          <svg v-else class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </div>
       </div>
     </div>
     
     <!-- Dropdown with users -->
-    <ul
-      v-if="isDropdownOpen && searchResults.length > 0"
-      class="user-autocomplete-dropdown absolute left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl max-h-60 overflow-y-auto overflow-x-visible z-50 border border-slate-700"
-    >
-      <li
-        v-for="user in searchResults"
-        :key="user.id"
-        @click="selectUser(user)"
-        class="p-3 cursor-pointer hover:bg-slate-700 transition-colors text-slate-200 flex items-center gap-3 border-b border-slate-700/50 last:border-b-0"
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen && searchResults.length > 0 && containerRef"
+        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999] overflow-hidden"
+        :style="dropdownPosition"
       >
-        <UserAvatar :name="user.id" :showName="false" size="sm"/>
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-col">
-            <span class="font-medium text-sm truncate">{{ user.name }}</span>
-            <span class="text-xs text-slate-400 truncate">{{ user.email }}</span>
-          </div>
+        <div class="py-1 max-h-56 overflow-y-auto">
+          <button
+            v-for="user in searchResults.slice(0, 8)"
+            :key="user.id"
+            @click="selectUser(user)"
+            class="w-full px-2.5 py-1.5 text-left flex items-center gap-2.5 hover:bg-slate-700/50 transition-all duration-150 group"
+            :class="{
+              'bg-slate-700/30': selectedUser?.id === user.id
+            }"
+          >
+            <UserAvatar 
+              :name="user.id" 
+              :showName="false" 
+              size="sm"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-slate-200 truncate">{{ user.name }}</div>
+              <div class="text-xs text-slate-400 truncate">{{ user.email }}</div>
+            </div>
+            <svg 
+              v-if="selectedUser?.id === user.id" 
+              class="w-3 h-3 text-blue-400 flex-shrink-0" 
+              fill="currentColor" 
+              viewBox="0 0 20 20"
+            >
+              <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+          </button>
         </div>
-      </li>
-    </ul>
+      </div>
+    </Teleport>
     
     <!-- Loading state -->
-    <ul
-      v-if="isDropdownOpen && isSearching"
-      class="user-autocomplete-dropdown absolute left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50 border border-slate-700"
-    >
-      <li class="p-3 text-slate-400 text-center text-sm flex items-center justify-center gap-2">
-        <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        Searching users...
-      </li>
-    </ul>
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen && isSearching && containerRef"
+        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
+        :style="dropdownPosition"
+      >
+        <div class="p-3 flex items-center justify-center gap-2 text-slate-400">
+          <div class="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+          <span class="text-sm">Searching...</span>
+        </div>
+      </div>
+    </Teleport>
     
     <!-- Search error message -->
-    <ul
-      v-if="isDropdownOpen && searchError"
-      class="user-autocomplete-dropdown absolute left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50 border border-slate-700"
-    >
-      <li class="p-3 text-red-400 text-center text-sm">
-        {{ searchError }}
-      </li>
-    </ul>
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen && searchError && containerRef"
+        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
+        :style="dropdownPosition"
+      >
+        <div class="p-3 text-center">
+          <div class="text-red-400 text-sm">{{ searchError }}</div>
+        </div>
+      </div>
+    </Teleport>
     
     <!-- No users found message -->
-    <ul
-      v-if="isDropdownOpen && !isSearching && searchResults.length === 0 && inputValue && inputValue.length >= 2 && !searchError"
-      class="user-autocomplete-dropdown absolute left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50 border border-slate-700"
-    >
-      <li class="p-3 text-slate-400 text-center text-sm">
-        No users found for "{{ inputValue }}"
-      </li>
-    </ul>
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen && !isSearching && searchResults.length === 0 && inputValue && inputValue.length >= 2 && !searchError && containerRef"
+        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
+        :style="dropdownPosition"
+      >
+        <div class="p-3 text-center text-slate-400">
+          <div class="text-sm">No users found</div>
+        </div>
+      </div>
+    </Teleport>
     
     <!-- Search prompt -->
-    <ul
-      v-if="isDropdownOpen && !isSearching && inputValue && inputValue.length < 2 && !selectedUser"
-      class="user-autocomplete-dropdown absolute left-0 right-0 mt-1 bg-slate-800 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50 border border-slate-700"
-    >
-      <li class="p-3 text-slate-400 text-center text-sm">
-        Type at least 2 characters to search
-      </li>
-    </ul>
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen && !isSearching && inputValue && inputValue.length < 2 && !selectedUser && containerRef"
+        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
+        :style="dropdownPosition"
+      >
+        <div class="p-3 text-center text-slate-400">
+          <div class="text-sm">Type to search</div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

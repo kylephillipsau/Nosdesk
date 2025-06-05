@@ -7,8 +7,6 @@ import DebouncedSearchInput from "@/components/common/DebouncedSearchInput.vue";
 import PaginationControls from "@/components/common/PaginationControls.vue";
 import { IdCell, TextCell, StatusBadgeCell, UserInfoCell } from "@/components/common/cells";
 import UserAvatar from "@/components/UserAvatar.vue";
-import Modal from "@/components/Modal.vue";
-import UserForm from "@/components/UserForm.vue";
 import { useListManagement } from "@/composables/useListManagement";
 import { useDataStore } from "@/stores/dataStore";
 import { useOptimisticUpdates } from "@/composables/useOptimisticUpdates";
@@ -90,26 +88,9 @@ const filterOptions = computed(() => {
 // Custom grid template for responsive layout
 const gridClass = "grid-cols-[auto_1fr_minmax(120px,auto)] md:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(120px,auto)] lg:grid-cols-[auto_minmax(60px,auto)_1fr_minmax(120px,auto)_minmax(120px,auto)]";
 
-// Modal state
-const showAddUserModal = ref(false);
-const isCreatingUser = ref(false);
-const createUserError = ref<string | null>(null);
-
-// Handle user creation
-const handleCreateUser = async (userData: { name: string; email: string; role: string }) => {
-  isCreatingUser.value = true;
-  createUserError.value = null;
-  
-  try {
-    await optimisticUpdates.createUser(userData);
-    showAddUserModal.value = false;
-    await listManager.fetchItems();
-  } catch (err) {
-    console.error('Error creating user:', err);
-    createUserError.value = 'Failed to create user. Please try again.';
-  } finally {
-    isCreatingUser.value = false;
-  }
+// Navigate to user creation
+const navigateToCreateUser = () => {
+  router.push('/users/new');
 };
 </script>
 
@@ -155,7 +136,7 @@ const handleCreateUser = async (userData: { name: string; email: string; role: s
 
         <!-- Add button -->
         <button
-          @click="showAddUserModal = true"
+          @click="navigateToCreateUser"
           class="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:ring-2 focus:outline-none focus:ring-green-800 ml-auto"
         >
           Add User
@@ -292,25 +273,7 @@ const handleCreateUser = async (userData: { name: string; email: string; role: s
       @import="() => {}"
     />
 
-    <!-- Add User Modal -->
-    <Modal
-      :show="showAddUserModal"
-      title="Add New User"
-      @close="showAddUserModal = false"
-    >
-      <div v-if="createUserError" class="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-sm text-white">
-        {{ createUserError }}
-      </div>
-      
-      <UserForm
-        @submit="handleCreateUser"
-        @cancel="showAddUserModal = false"
-      />
-      
-      <div v-if="isCreatingUser" class="mt-4 flex justify-center">
-        <div class="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    </Modal>
+
   </div>
 </template>
 

@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
 
         <!-- Mobile Card View -->
         <template v-else>
-          <div class="flex-1 overflow-y-auto p-2 space-y-2">
+          <div class="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
             <slot name="mobile-view"></slot>
           </div>
         </template>
@@ -247,8 +247,6 @@ body {
   }
   
   /* Adjust spacing for mobile */
-  .space-y-2 > * + * {
-    margin-top: 0.5rem;
-  }
+
 }
 </style> 

@@ -10,6 +10,21 @@ use std::io::Write;
 use serde_json;
 use uuid::Uuid;
 
+// Simple UUID serialization helpers
+fn serialize_uuid_as_string<S>(uuid: &Uuid, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&uuid.to_string())
+}
+
+fn serialize_optional_uuid_as_string<S>(uuid: &Option<Uuid>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&uuid.map(|u| u.to_string()).unwrap_or_default())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[derive(diesel::deserialize::FromSqlRow, diesel::expression::AsExpression)]
 #[diesel(sql_type = crate::schema::sql_types::TicketStatus)]
@@ -88,12 +103,18 @@ pub struct Ticket {
     pub description: Option<String>,
     pub status: TicketStatus,
     pub priority: TicketPriority,
+    #[serde(serialize_with = "serialize_uuid_as_string", rename = "requester")]
     pub requester_uuid: Uuid,
+    #[serde(serialize_with = "serialize_optional_uuid_as_string", rename = "assignee")]
     pub assignee_uuid: Option<Uuid>,
+    #[serde(rename = "created")]  // Map to frontend field name
     pub created_at: NaiveDateTime,
+    #[serde(rename = "modified")] // Map to frontend field name
     pub updated_at: NaiveDateTime,
-    pub device_id: Option<i32>,
+    pub closed_at: Option<NaiveDateTime>,
 }
+
+// Ticket implementation removed - serialization now handled by serde attributes
 
 #[derive(Debug, Serialize, Deserialize, Insertable, AsChangeset)]
 #[diesel(table_name = crate::schema::tickets)]
@@ -104,11 +125,10 @@ pub struct NewTicket {
     pub priority: TicketPriority,
     pub requester_uuid: Uuid,
     pub assignee_uuid: Option<Uuid>,
-    pub device_id: Option<i32>,
 }
 
 // Add a new struct for partial ticket updates
-#[derive(Debug, Serialize, AsChangeset)]
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
 #[diesel(table_name = crate::schema::tickets)]
 pub struct TicketUpdate {
     pub title: Option<String>,
@@ -118,62 +138,7 @@ pub struct TicketUpdate {
     pub requester_uuid: Option<Uuid>,
     pub assignee_uuid: Option<Option<Uuid>>,
     pub updated_at: Option<NaiveDateTime>,
-    pub device_id: Option<Option<i32>>,
-}
-
-// Custom implementation of Deserialize for TicketUpdate to handle ISO datetime strings
-impl<'de> Deserialize<'de> for TicketUpdate {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct TicketUpdateHelper {
-            title: Option<String>,
-            description: Option<String>,
-            status: Option<TicketStatus>,
-            priority: Option<TicketPriority>,
-            requester_uuid: Option<Uuid>,
-            assignee_uuid: Option<Option<Uuid>>,
-            #[serde(default)]
-            updated_at: Option<String>,
-            device_id: Option<Option<i32>>,
-        }
-
-        let helper = TicketUpdateHelper::deserialize(deserializer)?;
-        
-        // Parse the updated_at date if it exists
-        let updated_at = if let Some(date_str) = helper.updated_at {
-            // Try to parse the ISO datetime string
-            match DateTime::parse_from_rfc3339(&date_str) {
-                Ok(dt) => Some(dt.naive_utc()),
-                Err(_) => {
-                    // Fallback to other common formats if RFC3339 fails
-                    match NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%S") {
-                        Ok(dt) => Some(dt),
-                        Err(_) => {
-                            // If all parsing attempts fail, use current time
-                            println!("Warning: Could not parse date '{}', using current time", date_str);
-                            Some(Utc::now().naive_utc())
-                        }
-                    }
-                }
-            }
-        } else {
-            None
-        };
-
-        Ok(TicketUpdate {
-            title: helper.title,
-            description: helper.description,
-            status: helper.status,
-            priority: helper.priority,
-            requester_uuid: helper.requester_uuid,
-            assignee_uuid: helper.assignee_uuid,
-            updated_at,
-            device_id: helper.device_id,
-        })
-    }
+    pub closed_at: Option<Option<NaiveDateTime>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
@@ -370,11 +335,12 @@ pub struct NewArticleContent {
     pub ticket_id: i32,
 }
 
-// Composite struct for returning a complete ticket with all related data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompleteTicket {
     #[serde(flatten)]
     pub ticket: Ticket,
+    pub requester_user: Option<UserInfoWithAvatar>,  // Complete requester data
+    pub assignee_user: Option<UserInfoWithAvatar>,   // Complete assignee data
     pub devices: Vec<Device>,
     pub comments: Vec<CommentWithAttachments>,
     pub article_content: Option<String>,
@@ -382,12 +348,21 @@ pub struct CompleteTicket {
     pub projects: Vec<Project>,
 }
 
+// Simplified ticket for lists - includes user info but not heavy data like comments
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TicketListItem {
+    #[serde(flatten)]
+    pub ticket: Ticket,
+    pub requester_user: Option<UserInfoWithAvatar>,  // Complete requester data
+    pub assignee_user: Option<UserInfoWithAvatar>,   // Complete assignee data
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommentWithAttachments {
     #[serde(flatten)]
     pub comment: Comment,
     pub attachments: Vec<Attachment>,
-    pub user: Option<UserInfo>,
+    pub user: Option<UserInfoWithAvatar>,  // Use enhanced user info with avatar
 }
 
 // JSON import struct that matches the structure in tickets.json
@@ -585,6 +560,10 @@ pub struct User {
     pub banner_url: Option<String>,
     pub avatar_thumb: Option<String>,
     pub microsoft_uuid: Option<Uuid>,
+    pub mfa_secret: Option<String>,
+    pub mfa_enabled: bool,
+    pub mfa_backup_codes: Option<serde_json::Value>,
+    pub passkey_credentials: Option<serde_json::Value>,
 }
 
 // New user for creation
@@ -601,6 +580,10 @@ pub struct NewUser {
     pub banner_url: Option<String>,
     pub avatar_thumb: Option<String>,
     pub microsoft_uuid: Option<Uuid>,
+    pub mfa_secret: Option<String>,
+    pub mfa_enabled: bool,
+    pub mfa_backup_codes: Option<serde_json::Value>,
+    pub passkey_credentials: Option<serde_json::Value>,
 }
 
 // Add a separate struct for user registration with password
@@ -682,6 +665,14 @@ pub struct UserInfo {
     pub name: String,
 }
 
+// Enhanced UserInfo with avatar data for efficient frontend display
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserInfoWithAvatar {
+    pub uuid: Uuid,
+    pub name: String,
+    pub avatar_thumb: Option<String>,
+}
+
 // Convert User to UserResponse
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
@@ -708,6 +699,16 @@ impl From<User> for UserInfo {
         UserInfo {
             uuid: user.uuid,
             name: user.name,
+        }
+    }
+}
+
+impl From<User> for UserInfoWithAvatar {
+    fn from(user: User) -> Self {
+        UserInfoWithAvatar {
+            uuid: user.uuid,
+            name: user.name,
+            avatar_thumb: user.avatar_thumb,
         }
     }
 }
@@ -885,7 +886,7 @@ pub struct AttachmentData {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewCommentWithAttachments {
     pub content: String,
-    pub user_id: i32,
+    // user_id/user_uuid removed - extracted from JWT token for security
     pub attachments: Vec<AttachmentData>,
 }
 
@@ -969,53 +970,26 @@ impl FromSql<diesel::sql_types::Text, Pg> for AuthProviderType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
-#[diesel(table_name = crate::schema::auth_providers)]
+// Environment-based AuthProvider struct (replaces database-stored providers)
+#[derive(Debug, Clone)]
 pub struct AuthProvider {
     pub id: i32,
     pub name: String,
     pub provider_type: String,
     pub enabled: bool,
     pub is_default: bool,
-    pub client_id: String,
-    pub client_secret: String,
-    pub authorization_url: String,
-    pub token_url: String,
-    pub redirect_uri: String,
-    pub scope: Option<String>,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Insertable)]
-#[diesel(table_name = crate::schema::auth_providers)]
-pub struct NewAuthProvider {
-    pub name: String,
-    pub provider_type: String,
-    pub enabled: bool,
-    pub is_default: bool,
-    pub client_id: String,
-    pub client_secret: String,
-    pub authorization_url: String,
-    pub token_url: String,
-    pub redirect_uri: String,
-    pub scope: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, AsChangeset)]
-#[diesel(table_name = crate::schema::auth_providers)]
-pub struct AuthProviderUpdate {
-    pub name: Option<String>,
-    pub provider_type: Option<String>,
-    pub enabled: Option<bool>,
-    pub is_default: Option<bool>,
-    pub client_id: Option<String>,
-    pub client_secret: Option<String>,
-    pub authorization_url: Option<String>,
-    pub token_url: Option<String>,
-    pub redirect_uri: Option<String>,
-    pub scope: Option<String>,
-    pub updated_at: Option<NaiveDateTime>,
+impl AuthProvider {
+    pub fn new(id: i32, name: String, provider_type: String, enabled: bool, is_default: bool) -> Self {
+        Self {
+            id,
+            name,
+            provider_type,
+            enabled,
+            is_default,
+        }
+    }
 }
 
 // Request models for authentication
@@ -1092,7 +1066,7 @@ pub struct MicrosoftAuthConfig {
 pub struct UserAuthIdentity {
     pub id: i32,
     pub user_id: i32,
-    pub provider_id: i32,
+    pub provider_type: String,
     pub external_id: String,
     pub email: Option<String>,
     pub metadata: Option<serde_json::Value>,
@@ -1105,7 +1079,7 @@ pub struct UserAuthIdentity {
 #[diesel(table_name = crate::schema::user_auth_identities)]
 pub struct NewUserAuthIdentity {
     pub user_id: i32,
-    pub provider_id: i32,
+    pub provider_type: String,
     pub external_id: String,
     pub email: Option<String>,
     pub metadata: Option<serde_json::Value>,
@@ -1293,4 +1267,113 @@ pub struct AdminSetupResponse {
     pub success: bool,
     pub message: String,
     pub user: Option<UserResponse>,
+}
+
+// Frontend-compatible version of CompleteTicket
+#[derive(Debug, Serialize)]
+pub struct CompleteTicketResponse {
+    pub id: i32,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: TicketStatus,
+    pub priority: TicketPriority,
+    pub requester: String,
+    pub assignee: String,
+    pub created: String,
+    pub modified: String,
+    pub devices: Vec<Device>,
+    pub comments: Vec<CommentWithAttachments>,
+    pub article_content: Option<String>,
+    pub linked_tickets: Vec<i32>,
+    pub projects: Vec<Project>,
+}
+
+impl CompleteTicketResponse {
+    pub fn from_complete_ticket(
+        complete_ticket: CompleteTicket,
+        requester_name: String,
+        assignee_name: String,
+    ) -> Self {
+        Self {
+            id: complete_ticket.ticket.id,
+            title: complete_ticket.ticket.title,
+            description: complete_ticket.ticket.description,
+            status: complete_ticket.ticket.status,
+            priority: complete_ticket.ticket.priority,
+            requester: requester_name,
+            assignee: assignee_name,
+            created: complete_ticket.ticket.created_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            modified: complete_ticket.ticket.updated_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            devices: complete_ticket.devices,
+            comments: complete_ticket.comments,
+            article_content: complete_ticket.article_content,
+            linked_tickets: complete_ticket.linked_tickets,
+            projects: complete_ticket.projects,
+        }
+    }
+}
+
+// === MFA (Multi-Factor Authentication) Models ===
+
+/// Response for MFA setup request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaSetupResponse {
+    pub secret: String,
+    pub qr_code: String,
+    pub backup_codes: Vec<String>,
+}
+
+/// Request for verifying MFA setup
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaVerifySetupRequest {
+    pub token: String,
+    pub secret: String,
+}
+
+/// Response for MFA setup verification
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaVerifySetupResponse {
+    pub success: bool,
+    pub backup_codes: Vec<String>,
+}
+
+/// Request for enabling MFA
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaEnableRequest {
+    pub token: String,
+}
+
+/// Request for disabling MFA
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaDisableRequest {
+    pub password: String,
+}
+
+/// Request for regenerating backup codes
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaRegenerateBackupCodesRequest {
+    pub password: String,
+}
+
+/// Response for regenerating backup codes
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaRegenerateBackupCodesResponse {
+    pub backup_codes: Vec<String>,
+}
+
+/// Response for MFA status
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaStatusResponse {
+    pub enabled: bool,
+    pub has_backup_codes: bool,
+}
+
+/// Update struct for user MFA fields
+#[derive(Debug, AsChangeset)]
+#[diesel(table_name = crate::schema::users)]
+pub struct UserMfaUpdate {
+    pub mfa_secret: Option<String>,
+    pub mfa_enabled: Option<bool>,
+    pub mfa_backup_codes: Option<serde_json::Value>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
 }

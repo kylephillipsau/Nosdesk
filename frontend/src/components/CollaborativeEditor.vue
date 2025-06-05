@@ -66,26 +66,9 @@ const props = defineProps<Props>();
 // Get auth store for user info
 const authStore = useAuthStore();
 
-// Computed property for save status
-const saveStatus = computed(() => {
-  if (isSaving.value) {
-    return "Saving...";
-  }
-  if (!isConnected.value) {
-    return "Offline - changes saved locally";
-  }
-  if (lastSaveTime.value) {
-    const now = new Date();
-    const diff = now.getTime() - lastSaveTime.value.getTime();
-    if (diff < 5000) {
-      return "Saved";
-    }
-    if (diff < 60000) {
-      return "Saved a moment ago";
-    }
-    return `Last saved ${new Date(lastSaveTime.value).toLocaleTimeString()}`;
-  }
-  return "Connected";
+// Computed property for connection status
+const connectionStatus = computed(() => {
+  return isConnected.value ? "Connected" : "Disconnected";
 });
 
 // Refs for template
@@ -95,9 +78,7 @@ const isConnected = ref(false);
 // State for connected users
 const connectedUsers = ref<{ id: string; user: any }[]>([]);
 
-// State for save status
-const lastSaveTime = ref<Date | null>(null);
-const isSaving = ref(false);
+// Remove save status tracking since backend handles saves automatically
 
 // Track initialization state
 const isInitialized = ref(false);
@@ -337,7 +318,7 @@ const initEditor = async () => {
     
     const prosemirrorDoc = initProseMirrorDoc(yXmlFragment, schema);
 
-    // 5. Create the editor view - following the exact pattern in the official demo
+    // 5. Create the editor view
     editorView = new EditorView(editorElement.value, {
       state: EditorState.create({
         doc: prosemirrorDoc.doc,
@@ -489,18 +470,7 @@ const initEditor = async () => {
       updateConnectedUsers();
     });
 
-    // 8. Track sync events for save status
-    provider.on("sync", (isSynced: boolean) => {
-      if (isSynced) {
-        lastSaveTime.value = new Date();
-        isSaving.value = false;
-      }
-    });
-    
-    // Track when syncing starts
-    ydoc.on("update", () => {
-      isSaving.value = true;
-    });
+    // 8. Note: Save status tracking removed since backend handles saves automatically via Redis
 
     // 9. For debugging purposes
     window.example = {
@@ -1401,7 +1371,7 @@ onBeforeUnmount(() => {
 
       <!-- Connection status indicator only -->
       <div class="connection-status" :class="{ connected: isConnected }">
-        {{ saveStatus }}
+        {{ connectionStatus }}
       </div>
     </div>
 
@@ -1815,4 +1785,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   z-index: 10;
 }
+
+
+
+
 </style>

@@ -7,6 +7,8 @@ interface TicketDetails {
   title: string
   requester?: string
   assignee?: string
+  requester_avatar?: string | null
+  assignee_avatar?: string | null
   status?: string
   created?: string
 }
@@ -18,6 +20,8 @@ const props = defineProps<{
     status?: string
     requester?: string
     assignee?: string
+    requester_avatar?: string | null
+    assignee_avatar?: string | null
     created?: string
   }
   position?: 'top' | 'bottom' | 'left' | 'right'
@@ -152,14 +156,14 @@ watch(tooltipVisible, (newValue) => {
           </div>
           <div v-if="details.requester || details.assignee" class="flex flex-col gap-1.5">
             <div v-if="details.requester" class="flex items-center gap-2">
-              <UserAvatar :name="details.requester" :showName="false" size="xs" />
+              <UserAvatar :name="details.requester" :avatarUrl="details.requester_avatar" :showName="false" size="xs" />
               <span class="flex flex-row gap-1 truncate">
                 <span class="text-gray-500">Requester:</span> 
                 <span>{{ requesterName }}</span>
               </span>
             </div>
             <div v-if="details.assignee" class="flex items-center gap-2">
-              <UserAvatar :name="details.assignee" :showName="false" size="xs" />
+              <UserAvatar :name="details.assignee" :avatarUrl="details.assignee_avatar" :showName="false" size="xs" />
               <span class="flex flex-row gap-1 truncate">
                 <span class="text-gray-500">Assignee:</span> 
                 <span>{{ assigneeName }}</span>

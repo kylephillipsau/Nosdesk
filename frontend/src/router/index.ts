@@ -142,6 +142,15 @@ const router = createRouter({
       }
     },
     {
+      path: '/devices/new',
+      name: 'device-create',
+      component: () => import('../views/DeviceView.vue'),
+      meta: {
+        requiresAuth: true,
+        title: 'Create Device'
+      }
+    },
+    {
       path: '/devices/:id',
       name: 'device-view',
       component: () => import('../views/DeviceView.vue'),
@@ -380,7 +389,7 @@ router.beforeEach(async (to, from, next) => {
   const isAuthenticated = authStore.isAuthenticated;
   
   // Fetch user data if authenticated but no user data loaded yet
-  if (isAuthenticated && !authStore.user) {
+  if (isAuthenticated && !authStore.user && !authStore.loading) {
     try {
       await authStore.fetchUserData();
     } catch (error) {

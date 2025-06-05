@@ -3,23 +3,14 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
 import BackButton from '@/components/common/BackButton.vue';
-import Modal from '@/components/Modal.vue';
-import MicrosoftConfigView from '@/views/MicrosoftConfigView.vue';
 
 // Define types for our data structures
-interface ProviderConfig {
-  key: string;
-  value: string;
-  is_secret: boolean;
-}
-
 interface Provider {
   id: number;
   name: string;
   provider_type: string;
   enabled: boolean;
   is_default: boolean;
-  configs?: ProviderConfig[];
 }
 
 const router = useRouter();
@@ -29,18 +20,6 @@ const isLoading = ref(false);
 const errorMessage = ref('');
 const providers = ref<Provider[]>([]);
 const successMessage = ref('');
-
-// Selected provider for configuration
-const selectedProvider = ref<Provider | null>(null);
-const showConfigModal = ref(false);
-const showAddProviderModal = ref(false);
-const newProviderType = ref('microsoft');
-
-// Client ID and Tenant ID for Microsoft Entra
-const clientId = ref('');
-const tenantId = ref('');
-const clientSecret = ref('');
-const redirectUri = ref('');
 
 // Load providers from API
 const loadProviders = async () => {
@@ -78,116 +57,6 @@ const toggleProvider = async (provider: Provider) => {
     console.error(`Failed to update ${provider.name}:`, error);
     errorMessage.value = error.response?.data?.message || `Failed to update ${provider.name}`;
     setTimeout(() => { errorMessage.value = ''; }, 3000);
-  }
-};
-
-// Create a new provider
-const createProvider = async () => {
-  isLoading.value = true;
-  errorMessage.value = '';
-  
-  try {
-    const newProvider = {
-      name: newProviderType.value === 'microsoft' ? 'Microsoft Entra' : 'New Provider',
-      provider_type: newProviderType.value,
-      enabled: false,
-      is_default: false
-    };
-    
-    const response = await axios.post('/api/admin/auth/providers', newProvider);
-    
-    // Close the modal and reload providers
-    showAddProviderModal.value = false;
-    await loadProviders();
-    
-    // Open configuration modal for the new provider
-    const createdProvider = response.data;
-    configureProvider(createdProvider);
-    
-    successMessage.value = `${newProvider.name} provider created successfully`;
-    setTimeout(() => { successMessage.value = ''; }, 3000);
-  } catch (error: any) {
-    console.error('Failed to create provider:', error);
-    errorMessage.value = error.response?.data?.message || 'Failed to create provider';
-  } finally {
-    isLoading.value = false;
-  }
-};
-
-// Open configuration modal for a provider
-const configureProvider = (provider: Provider) => {
-  if (provider.provider_type === 'microsoft') {
-    router.push(`/admin/microsoft-config/${provider.id}?mode=auth`);
-  } else {
-    // For other provider types, still use the modal
-    selectedProvider.value = provider;
-    showConfigModal.value = true;
-  }
-};
-
-// Close configuration modal
-const closeConfigModal = () => {
-  showConfigModal.value = false;
-  selectedProvider.value = null;
-};
-
-// Handle Microsoft configuration completion
-const handleMicrosoftConfigured = async () => {
-  showConfigModal.value = false;
-  selectedProvider.value = null;
-  await loadProviders();
-};
-
-// Close add provider modal
-const closeAddProviderModal = () => {
-  showAddProviderModal.value = false;
-};
-
-// Save provider configuration
-const saveProviderConfig = async () => {
-  if (!selectedProvider.value) return;
-  
-  isLoading.value = true;
-  errorMessage.value = '';
-  
-  try {
-    // Create config request based on provider type
-    const configRequest = {
-      provider_id: selectedProvider.value.id,
-      configs: [] as ProviderConfig[]
-    };
-    
-    if (selectedProvider.value.provider_type === 'microsoft') {
-      configRequest.configs = [
-        { key: 'client_id', value: clientId.value, is_secret: false },
-        { key: 'tenant_id', value: tenantId.value, is_secret: false },
-        { key: 'redirect_uri', value: redirectUri.value, is_secret: false }
-      ];
-      
-      // Only include client secret if it's provided
-      if (clientSecret.value.trim()) {
-        configRequest.configs.push({
-          key: 'client_secret',
-          value: clientSecret.value,
-          is_secret: true
-        });
-      }
-    }
-    
-    // Send configuration to backend
-    await axios.post('/api/admin/auth/providers/config', configRequest);
-    
-    // Close the modal and reload providers
-    showConfigModal.value = false;
-    await loadProviders();
-    
-    successMessage.value = `${selectedProvider.value.name} configuration updated successfully`;
-    setTimeout(() => { successMessage.value = ''; }, 3000);
-  } catch (error: any) {
-    console.error(`Failed to save ${selectedProvider.value.name} configuration:`, error);
-    errorMessage.value = error.response?.data?.message || `Failed to save ${selectedProvider.value.name} configuration`;
-  } finally {
-    isLoading.value = false;
   }
 };
 
@@ -233,12 +102,6 @@ const getProviderIcon = (iconName: string) => {
       return `
         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
-      `;
-    case 'key':
-      return `
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
         </svg>
       `;
     default:
@@ -289,8 +152,25 @@ onMounted(() => {
       <div class="mb-6">
         <h1 class="text-2xl font-bold text-white">Authentication Providers</h1>
         <p class="text-slate-400 mt-2">
-          Configure and manage login methods for your organization
+          Manage authentication methods for your organization. Providers are configured via environment variables.
         </p>
+      </div>
+      
+      <!-- Configuration Notice -->
+      <div class="p-4 bg-blue-900/30 text-blue-400 rounded-lg border border-blue-700/50 mb-4 flex items-start">
+        <div class="mr-3 mt-0.5 text-blue-400 flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <div>
+          <p class="font-medium">Authentication Provider Configuration</p>
+          <p class="text-sm text-blue-300 mt-1">
+            Authentication providers are configured through environment variables. 
+            Check your <code class="bg-blue-800/50 px-1 rounded">.env</code> file and refer to 
+            <code class="bg-blue-800/50 px-1 rounded">env.example</code> for the required settings.
+          </p>
+        </div>
       </div>
       
       <!-- Success message -->
@@ -317,19 +197,6 @@ onMounted(() => {
           </svg>
         </div>
         <div>{{ errorMessage }}</div>
-      </div>
-      
-      <!-- Add Provider Button -->
-      <div class="flex justify-end mb-6">
-        <button 
-          @click="showAddProviderModal = true"
-          class="px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-          </svg>
-          Add Authentication Provider
-        </button>
       </div>
       
       <!-- Loading state -->
@@ -384,13 +251,6 @@ onMounted(() => {
             </button>
             
             <button 
-              @click="configureProvider(provider)"
-              class="px-3 py-1.5 bg-slate-700 text-slate-200 rounded-md text-sm hover:bg-slate-600 border border-slate-600 font-medium transition-colors"
-            >
-              Configure
-            </button>
-            
-            <button 
               v-if="provider.enabled && !provider.is_default"
               @click="setAsDefault(provider)"
               class="px-3 py-1.5 bg-blue-900/50 text-blue-200 rounded-md text-sm hover:bg-blue-800/50 border border-blue-700 font-medium transition-colors"
@@ -414,75 +274,11 @@ onMounted(() => {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           </div>
-          <p class="text-lg font-medium">No authentication providers found</p>
-          <p class="mt-2 text-slate-500">Click the "Add Authentication Provider" button to get started</p>
+          <p class="text-lg font-medium">No authentication providers configured</p>
+          <p class="mt-2 text-slate-500">Configure authentication providers in your environment variables</p>
         </div>
       </div>
     </div>
-    
-    <!-- Add Provider Modal -->
-    <Modal
-      :show="showAddProviderModal"
-      title="Add Authentication Provider"
-      contentClass="max-w-lg"
-      @close="closeAddProviderModal"
-    >
-      <div class="p-4 space-y-6">
-        <div>
-          <label class="block text-sm font-medium text-slate-300 mb-2">
-            Provider Type
-          </label>
-          <select 
-            v-model="newProviderType"
-            class="w-full px-3 py-2.5 bg-slate-700/50 border border-slate-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/70 transition-colors"
-          >
-            <option value="microsoft">Microsoft Entra</option>
-            <!-- Add more provider types as needed -->
-          </select>
-        </div>
-        
-        <div class="pt-4 border-t border-slate-700">
-          <div class="flex items-start">
-            <div class="flex-shrink-0 h-10 w-10 rounded-md bg-blue-600/20 flex items-center justify-center text-blue-400 mr-3" v-html="getProviderIcon(newProviderType)"></div>
-            <div>
-              <p class="text-sm text-white font-medium">{{ newProviderType === 'microsoft' ? 'Microsoft Entra ID' : 'Authentication Provider' }}</p>
-              <p class="text-xs text-slate-400 mt-1">{{ newProviderType === 'microsoft' ? 'Allow users to sign in with their Microsoft Entra ID accounts' : 'Configure authentication provider settings' }}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="flex justify-end gap-3 px-4 pb-4 mt-6">
-        <button 
-          @click="closeAddProviderModal"
-          class="px-4 py-2.5 bg-slate-700 text-white rounded-md hover:bg-slate-600 border border-slate-600 transition-colors"
-        >
-          Cancel
-        </button>
-        <button 
-          @click="createProvider"
-          class="px-4 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
-          :disabled="isLoading"
-        >
-          <span v-if="isLoading">Creating...</span>
-          <span v-else>Create Provider</span>
-        </button>
-      </div>
-    </Modal>
-    
-    <!-- Configuration Modal -->
-    <Modal
-      :show="showConfigModal"
-      :title="`Configure ${selectedProvider?.name}`"
-      contentClass="max-w-4xl"
-      @close="closeConfigModal"
-    >
-      <!-- Only show for non-Microsoft providers now -->
-      <div v-if="selectedProvider && selectedProvider.provider_type !== 'microsoft'">
-        <!-- Configuration UI for other provider types -->
-        <p class="text-slate-300 p-4">Configuration for {{ selectedProvider.name }} is not yet implemented.</p>
-      </div>
-    </Modal>
   </div>
 </template>
 

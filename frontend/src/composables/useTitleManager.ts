@@ -91,16 +91,8 @@ export function useTitleManager() {
   // Preview the ticket title as the user types (real-time updates)
   const previewTicketTitle = (newTitle: string) => {
     if (currentTicket.value) {
-      console.log(`useTitleManager: Previewing ticket #${currentTicket.value.id} title as "${newTitle}"`);
-      
-      // Update the title in the current ticket for UI display
+      // Update the title in the current ticket for UI display only
       currentTicket.value.title = newTitle;
-      
-      // Update the title in the recent tickets store immediately for real-time preview
-      const recentTicketsStore = useRecentTicketsStore();
-      recentTicketsStore.updateTicketData(currentTicket.value.id, {
-        title: newTitle
-      });
       
       // Update the document title for real-time feedback
       document.title = `#${currentTicket.value.id} ${newTitle} | Nosdesk`;
@@ -110,8 +102,6 @@ export function useTitleManager() {
   // Preview the document title as the user types (real-time updates)
   const previewDocumentTitle = (newTitle: string) => {
     if (currentDocument.value) {
-      console.log(`useTitleManager: Previewing document title as "${newTitle}"`);
-      
       // Update the title in the current document for UI display
       currentDocument.value.title = newTitle;
       documentationTitle.value = newTitle;
@@ -123,7 +113,9 @@ export function useTitleManager() {
   
   const updateTicketTitle = async (newTitle: string) => {
     if (currentTicket.value) {
-      console.log(`useTitleManager: Updating ticket #${currentTicket.value.id} title to "${newTitle}"`);
+      if (import.meta.env.DEV) {
+        console.log(`useTitleManager: Updating ticket #${currentTicket.value.id} title to "${newTitle}"`);
+      }
       
       // Update the title in the current ticket
       currentTicket.value.title = newTitle;
@@ -140,7 +132,9 @@ export function useTitleManager() {
       // Save the title change to the backend
       try {
         await ticketService.updateTicket(currentTicket.value.id, { title: newTitle });
-        console.log(`useTitleManager: Successfully updated ticket title in backend`);
+        if (import.meta.env.DEV) {
+          console.log(`useTitleManager: Successfully updated ticket title in backend`);
+        }
       } catch (error) {
         console.error(`Error updating ticket title:`, error);
         // If the backend update fails, we don't revert the UI changes
@@ -151,7 +145,9 @@ export function useTitleManager() {
   
   const updateDocumentTitle = async (newTitle: string) => {
     if (currentDocument.value) {
-      console.log(`useTitleManager: Updating document title to "${newTitle}"`);
+      if (import.meta.env.DEV) {
+        console.log(`useTitleManager: Updating document title to "${newTitle}"`);
+      }
       
       // Update the title in the current document for UI display
       currentDocument.value.title = newTitle;
@@ -180,7 +176,9 @@ export function useTitleManager() {
         });
         
         if (updatedDocument) {
-          console.log(`useTitleManager: Successfully updated document title and slug in backend`);
+          if (import.meta.env.DEV) {
+            console.log(`useTitleManager: Successfully updated document title and slug in backend`);
+          }
           // Update the slug in the current document
           if (currentDocument.value) {
             currentDocument.value.slug = slug;
@@ -194,7 +192,9 @@ export function useTitleManager() {
   
   const updateDocumentIcon = async (newIcon: string) => {
     if (currentDocument.value) {
-      console.log(`useTitleManager: Updating document icon to "${newIcon}"`);
+      if (import.meta.env.DEV) {
+        console.log(`useTitleManager: Updating document icon to "${newIcon}"`);
+      }
       
       // Update the icon in the current document for UI display
       currentDocument.value.icon = newIcon;
@@ -217,7 +217,9 @@ export function useTitleManager() {
         });
         
         if (updatedDocument) {
-          console.log(`useTitleManager: Successfully updated document icon in backend`);
+          if (import.meta.env.DEV) {
+            console.log(`useTitleManager: Successfully updated document icon in backend`);
+          }
         }
       } catch (error) {
         console.error('Error updating document icon:', error);

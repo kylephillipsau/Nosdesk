@@ -337,16 +337,27 @@ export const useDataStore = defineStore('data', () => {
     return cached.data.name || null
   }
   
-  // Get user avatar from cache
+  // Get user avatar from cache with cache busting
   const getUserAvatar = (uuid: string, preferThumb = true): string | null => {
     const cached = individualUsersCache.value.get(uuid)
     if (!cached?.data) return null
     
-    // Return cached data - background refresh is handled by getUserByUuid calls
+    // Get the base URL
+    let baseUrl: string | null = null
     if (preferThumb && cached.data.avatar_thumb) {
-      return cached.data.avatar_thumb
+      baseUrl = cached.data.avatar_thumb
+    } else {
+      baseUrl = cached.data.avatar_url || null
     }
-    return cached.data.avatar_url || null
+    
+    // Add cache busting parameter using updated_at timestamp
+    if (baseUrl && cached.data.updated_at) {
+      const timestamp = new Date(cached.data.updated_at).getTime()
+      const separator = baseUrl.includes('?') ? '&' : '?'
+      return `${baseUrl}${separator}v=${timestamp}`
+    }
+    
+    return baseUrl
   }
   
   // Invalidate cache for specific user

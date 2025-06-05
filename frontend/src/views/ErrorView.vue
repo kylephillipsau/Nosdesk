@@ -965,7 +965,7 @@ const debugMeta = computed(() => ({
     </div>
   </div>
   <!-- Debug Panel -->
-  <div v-if="showDebug" class="fixed top-4 right-4 bg-slate-800/90 text-sm text-slate-200 p-4 rounded-lg max-h-[90vh] overflow-auto space-y-3 z-50 shadow-lg">
+  <div v-if="showDebug" class="fixed top-4 right-4 bg-slate-800/90 text-sm text-slate-200 p-4 rounded-lg max-h-[90vh] overflow-auto flex flex-col gap-3 z-50 shadow-lg">
     <h3 class="font-semibold mb-2">Debug Controls (press 'd' to toggle)</h3>
     
     <!-- Master Toggle -->
@@ -979,7 +979,7 @@ const debugMeta = computed(() => ({
     </div>
     
     <!-- Main Effect Controls -->
-    <div class="space-y-3">
+    <div class="flex flex-col gap-3">
       <!-- Global Intensity -->
       <div class="flex flex-col gap-1">
         <label class="flex justify-between items-center gap-2">

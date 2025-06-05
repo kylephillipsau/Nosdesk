@@ -14,18 +14,31 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use std::time::Duration;
 use image::{ImageFormat, DynamicImage};
+use tracing::{info, warn, error, debug, trace, span, Level, instrument};
 
 use crate::db::{Pool, DbConnection};
 use crate::handlers::auth::validate_token_internal;
-use crate::repository::auth_providers as auth_provider_repo;
+// Auth providers are now configured via environment variables
 use crate::repository::users as user_repo;
 use crate::repository::devices as device_repo;
 use crate::repository::user_auth_identities as identity_repo;
 use crate::repository::user_emails as user_emails_repo;
 use crate::repository::sync_history as sync_history_repo;
 use crate::config_utils;
-use crate::models::{NewUser, NewUserAuthIdentity, User, UserAuthIdentity, NewSyncHistory, SyncHistoryUpdate};
+use crate::models::{NewUser, NewUserAuthIdentity, User, UserAuthIdentity, NewSyncHistory, SyncHistoryUpdate, AuthProvider};
 use crate::utils;
+
+// Helper function for environment-based auth providers
+fn get_default_microsoft_provider() -> Result<AuthProvider, diesel::result::Error> {
+    // Since we're using environment variables, we'll just return a fixed provider for Microsoft
+    if std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+        && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() 
+        && std::env::var("MICROSOFT_TENANT_ID").is_ok() {
+        Ok(AuthProvider::new(2, "Microsoft".to_string(), "microsoft".to_string(), true, false))
+    } else {
+        Err(diesel::result::Error::NotFound)
+    }
+}
 
 // Global progress tracker with cancellation support
 lazy_static::lazy_static! {
@@ -140,6 +153,8 @@ pub struct MicrosoftGraphUser {
     pub proxy_addresses: Option<Vec<String>>,
     #[serde(rename = "otherMails")]
     pub other_mails: Option<Vec<String>>,
+    #[serde(rename = "accountEnabled")]
+    pub account_enabled: Option<bool>,
 }
 
 // Microsoft Graph Device structure from API response (managedDevice)
@@ -239,41 +254,11 @@ fn update_sync_progress_with_type(session_id: &str, entity: &str, current: usize
         progress_map.insert(session_id.to_string(), progress);
     }
     
-    // Only persist to database for final states (completed, error, cancelled)
-    if status == "completed" || status == "error" || status == "cancelled" {
-        persist_final_sync_to_db(session_id, entity, current, total, status, message, sync_type);
-    }
+    // Database persistence is now handled directly in the sync_data function
+    // for comprehensive session tracking rather than per-entity tracking
 }
 
-fn persist_final_sync_to_db(session_id: &str, entity: &str, current: usize, total: usize, status: &str, message: &str, sync_type: &str) {
-    let pool = crate::db::establish_connection_pool();
-    if let Ok(mut conn) = pool.get() {
-        let now = Utc::now().naive_utc();
-        let update = SyncHistoryUpdate {
-            status: Some(status.to_string()),
-            error_message: Some(message.to_string()),
-            records_processed: Some(current as i32),
-            records_created: Some(0), // We don't track this separately in the current implementation
-            records_updated: Some(total as i32),
-            records_failed: Some(0), // We don't track this separately in the current implementation
-            completed_at: Some(Some(now)),
-        };
-        
-        // Parse session_id to i32 for the database function
-        if let Ok(sync_id) = session_id.parse::<i32>() {
-            match sync_history_repo::update_sync_history(&mut conn, sync_id, update) {
-                Ok(_) => {
-                    println!("Successfully persisted final sync state to database: {} - {}", session_id, status);
-                },
-                Err(e) => {
-                    eprintln!("Failed to update sync history in database: {:?}", e);
-                }
-            }
-        } else {
-            eprintln!("Failed to parse session_id as i32: {}", session_id);
-        }
-    }
-}
+
 
 fn get_sync_progress(session_id: &str) -> Option<SyncProgressState> {
     if let Ok(progress_map) = SYNC_PROGRESS.lock() {
@@ -532,28 +517,19 @@ pub async fn get_connection_status(
         })),
     };
 
-    // Check if Microsoft auth provider exists and is enabled
-    let microsoft_provider = match auth_provider_repo::get_default_provider_by_type("microsoft", &mut conn) {
-        Ok(provider) => {
-            if !provider.enabled {
-                return HttpResponse::Ok().json(ConnectionStatus {
-                    status: "disconnected".to_string(),
-                    message: "Microsoft auth provider is disabled".to_string(),
-                    last_sync: None,
-                    available_entities: vec![],
-                });
-            }
-            provider
-        },
-        Err(_) => {
-            return HttpResponse::Ok().json(ConnectionStatus {
-                status: "disconnected".to_string(),
-                message: "Microsoft auth provider not configured".to_string(),
-                last_sync: None,
-                available_entities: vec![],
-            });
-        }
-    };
+    // Check if Microsoft is configured via environment variables
+    let microsoft_configured = std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+        && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok()
+        && std::env::var("MICROSOFT_TENANT_ID").is_ok();
+    
+    if !microsoft_configured {
+        return HttpResponse::Ok().json(ConnectionStatus {
+            status: "disconnected".to_string(),
+            message: "Microsoft auth provider not configured".to_string(),
+            last_sync: None,
+            available_entities: vec![],
+        });
+    }
 
     // Check environment configuration
     let config_check = check_microsoft_config();
@@ -598,7 +574,7 @@ pub async fn test_connection(
     };
 
     // Get Microsoft provider
-    let provider = match auth_provider_repo::get_default_provider_by_type("microsoft", &mut conn) {
+    let provider = match get_default_microsoft_provider() {
         Ok(provider) => provider,
         Err(_) => return HttpResponse::BadRequest().json(json!({
             "status": "error",
@@ -618,6 +594,7 @@ pub async fn test_connection(
 }
 
 /// Sync data from Microsoft Graph
+#[instrument(level = "info", skip(db_pool, auth, request), fields(entities = ?request.entities))]
 pub async fn sync_data(
     db_pool: web::Data<Pool>,
     auth: BearerAuth,
@@ -641,7 +618,7 @@ pub async fn sync_data(
     };
 
     // Get Microsoft provider
-    let provider = match auth_provider_repo::get_default_provider_by_type("microsoft", &mut conn) {
+    let provider = match get_default_microsoft_provider() {
         Ok(provider) => provider,
         Err(_) => return HttpResponse::BadRequest().json(json!({
             "status": "error",
@@ -649,25 +626,52 @@ pub async fn sync_data(
         })),
     };
 
-    // Generate a unique session ID for tracking progress
-    let session_id = Uuid::new_v4().to_string();
+    // Determine the primary sync type based on entities
+    let entities = request.entities.clone();
+    let sync_type = if entities.len() > 1 {
+        "multiple".to_string()
+    } else if entities.contains(&"devices".to_string()) {
+        "devices".to_string()
+    } else if entities.contains(&"users".to_string()) {
+        "users".to_string()
+    } else if entities.contains(&"groups".to_string()) {
+        "groups".to_string()
+    } else {
+        "sync".to_string()
+    };
+
+    // Create sync history record in database first
+    let new_sync = NewSyncHistory {
+        sync_type: sync_type.clone(),
+        status: "starting".to_string(),
+        started_at: Utc::now().naive_utc(),
+        completed_at: None,
+        error_message: None,
+        records_processed: Some(0),
+        records_created: Some(0),
+        records_updated: Some(0),
+        records_failed: Some(0),
+        tenant_id: None,
+    };
+
+    let sync_history = match sync_history_repo::create_sync_history(&mut conn, new_sync) {
+        Ok(history) => history,
+        Err(e) => {
+            error!("Failed to create sync history record: {:?}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to create sync history record"
+            }));
+        }
+    };
+
+    let session_id = sync_history.id.to_string();
+    info!("Created sync history record with ID: {}", session_id);
 
     // Initialize session and progress tracking
     initialize_sync_session(&session_id);
-
-    // Determine the primary sync type based on entities
-    let entities = request.entities.clone();
-    let primary_sync_type = if entities.contains(&"devices".to_string()) {
-        "devices"
-    } else if entities.contains(&"users".to_string()) {
-        "users"
-    } else if entities.contains(&"groups".to_string()) {
-        "groups"
-    } else {
-        "sync"
-    };
     
-    update_sync_progress_with_type(&session_id, "initializing", 0, 0, "starting", "Initializing sync process", primary_sync_type);
+    update_sync_progress_with_type(&session_id, "initializing", 0, 0, "starting", "Initializing sync process", &sync_type);
 
     // Start the sync process in the background
     let provider_id = provider.id;
@@ -686,66 +690,126 @@ pub async fn sync_data(
             Ok(sync_result) => {
                 // Check if sync was cancelled by looking at the result
                 if !sync_result.success && sync_result.message.contains("cancelled") {
-                    // This was a cancellation, not a completion
-                    // The individual entity sync functions already updated the progress correctly
-                    // No need to overwrite with generic completion message
+                    // Update database with cancellation details
+                    let update = SyncHistoryUpdate {
+                        status: Some("cancelled".to_string()),
+                        error_message: Some(sync_result.message),
+                        records_processed: Some(sync_result.total_processed as i32),
+                        records_created: Some(0),
+                        records_updated: Some(sync_result.total_processed as i32),
+                        records_failed: Some(sync_result.total_errors as i32),
+                        completed_at: Some(Some(Utc::now().naive_utc())),
+                    };
+                    
+                    if let Ok(sync_id) = session_id_clone.parse::<i32>() {
+                        let _ = sync_history_repo::update_sync_history(&mut conn, sync_id, update);
+                    }
                 } else {
-                    // Normal completion - update with final status
-                let completion_message = format!("Sync completed successfully: {} items processed", sync_result.total_processed);
-                
-                    // Don't overwrite entity-specific progress, just ensure database is updated
-                let now = Utc::now().naive_utc();
-                let update = SyncHistoryUpdate {
-                    status: Some("completed".to_string()),
-                    error_message: None, // No error for successful completion
-                    records_processed: Some(sync_result.total_processed as i32),
-                    records_created: Some(0), // We don't track this separately 
-                    records_updated: Some(sync_result.total_processed as i32),
-                    records_failed: Some(sync_result.total_errors as i32),
-                    completed_at: Some(Some(now)),
-                };
-                
-                // Parse session_id to i32 for the database function
-                if let Ok(sync_id) = session_id_clone.parse::<i32>() {
-                    let _ = sync_history_repo::update_sync_history(&mut conn, sync_id, update);
-                } else {
-                    eprintln!("Failed to parse session_id as i32 for completion: {}", session_id_clone);
-                }
+                    // Normal completion - update with comprehensive results
+                    let status = if sync_result.total_errors > 0 {
+                        "completed_with_errors"
+                    } else {
+                        "completed"
+                    };
+
+                    let completion_message = if sync_result.total_errors > 0 {
+                        format!(
+                            "Sync completed with {} errors: {} items processed ({})", 
+                            sync_result.total_errors,
+                            sync_result.total_processed,
+                            entities.join(", ")
+                        )
+                    } else {
+                        format!(
+                            "Sync completed successfully: {} items processed ({})", 
+                            sync_result.total_processed,
+                            entities.join(", ")
+                        )
+                    };
+                    
+                    let update = SyncHistoryUpdate {
+                        status: Some(status.to_string()),
+                        error_message: if sync_result.total_errors > 0 { 
+                            Some(completion_message.clone()) 
+                        } else { 
+                            None 
+                        },
+                        records_processed: Some(sync_result.total_processed as i32),
+                        records_created: Some(0), // We could track this separately in the future
+                        records_updated: Some(sync_result.total_processed as i32),
+                        records_failed: Some(sync_result.total_errors as i32),
+                        completed_at: Some(Some(Utc::now().naive_utc())),
+                    };
+                    
+                    if let Ok(sync_id) = session_id_clone.parse::<i32>() {
+                        match sync_history_repo::update_sync_history(&mut conn, sync_id, update) {
+                            Ok(_) => info!("Successfully updated sync history for session {}", sync_id),
+                            Err(e) => error!("Failed to update sync history: {:?}", e),
+                        }
+                    }
+
+                    // Update in-memory progress with completion message
+                    update_sync_progress_with_type(
+                        &session_id_clone, 
+                        &sync_type, 
+                        sync_result.total_processed, 
+                        sync_result.total_processed, 
+                        status, 
+                        &completion_message, 
+                        &sync_type
+                    );
+
+                    // Check if we should start background photo sync after user sync completes
+                    if entities.contains(&"users".to_string()) && sync_result.total_processed > 0 {
+                        let background_photo_sync = std::env::var("MSGRAPH_BACKGROUND_PHOTOS")
+                            .unwrap_or("true".to_string())
+                            .parse::<bool>()
+                            .unwrap_or(true);
+                        
+                        if background_photo_sync {
+                            info!("Starting background photo sync for {} processed users", sync_result.total_processed);
+                            let db_pool_bg = db_pool.clone();
+                            let session_id_bg = session_id_clone.clone();
+                            
+                            tokio::spawn(async move {
+                                // Give the main sync a moment to finish database operations
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                
+                                // Get access token for photo sync
+                                match fetch_microsoft_graph_users_optimized(provider_id).await {
+                                    Ok((_, access_token)) => {
+                                        if let Err(e) = background_photo_sync_task(db_pool_bg, provider_id, session_id_bg, access_token).await {
+                                            error!("Background photo sync failed: {}", e);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!("Failed to get access token for background photo sync: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                    }
                 }
             },
             Err(error) => {
                 let error_message = format!("Sync failed: {}", error);
+                error!("Sync failed for session {}: {}", session_id_clone, error);
                 
-                // Determine the primary sync type for error reporting
-                let primary_sync_type = if entities.contains(&"devices".to_string()) {
-                    "devices"
-                } else if entities.contains(&"users".to_string()) {
-                    "users"
-                } else if entities.contains(&"groups".to_string()) {
-                    "groups"
-                } else {
-                    "sync"
-                };
+                update_sync_progress_with_type(&session_id_clone, &sync_type, 0, 0, "error", &error_message, &sync_type);
                 
-                update_sync_progress_with_type(&session_id_clone, primary_sync_type, 0, 0, "error", &error_message, primary_sync_type);
-                
-                // Also immediately update the database synchronously for errors
-                let now = Utc::now().naive_utc();
+                // Update database with error
                 let update = SyncHistoryUpdate {
                     status: Some("error".to_string()),
                     error_message: Some(error_message),
                     records_processed: Some(0),
                     records_created: Some(0),
                     records_updated: Some(0),
-                    records_failed: Some(1), // Mark as 1 failure for the error
-                    completed_at: Some(Some(now)),
+                    records_failed: Some(1),
+                    completed_at: Some(Some(Utc::now().naive_utc())),
                 };
                 
-                // Parse session_id to i32 for the database function
                 if let Ok(sync_id) = session_id_clone.parse::<i32>() {
                     let _ = sync_history_repo::update_sync_history(&mut conn, sync_id, update);
-                } else {
-                    eprintln!("Failed to parse session_id as i32 for error: {}", session_id_clone);
                 }
             }
         }
@@ -944,6 +1008,7 @@ async fn perform_sync(
 }
 
 /// Sync users from Microsoft Graph (optimized with concurrent processing)
+#[instrument(level = "info", skip(conn), fields(provider_id = provider_id, session_id = session_id))]
 async fn sync_users(
     conn: &mut DbConnection,
     provider_id: i32,
@@ -974,9 +1039,33 @@ async fn sync_users(
     };
 
     let total_users = microsoft_users.len();
-    println!("Fetched {} users from Microsoft Graph", total_users);
+    
+    // Check if we're filtering disabled accounts and log accordingly
+    let skip_disabled_accounts = std::env::var("MSGRAPH_SKIP_DISABLED_ACCOUNTS")
+        .unwrap_or("true".to_string())
+        .parse::<bool>()
+        .unwrap_or(true);
+    
+        // Performance configuration
+    let background_photo_sync = std::env::var("MSGRAPH_BACKGROUND_PHOTOS")
+        .unwrap_or("true".to_string())
+        .parse::<bool>()
+        .unwrap_or(true);
+    
+    if skip_disabled_accounts {
+        info!("Fetched {} enabled users from Microsoft Graph (disabled accounts filtered out)", total_users);
+    } else {
+        info!("Fetched {} users from Microsoft Graph (including disabled accounts)", total_users);
+    }
+    
+    if background_photo_sync {
+        info!("Background photo sync enabled - users will be created immediately, photos synced separately");
+    } else {
+        info!("Inline photo sync enabled - users created with photos during sync (slower)");
+    }
 
     if total_users == 0 {
+        debug!("No users found to sync from Microsoft Graph");
         update_sync_progress(session_id, "users", 0, 0, "completed", "No users found to sync");
         return SyncProgress {
             entity: "users".to_string(),
@@ -987,6 +1076,7 @@ async fn sync_users(
         };
     }
 
+    info!("Starting user sync: processing {} users concurrently", total_users);
     update_sync_progress(session_id, "users", 0, total_users, "running", &format!("Processing {} users concurrently", total_users));
 
     // Get concurrency configuration
@@ -1069,14 +1159,29 @@ async fn sync_users(
                 "users"
             );
 
-            match process_microsoft_user_optimized_v2(conn, provider_id, ms_user, &mut stats, &access_token, &client).await {
-                Ok(_) => {
-                    println!("Successfully processed user: {}", ms_user.user_principal_name);
-                },
-                Err(error) => {
-                    let error_msg = format!("Failed to process user {}: {}", ms_user.user_principal_name, error);
-                    println!("{}", error_msg);
-                    stats.errors.push(error_msg);
+            if background_photo_sync {
+                // Fast sync without photos
+                match process_microsoft_user_no_photos(conn, provider_id, ms_user, &mut stats).await {
+                    Ok(_) => {
+                        trace!("Successfully processed user (without photos): {}", ms_user.user_principal_name);
+                    },
+                    Err(error) => {
+                        let error_msg = format!("Failed to process user {}: {}", ms_user.user_principal_name, error);
+                        warn!("{}", error_msg);
+                        stats.errors.push(error_msg);
+                    }
+                }
+            } else {
+                // Traditional sync with photos inline
+                match process_microsoft_user_optimized_v2(conn, provider_id, ms_user, &mut stats, &access_token, &client).await {
+                    Ok(_) => {
+                        trace!("Successfully processed user: {}", ms_user.user_principal_name);
+                    },
+                    Err(error) => {
+                        let error_msg = format!("Failed to process user {}: {}", ms_user.user_principal_name, error);
+                        warn!("{}", error_msg);
+                        stats.errors.push(error_msg);
+                    }
                 }
             }
 
@@ -1115,6 +1220,8 @@ async fn sync_users(
             &format!("Completed: {} created, {} updated, {} linked, {} errors", 
                 stats.new_users_created, stats.existing_users_updated, stats.identities_linked, stats.errors.len())
         );
+
+        // Background photo sync will be handled at the main sync level if configured
 
         SyncProgress {
             entity: "users".to_string(),
@@ -1187,14 +1294,27 @@ async fn fetch_microsoft_graph_users_optimized(provider_id: i32) -> Result<(Vec<
 
     // Build the Microsoft Graph API request for users
     // Select the fields we need for our MicrosoftGraphUser struct
-    // Important: Include proxyAddresses and otherMails for email aliases
-    let select_fields = "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,officeLocation,mobilePhone,businessPhones,proxyAddresses,otherMails";
+    // Important: Include proxyAddresses and otherMails for email aliases, and accountEnabled for filtering
+    let select_fields = "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,officeLocation,mobilePhone,businessPhones,proxyAddresses,otherMails,accountEnabled";
+    
+    // Check if we should skip disabled accounts (default: true for performance)
+    let skip_disabled_accounts = std::env::var("MSGRAPH_SKIP_DISABLED_ACCOUNTS")
+        .unwrap_or("true".to_string())
+        .parse::<bool>()
+        .unwrap_or(true);
     
     // Start with the first page
-    let mut url = format!(
-        "https://graph.microsoft.com/v1.0/users?$select={}",
-        urlencoding::encode(select_fields)
-    );
+    let mut url = if skip_disabled_accounts {
+        format!(
+            "https://graph.microsoft.com/v1.0/users?$select={}&$filter=accountEnabled eq true",
+            urlencoding::encode(select_fields)
+        )
+    } else {
+        format!(
+            "https://graph.microsoft.com/v1.0/users?$select={}",
+            urlencoding::encode(select_fields)
+        )
+    };
 
     println!("Microsoft Graph API query with email alias fields: {}", url);
 
@@ -1203,7 +1323,7 @@ async fn fetch_microsoft_graph_users_optimized(provider_id: i32) -> Result<(Vec<
 
     loop {
         page_count += 1;
-        println!("Fetching page {} from Microsoft Graph: {}", page_count, url);
+        debug!("Fetching page {} from Microsoft Graph", page_count);
 
         // Make the request to Microsoft Graph
         let graph_response = client
@@ -1248,15 +1368,15 @@ async fn fetch_microsoft_graph_users_optimized(provider_id: i32) -> Result<(Vec<
             }
         }
 
-        println!("Page {}: Parsed {} users from Microsoft Graph", page_count, page_users.len());
+        debug!("Page {}: Parsed {} users from Microsoft Graph", page_count, page_users.len());
         all_users.extend(page_users);
 
         // Check if there's a next page
         if let Some(next_link) = response_data.get("@odata.nextLink").and_then(|link| link.as_str()) {
             url = next_link.to_string();
-            println!("Found next page link, continuing to page {}...", page_count + 1);
+            trace!("Found next page link, continuing to page {}...", page_count + 1);
         } else {
-            println!("No more pages found, finished pagination");
+            debug!("No more pages found, finished pagination");
             break;
         }
 
@@ -1264,19 +1384,18 @@ async fn fetch_microsoft_graph_users_optimized(provider_id: i32) -> Result<(Vec<
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    println!("Successfully fetched {} users from Microsoft Graph across {} pages", all_users.len(), page_count);
+    info!("Successfully fetched {} users from Microsoft Graph across {} pages", all_users.len(), page_count);
     
-    // Log a sample of users for verification
-    for (i, user) in all_users.iter().take(5).enumerate() {
-        println!("Sample user {}: {} ({})", 
-            i + 1, 
-            user.display_name.as_deref().unwrap_or("N/A"), 
-            user.user_principal_name
-        );
-    }
-    
-    if all_users.len() > 5 {
-        println!("... and {} more users", all_users.len() - 5);
+    // Log sample users at debug level
+    if all_users.len() > 0 && log::log_enabled!(log::Level::Debug) {
+        debug!("Sample users fetched: {} total", all_users.len().min(5));
+        for (i, user) in all_users.iter().take(5).enumerate() {
+            debug!("  {}: {} ({})", 
+                i + 1, 
+                user.display_name.as_deref().unwrap_or("N/A"), 
+                user.user_principal_name
+            );
+        }
     }
 
     Ok((all_users, access_token.to_string()))
@@ -1346,7 +1465,7 @@ fn find_identity_by_provider_user_id(
     use crate::schema::user_auth_identities;
     
     user_auth_identities::table
-        .filter(user_auth_identities::provider_id.eq(provider_id))
+                    .filter(user_auth_identities::provider_type.eq("microsoft"))
         .filter(user_auth_identities::external_id.eq(provider_user_id))
         .first::<UserAuthIdentity>(conn)
 }
@@ -1443,7 +1562,7 @@ async fn link_existing_user_to_microsoft(
 
     let new_identity = NewUserAuthIdentity {
         user_id: existing_user.id,
-        provider_id,
+        provider_type: "microsoft".to_string(),
         external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
         metadata: Some(identity_data),
@@ -1518,18 +1637,10 @@ async fn create_new_user_from_microsoft(
     let email = ms_user.mail.as_ref().unwrap_or(&ms_user.user_principal_name);
 
     // Create new user with default role 'user'
-    let new_user = NewUser {
-        uuid: user_uuid,
-        name: name.clone(),
-        email: email.clone(),
-        role: crate::models::UserRole::User, // Use proper enum
-        password_hash: Vec::new(), // Empty password hash for OAuth users
-        pronouns: None,
-        avatar_url: None,
-        banner_url: None,
-        avatar_thumb: None,
-        microsoft_uuid: None, // Don't set Microsoft UUID in this function
-    };
+    // Create OAuth user for Microsoft Graph integration
+    let new_user = utils::NewUserBuilder::oauth_user(name.clone(), email.clone(), crate::models::UserRole::User)
+        .with_uuid(user_uuid)
+        .build();
 
     let created_user = user_repo::create_user(new_user, conn)
         .map_err(|e| format!("Failed to create user: {}", e))?;
@@ -1540,7 +1651,7 @@ async fn create_new_user_from_microsoft(
 
     let new_identity = NewUserAuthIdentity {
         user_id: created_user.id,
-        provider_id,
+        provider_type: "microsoft".to_string(),
         external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
         metadata: Some(identity_data),
@@ -1569,6 +1680,7 @@ async fn create_new_user_from_microsoft(
 }
 
 /// Update existing user who already has Microsoft identity (optimized version)
+#[instrument(level = "debug", skip(conn, ms_user, stats, access_token, client), fields(user_principal_name = %ms_user.user_principal_name, user_id = %existing_identity.user_id))]
 async fn update_existing_microsoft_user_optimized(
     conn: &mut DbConnection,
     ms_user: &MicrosoftGraphUser,
@@ -1577,7 +1689,7 @@ async fn update_existing_microsoft_user_optimized(
     access_token: &str,
     client: &reqwest::Client,
 ) -> Result<(), String> {
-    println!("Updating existing Microsoft user: {}", ms_user.user_principal_name);
+    // User info is in the span context
 
     // Get the associated user
     let user = user_repo::get_user_by_id(existing_identity.user_id, conn)
@@ -1618,37 +1730,33 @@ async fn update_existing_microsoft_user_optimized(
         .collect();
 
     if !email_data.is_empty() {
-        println!("Storing {} email addresses for user: {}", email_data.len(), user.name);
-        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
-            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
-        }
+        debug!("Storing {} email addresses for user: {}", email_data.len(), user.name);
         
         match user_emails_repo::add_multiple_emails(conn, user.id, email_data.clone()) {
             Ok(stored_emails) => {
                 let added_count = stored_emails.len();
-                println!("Successfully stored {} email addresses for user: {}", added_count, user.name);
+                debug!("Successfully stored {} email addresses for user: {}", added_count, user.name);
                 
                 // Clean up any Microsoft emails that are no longer present
                 let current_emails: Vec<String> = email_data.iter().map(|(email, _, _, _)| email.clone()).collect();
                 match user_emails_repo::cleanup_obsolete_emails(conn, user.id, &current_emails, "microsoft") {
                     Ok(cleaned_count) => {
                         if cleaned_count > 0 {
-                            println!("Cleaned up {} obsolete Microsoft email addresses for user: {}", cleaned_count, user.name);
+                            debug!("Cleaned up {} obsolete Microsoft email addresses for user: {}", cleaned_count, user.name);
                         }
                     },
                     Err(e) => {
-                        println!("Warning: Failed to cleanup obsolete emails for user {}: {}", user.name, e);
+                        warn!("Failed to cleanup obsolete emails for user {}: {}", user.name, e);
                     }
                 }
             },
             Err(e) => {
-                println!("Error: Failed to store email addresses for user {}: {}", user.name, e);
-                // Don't fail the entire user sync, but make sure the error is visible
+                error!("Failed to store email addresses for user {}: {}", user.name, e);
                 stats.errors.push(format!("Failed to store emails for user {}: {}", user.name, e));
             }
         }
     } else {
-        println!("No email addresses to store for user: {}", user.name);
+        trace!("No email addresses to store for user: {}", user.name);
     }
 
     // Update identity data with latest from Microsoft Graph
@@ -1670,6 +1778,7 @@ async fn update_existing_microsoft_user_optimized(
 }
 
 /// Link existing local user to Microsoft identity (optimized version)
+#[instrument(level = "debug", skip(conn, ms_user, stats, access_token, client), fields(existing_user_email = %existing_user.email, user_principal_name = %ms_user.user_principal_name, provider_id = provider_id))]
 async fn link_existing_user_to_microsoft_optimized(
     conn: &mut DbConnection,
     provider_id: i32,
@@ -1679,7 +1788,7 @@ async fn link_existing_user_to_microsoft_optimized(
     access_token: &str,
     client: &reqwest::Client,
 ) -> Result<(), String> {
-    println!("Linking existing user to Microsoft: {} -> {}", existing_user.email, ms_user.user_principal_name);
+    // Linking info is in the span context
 
     // Create Microsoft identity for existing user
     let identity_data = serde_json::to_value(ms_user)
@@ -1687,7 +1796,7 @@ async fn link_existing_user_to_microsoft_optimized(
 
     let new_identity = NewUserAuthIdentity {
         user_id: existing_user.id,
-        provider_id,
+        provider_type: "microsoft".to_string(),
         external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
         metadata: Some(identity_data),
@@ -1727,30 +1836,26 @@ async fn link_existing_user_to_microsoft_optimized(
         .collect();
 
     if !email_data.is_empty() {
-        println!("Storing {} email addresses for linked user: {}", email_data.len(), existing_user.name);
-        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
-            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
-        }
+        debug!("Storing {} email addresses for linked user: {}", email_data.len(), existing_user.name);
         
         match user_emails_repo::add_multiple_emails(conn, existing_user.id, email_data.clone()) {
             Ok(stored_emails) => {
                 let added_count = stored_emails.len();
-                println!("Successfully stored {} email addresses for linked user: {}", added_count, existing_user.name);
+                debug!("Successfully stored {} email addresses for linked user: {}", added_count, existing_user.name);
             },
             Err(e) => {
-                println!("Error: Failed to store email addresses for linked user {}: {}", existing_user.name, e);
-                // Don't fail the entire user sync, but make sure the error is visible
+                error!("Failed to store email addresses for linked user {}: {}", existing_user.name, e);
                 stats.errors.push(format!("Failed to store emails for linked user {}: {}", existing_user.name, e));
             }
         }
     } else {
-        println!("No email addresses to store for linked user: {}", existing_user.name);
+        trace!("No email addresses to store for linked user: {}", existing_user.name);
     }
 
     // Sync profile photo using optimized client
     if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &utils::uuid_to_string(&existing_user.uuid)).await {
         if let Err(e) = update_user_avatar_by_id(conn, existing_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
-            println!("Warning: Failed to update avatar for user {}: {}", existing_user.name, e);
+            warn!("Failed to update avatar for user {}: {}", existing_user.name, e);
         }
     }
 
@@ -1759,6 +1864,7 @@ async fn link_existing_user_to_microsoft_optimized(
 }
 
 /// Create new user from Microsoft Graph data (optimized version)
+#[instrument(level = "debug", skip(conn, ms_user, stats, access_token, client), fields(user_principal_name = %ms_user.user_principal_name, provider_id = provider_id))]
 async fn create_new_user_from_microsoft_optimized(
     conn: &mut DbConnection,
     provider_id: i32,
@@ -1767,7 +1873,7 @@ async fn create_new_user_from_microsoft_optimized(
     access_token: &str,
     client: &reqwest::Client,
 ) -> Result<(), String> {
-    println!("Creating new user from Microsoft: {}", ms_user.user_principal_name);
+    // User info is in the span context
 
     // Generate UUID for new user (this is our local UUID, different from Microsoft's)
     let user_uuid = Uuid::new_v4().to_string();
@@ -1791,18 +1897,16 @@ async fn create_new_user_from_microsoft_optimized(
 
     // Create new user with default role 'user' and store Microsoft UUID
     let user_uuid = Uuid::new_v4();
-    let new_user = NewUser {
-        uuid: user_uuid,
-        name: name.clone(),
-        email: primary_email.clone(),
-        role: crate::models::UserRole::User, // Use proper enum
-        password_hash: Vec::new(), // Empty password hash for OAuth users
-        pronouns: None,
-        avatar_url: None,
-        banner_url: None,
-        avatar_thumb: None,
-        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?), // Store Microsoft UUID with proper conversion
-    };
+    // Create Microsoft user with UUID
+    let microsoft_uuid = Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?);
+    let new_user = utils::NewUserBuilder::microsoft_user(
+        name.clone(),
+        primary_email.clone(),
+        crate::models::UserRole::User,
+        microsoft_uuid
+    )
+    .with_uuid(user_uuid)
+    .build();
 
     let created_user = user_repo::create_user(new_user, conn)
         .map_err(|e| format!("Failed to create user: {}", e))?;
@@ -1814,24 +1918,20 @@ async fn create_new_user_from_microsoft_optimized(
         .collect();
 
     if !email_data.is_empty() {
-        println!("Storing {} email addresses for new user: {}", email_data.len(), name);
-        for (i, (email, email_type, verified, source)) in email_data.iter().enumerate() {
-            println!("  Email {}: {} (type: {}, verified: {}, source: {})", i + 1, email, email_type, verified, source);
-        }
+        debug!("Storing {} email addresses for new user: {}", email_data.len(), name);
         
         match user_emails_repo::add_multiple_emails(conn, created_user.id, email_data.clone()) {
             Ok(stored_emails) => {
                 let added_count = stored_emails.len();
-                println!("Successfully stored {} email addresses for new user: {}", added_count, name);
+                debug!("Successfully stored {} email addresses for new user: {}", added_count, name);
             },
             Err(e) => {
-                println!("Error: Failed to store email addresses for new user {}: {}", name, e);
-                // Don't fail the entire user sync, but make sure the error is visible
+                error!("Failed to store email addresses for new user {}: {}", name, e);
                 stats.errors.push(format!("Failed to store emails for new user {}: {}", name, e));
             }
         }
     } else {
-        println!("No email addresses to store for new user: {}", name);
+        trace!("No email addresses to store for new user: {}", name);
     }
 
     // Create Microsoft identity for the new user
@@ -1840,7 +1940,7 @@ async fn create_new_user_from_microsoft_optimized(
 
     let new_identity = NewUserAuthIdentity {
         user_id: created_user.id,
-        provider_id,
+        provider_type: "microsoft".to_string(),
         external_id: ms_user.id.clone(),
         email: ms_user.mail.clone(),
         metadata: Some(identity_data),
@@ -1853,17 +1953,17 @@ async fn create_new_user_from_microsoft_optimized(
     // Sync profile photo using optimized client
     if let Ok(photo_urls) = sync_user_profile_photo(client, access_token, ms_user, &utils::uuid_to_string(&user_uuid)).await {
         if let Err(e) = update_user_avatar_by_id(conn, created_user.id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
-            println!("Warning: Failed to update avatar for user {}: {}", name, e);
+            warn!("Failed to update avatar for user {}: {}", name, e);
         }
     }
 
-    println!("Created new user: {} ({}) with Microsoft UUID: {} and {} email addresses", 
-        name, primary_email, ms_user.id, email_data.len());
+    info!("Created new user: {} with {} email addresses", name, email_data.len());
     stats.new_users_created += 1;
     Ok(())
 }
 
 /// Sync devices from Microsoft Graph (Intune managed devices)
+#[instrument(level = "info", skip(conn), fields(provider_id = provider_id, session_id = session_id))]
 async fn sync_devices(
     conn: &mut DbConnection,
     provider_id: i32,
@@ -2045,7 +2145,7 @@ async fn sync_user_profile_photo(
     user: &MicrosoftGraphUser,
     local_user_uuid: &str,
 ) -> Result<PhotoSyncUrls, String> {
-    println!("Fetching 120x120 profile photo and generating thumbnail for user: {}", user.user_principal_name);
+    debug!("Fetching profile photo for user: {}", user.user_principal_name);
 
     let mut avatar_url = None;
     let mut avatar_thumb = None;
@@ -2053,21 +2153,21 @@ async fn sync_user_profile_photo(
     // Download 120x120 for profile views (main avatar) and generate thumbnail from it
     match download_profile_photo_size(client, access_token, user, local_user_uuid, "120x120").await {
         Ok(Some(url)) => {
-            println!("Successfully downloaded 120x120 photo for user: {}", user.user_principal_name);
+            debug!("Successfully downloaded 120x120 photo for user: {}", user.user_principal_name);
             avatar_url = Some(url.clone());
             
             // Generate 48x48 WebP thumbnail from the 120x120 image
-            match generate_thumbnail_from_avatar(&url, local_user_uuid).await {
+            match crate::utils::generate_user_avatar_thumbnail(&url, local_user_uuid).await {
                 Ok(Some(thumb_url)) => {
-                    println!("Successfully generated thumbnail for user: {}", user.user_principal_name);
+                    debug!("Successfully generated thumbnail for user: {}", user.user_principal_name);
                     avatar_thumb = Some(thumb_url);
                 },
-                Ok(None) => println!("Failed to generate thumbnail for user: {}", user.user_principal_name),
-                Err(e) => println!("Error generating thumbnail for user {}: {}", user.user_principal_name, e),
+                Ok(None) => debug!("Failed to generate thumbnail for user: {}", user.user_principal_name),
+                Err(e) => warn!("Error generating thumbnail for user {}: {}", user.user_principal_name, e),
             }
         },
-        Ok(None) => println!("No 120x120 photo available for user: {}", user.user_principal_name),
-        Err(e) => println!("Failed to download 120x120 photo for user {}: {}", user.user_principal_name, e),
+        Ok(None) => trace!("No 120x120 photo available for user: {}", user.user_principal_name),
+        Err(e) => debug!("Failed to download 120x120 photo for user {}: {}", user.user_principal_name, e),
     }
     
     // If no 120x120 photo was available, try the default size as fallback
@@ -2079,7 +2179,7 @@ async fn sync_user_profile_photo(
                 avatar_url = Some(url.clone());
                 
                 // Generate thumbnail from the default size image
-                match generate_thumbnail_from_avatar(&url, local_user_uuid).await {
+                match crate::utils::generate_user_avatar_thumbnail(&url, local_user_uuid).await {
                     Ok(Some(thumb_url)) => {
                         println!("Successfully generated thumbnail from default photo for user: {}", user.user_principal_name);
                         avatar_thumb = Some(thumb_url);
@@ -2159,165 +2259,32 @@ async fn save_profile_photo_to_disk(
     local_user_uuid: &str,
     size_label: &str,
 ) -> Result<Option<String>, String> {
-    // Create the avatar directory if it doesn't exist
-    let avatar_dir = "uploads/users/avatars";
-    fs::create_dir_all(avatar_dir)
-        .await
-        .map_err(|e| format!("Failed to create avatar directory: {}", e))?;
-
-    // Clean up any existing files for this user and size before saving new one
-    cleanup_old_user_images(avatar_dir, local_user_uuid, size_label).await?;
-
-    // Generate predictable filename for the photo with size label
-    let file_extension = "jpg"; // Microsoft Graph typically returns JPEG photos
-    let filename = if size_label == "default" {
-        format!("{}_{}.{}", local_user_uuid, size_label, file_extension)
-    } else {
-        format!("{}_{}.{}", local_user_uuid, size_label, file_extension)
-    };
-    let file_path = format!("{}/{}", avatar_dir, filename);
-
-    println!("Saving profile photo to: {}", file_path);
-
-    // Save the photo to the filesystem
-    let mut file = fs::File::create(&file_path)
-        .await
-        .map_err(|e| format!("Failed to create photo file {}: {}", file_path, e))?;
-
-    file.write_all(photo_bytes)
-        .await
-        .map_err(|e| format!("Failed to write photo data to {}: {}", file_path, e))?;
-
-    file.flush()
-        .await
-        .map_err(|e| format!("Failed to flush photo file {}: {}", file_path, e))?;
-
-    println!("Successfully saved profile photo for user to: {}", file_path);
-
-    // Return the URL path for the database
-    let avatar_url = format!("/{}", file_path);
-    println!("Generated avatar URL: {}", avatar_url);
-    Ok(Some(avatar_url))
-}
-
-/// Clean up old user images for a specific size
-async fn cleanup_old_user_images(
-    avatar_dir: &str,
-    user_uuid: &str,
-    size_label: &str,
-) -> Result<(), String> {
-    use tokio::fs;
+    println!("Processing Microsoft Graph profile photo for user: {}, size: {}", local_user_uuid, size_label);
     
-    // Read the directory
-    let mut dir = match fs::read_dir(avatar_dir).await {
-        Ok(dir) => dir,
-        Err(_) => return Ok(()) // Directory doesn't exist, nothing to clean
-    };
-
-    // Look for files matching the pattern: {user_uuid}_{size_label}.{ext}
-    let pattern_prefix = format!("{}_{}", user_uuid, size_label);
-    
-    while let Ok(Some(entry)) = dir.next_entry().await {
-        if let Some(filename) = entry.file_name().to_str() {
-            // Check if this file matches our pattern (user_uuid_size.ext)
-            if filename.starts_with(&pattern_prefix) && filename.contains('.') {
-                let file_path = entry.path();
-                println!("Cleaning up old image file: {:?}", file_path);
-                
-                if let Err(e) = fs::remove_file(&file_path).await {
-                    eprintln!("Warning: Failed to remove old image file {:?}: {}", file_path, e);
-                    // Continue with cleanup even if one file fails
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// Generate a 48x48 WebP thumbnail from an existing avatar image
-async fn generate_thumbnail_from_avatar(
-    avatar_url: &str,
-    user_uuid: &str,
-) -> Result<Option<String>, String> {
-    // Convert URL path to file system path
-    let file_path = if avatar_url.starts_with('/') {
-        format!(".{}", avatar_url) // Remove leading slash and add current directory
-    } else {
-        avatar_url.to_string()
+    // Use the shared image processing function to convert to WebP with size constraints
+    let max_size = match size_label {
+        "120x120" => 120,
+        "default" => 200, // Default gets processed to 200px max
+        _ => 200, // Fallback to 200px
     };
     
-    println!("Generating thumbnail from: {}", file_path);
-    
-    // Read the original image
-    let img_bytes = match tokio::fs::read(&file_path).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            println!("Failed to read avatar file {}: {}", file_path, e);
-            return Ok(None);
-        }
-    };
-    
-    // Process image in a blocking task to avoid blocking the async runtime
-    let user_uuid = user_uuid.to_string();
-    let thumbnail_result = tokio::task::spawn_blocking(move || {
-        // Load the image
-        let img = match image::load_from_memory(&img_bytes) {
-            Ok(img) => img,
-            Err(e) => {
-                println!("Failed to load image from memory: {}", e);
-                return None;
-            }
-        };
-        
-        // Resize to 48x48 with high quality
-        let thumbnail = img.resize_exact(48, 48, image::imageops::FilterType::Lanczos3);
-        
-        // Convert to WebP format
-        let mut webp_bytes = Vec::new();
-        match thumbnail.write_to(&mut std::io::Cursor::new(&mut webp_bytes), ImageFormat::WebP) {
-            Ok(_) => Some(webp_bytes),
-            Err(e) => {
-                println!("Failed to encode image as WebP: {}", e);
-                None
-            }
-        }
-    }).await;
-    
-    let webp_bytes = match thumbnail_result {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => return Ok(None),
-        Err(e) => {
-            println!("Thumbnail generation task failed: {}", e);
-            return Ok(None);
-        }
-    };
-    
-    // Create thumbnail directory
-    let thumb_dir = "uploads/users/thumbs";
-    if let Err(e) = tokio::fs::create_dir_all(thumb_dir).await {
-        return Err(format!("Failed to create thumbnail directory: {}", e));
-    }
-    
-    // Clean up any existing thumbnails for this user
-    cleanup_old_user_images(thumb_dir, &user_uuid, "thumb").await?;
-    
-    // Save the thumbnail
-    let thumb_filename = format!("{}_thumb.webp", user_uuid);
-    let thumb_path = format!("{}/{}", thumb_dir, thumb_filename);
-    
-    match tokio::fs::write(&thumb_path, &webp_bytes).await {
-        Ok(_) => {
-            println!("Successfully saved thumbnail to: {}", thumb_path);
-            let thumb_url = format!("/{}", thumb_path);
-            Ok(Some(thumb_url))
+    match crate::utils::image::process_avatar_image(photo_bytes, local_user_uuid, max_size).await {
+        Ok(Some(avatar_url)) => {
+            println!("Successfully processed Microsoft Graph photo for user {}: {}", local_user_uuid, avatar_url);
+            Ok(Some(avatar_url))
+        },
+        Ok(None) => {
+            println!("Failed to process Microsoft Graph photo for user {}", local_user_uuid);
+            Ok(None)
         },
         Err(e) => {
-            println!("Failed to save thumbnail: {}", e);
-            Ok(None)
+            println!("Error processing Microsoft Graph photo for user {}: {}", local_user_uuid, e);
+            Err(e)
         }
     }
 }
+
+
 
 /// Update user avatar URLs in the database
 async fn update_user_avatar_by_id(
@@ -2769,7 +2736,7 @@ pub async fn get_entra_object_id(
     };
 
     // Get Microsoft provider
-    let provider = match auth_provider_repo::get_default_provider_by_type("microsoft", &mut conn) {
+    let provider = match get_default_microsoft_provider() {
         Ok(provider) => provider,
         Err(_) => return HttpResponse::BadRequest().json(json!({
             "status": "error",
@@ -2899,13 +2866,13 @@ async fn fetch_entra_object_id_from_graph(provider_id: i32, azure_ad_device_id: 
 fn extract_user_emails(ms_user: &MicrosoftGraphUser) -> Vec<(String, String, bool)> {
     let mut emails = Vec::new();
     
-    println!("Extracting emails for user: {} (ID: {})", ms_user.user_principal_name, ms_user.id);
+    debug!("Extracting emails for user: {} (ID: {})", ms_user.user_principal_name, ms_user.id);
     
     // Primary email (mail field)
     if let Some(mail) = &ms_user.mail {
         if !mail.is_empty() && mail.contains('@') {
             emails.push((mail.clone(), "primary".to_string(), true));
-            println!("  Added primary email: {}", mail);
+            trace!("Added primary email: {}", mail);
         }
     }
     
@@ -2915,12 +2882,12 @@ fn extract_user_emails(ms_user: &MicrosoftGraphUser) -> Vec<(String, String, boo
        !emails.iter().any(|(e, _, _)| e == &ms_user.user_principal_name) {
         let email_type = if emails.is_empty() { "primary".to_string() } else { "upn".to_string() };
         emails.push((ms_user.user_principal_name.clone(), email_type.clone(), true));
-        println!("  Added UPN email: {} (type: {})", ms_user.user_principal_name, email_type);
+        trace!("Added UPN email: {} (type: {})", ms_user.user_principal_name, email_type);
     }
     
     // Proxy addresses (SMTP addresses from Exchange)
     if let Some(proxy_addresses) = &ms_user.proxy_addresses {
-        println!("  Processing {} proxy addresses: {:?}", proxy_addresses.len(), proxy_addresses);
+        trace!("Processing {} proxy addresses", proxy_addresses.len());
         for proxy in proxy_addresses {
             if let Some(email) = extract_smtp_address(proxy) {
                 if !emails.iter().any(|(e, _, _)| e == &email) {
@@ -2930,45 +2897,38 @@ fn extract_user_emails(ms_user: &MicrosoftGraphUser) -> Vec<(String, String, boo
                         "alias".to_string() // smtp: (lowercase) indicates alias
                     };
                     emails.push((email.clone(), email_type.clone(), true));
-                    println!("  Added proxy email: {} (type: {}, original: {})", email, email_type, proxy);
+                    trace!("Added proxy email: {} (type: {})", email, email_type);
                 } else {
-                    println!("  Skipped duplicate proxy email: {} (original: {})", email, proxy);
+                    trace!("Skipped duplicate proxy email: {}", email);
                 }
             } else {
-                println!("  Failed to extract email from proxy address: {}", proxy);
+                trace!("Failed to extract email from proxy address: {}", proxy);
             }
         }
-    } else {
-        println!("  No proxy addresses found");
     }
     
     // Other mail addresses
     if let Some(other_mails) = &ms_user.other_mails {
-        println!("  Processing {} other mail addresses: {:?}", other_mails.len(), other_mails);
+        trace!("Processing {} other mail addresses", other_mails.len());
         for email in other_mails {
             if !email.is_empty() && 
                email.contains('@') && 
                !emails.iter().any(|(e, _, _)| e == email) {
                 emails.push((email.clone(), "other".to_string(), true));
-                println!("  Added other email: {}", email);
+                trace!("Added other email: {}", email);
             } else {
-                println!("  Skipped invalid or duplicate other email: {}", email);
+                trace!("Skipped invalid or duplicate other email: {}", email);
             }
         }
-    } else {
-        println!("  No other mail addresses found");
     }
     
     // If no emails found, use the userPrincipalName as a fallback
     if emails.is_empty() && !ms_user.user_principal_name.is_empty() {
         emails.push((ms_user.user_principal_name.clone(), "primary".to_string(), true));
-        println!("  Added fallback UPN email: {}", ms_user.user_principal_name);
+        debug!("Added fallback UPN email: {}", ms_user.user_principal_name);
     }
     
-    println!("  Total emails extracted: {}", emails.len());
-    for (i, (email, email_type, verified)) in emails.iter().enumerate() {
-        println!("    {}: {} (type: {}, verified: {})", i + 1, email, email_type, verified);
-    }
+    debug!("Extracted {} emails for user {}", emails.len(), ms_user.user_principal_name);
     
     emails
 }
@@ -3005,4 +2965,383 @@ fn parse_microsoft_datetime(datetime_str: &Option<String>) -> Option<chrono::Nai
                     })
             })
     })
-} 
+}
+
+/// Process a Microsoft user without fetching profile photos (for fast sync)
+#[instrument(level = "debug", skip(conn, stats), fields(user_principal_name = %ms_user.user_principal_name, provider_id))]
+async fn process_microsoft_user_no_photos(
+    conn: &mut DbConnection,
+    provider_id: i32,
+    ms_user: &MicrosoftGraphUser,
+    stats: &mut UserSyncStats,
+) -> Result<(), String> {
+    // Check if identity already exists
+    match find_identity_by_provider_user_id(conn, provider_id, &ms_user.id) {
+        Ok(existing_identity) => {
+            // Identity exists - update the Microsoft user without photos
+            update_existing_microsoft_user_no_photos(conn, ms_user, existing_identity, stats).await
+        }
+        Err(diesel::result::Error::NotFound) => {
+            // No identity found, check if we can link to an existing user by email
+            let emails = extract_user_emails(ms_user);
+            
+            if let Some(existing_user) = find_existing_user_by_emails(conn, &emails) {
+                // Link existing user to Microsoft account without photos
+                link_existing_user_to_microsoft_no_photos(conn, provider_id, ms_user, existing_user, stats).await
+            } else {
+                // Create new user without photos
+                create_new_user_from_microsoft_no_photos(conn, provider_id, ms_user, stats).await
+            }
+        }
+        Err(e) => {
+            Err(format!("Database error checking for existing identity: {}", e))
+        }
+    }
+}
+
+/// Background photo sync task (simplified)
+async fn background_photo_sync_task(
+    db_pool: web::Data<Pool>,
+    provider_id: i32,
+    session_id: String,
+    access_token: String,
+) -> Result<(), String> {
+    info!("Starting background photo sync for provider {}", provider_id);
+    
+    update_sync_progress_with_type(
+        &session_id,
+        "photos",
+        0,
+        0,
+        "starting",
+        "Finding users without profile photos...",
+        "photos"
+    );
+
+    // Get database connection
+    let mut conn = db_pool.get().map_err(|e| format!("Database connection failed: {}", e))?;
+
+    // Find users that need photo sync using SQL query
+    let users_needing_photos = find_users_without_photos(&mut conn, provider_id)?;
+
+    let total_users = users_needing_photos.len();
+    if total_users == 0 {
+        info!("No users need photo sync");
+        update_sync_progress_with_type(
+            &session_id,
+            "photos",
+            0,
+            0,
+            "completed",
+            "No users found needing photo sync",
+            "photos"
+        );
+        return Ok(());
+    }
+
+    info!("Found {} users needing photo sync", total_users);
+
+    // Create HTTP client for photo downloads
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let mut processed = 0;
+    let mut success_count = 0;
+
+    // Process photos sequentially (simple approach)
+    for (user_id, user_uuid, ms_user_id) in users_needing_photos {
+        match sync_user_photo_by_id(&client, &access_token, &ms_user_id, &user_uuid).await {
+            Ok(photo_urls) => {
+                if let Err(e) = update_user_avatar_by_id(&mut conn, user_id, photo_urls.avatar_url, photo_urls.avatar_thumb).await {
+                    debug!("Failed to update user avatar: {}", e);
+                } else {
+                    success_count += 1;
+                }
+            }
+            Err(e) => {
+                debug!("Photo sync error for user {}: {}", user_uuid, e);
+            }
+        }
+
+        processed += 1;
+
+        // Update progress every 10 photos
+        if processed % 10 == 0 || processed == total_users {
+            update_sync_progress_with_type(
+                &session_id,
+                "photos",
+                processed,
+                total_users,
+                "running",
+                &format!("Processed {}/{} photos ({} success)", processed, total_users, success_count),
+                "photos"
+            );
+        }
+    }
+
+    let final_message = format!("Background photo sync completed: {}/{} success", success_count, total_users);
+    info!("{}", final_message);
+
+    update_sync_progress_with_type(
+        &session_id,
+        "photos",
+        total_users,
+        total_users,
+        "completed",
+        &final_message,
+        "photos"
+    );
+
+    Ok(())
+}
+
+/// Update existing Microsoft user without photos (simplified)
+async fn update_existing_microsoft_user_no_photos(
+    conn: &mut DbConnection,
+    ms_user: &MicrosoftGraphUser,
+    existing_identity: UserAuthIdentity,
+    stats: &mut UserSyncStats,
+) -> Result<(), String> {
+    // Get the associated user
+    let user = user_repo::get_user_by_id(existing_identity.user_id, conn)
+        .map_err(|e| format!("Failed to get user by ID {}: {}", existing_identity.user_id, e))?;
+
+    // Extract emails and update user info
+    let emails = extract_user_emails(ms_user);
+    let primary_email = emails.first().map(|(email, _, _)| email.clone())
+        .unwrap_or_else(|| ms_user.user_principal_name.clone());
+
+    let updated_name = ms_user.display_name.as_ref().unwrap_or(&user.name);
+
+    // Update user if needed
+    let user_update = crate::models::UserUpdate {
+        name: if updated_name != &user.name { Some(updated_name.clone()) } else { None },
+        email: if primary_email != user.email { Some(primary_email.clone()) } else { None },
+        role: None,
+        pronouns: None,
+        avatar_url: None,
+        banner_url: None,
+        avatar_thumb: None,
+        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?),
+        updated_at: Some(chrono::Utc::now().naive_utc()),
+    };
+
+    if user_update.name.is_some() || user_update.email.is_some() || user_update.microsoft_uuid.is_some() {
+        user_repo::update_user(user.id, user_update, conn)
+            .map_err(|e| format!("Failed to update user: {}", e))?;
+    }
+
+    // Store emails if any
+    if !emails.is_empty() {
+        let email_data: Vec<(String, String, bool, String)> = emails
+            .into_iter()
+            .map(|(email, email_type, verified)| (email, email_type, verified, "microsoft".to_string()))
+            .collect();
+        
+        let _ = user_emails_repo::add_multiple_emails(conn, user.id, email_data);
+    }
+
+    // Update identity data
+    let identity_data = serde_json::to_value(ms_user)
+        .map_err(|e| format!("Failed to serialize Microsoft user data: {}", e))?;
+
+    update_identity_data(conn, existing_identity.id, Some(identity_data))
+        .map_err(|e| format!("Failed to update identity data: {}", e))?;
+
+    stats.existing_users_updated += 1;
+    Ok(())
+}
+
+/// Link existing user to Microsoft without photos (simplified)
+async fn link_existing_user_to_microsoft_no_photos(
+    conn: &mut DbConnection,
+    provider_id: i32,
+    ms_user: &MicrosoftGraphUser,
+    existing_user: User,
+    stats: &mut UserSyncStats,
+) -> Result<(), String> {
+    // Create Microsoft identity
+    let identity_data = serde_json::to_value(ms_user)
+        .map_err(|e| format!("Failed to serialize Microsoft user data: {}", e))?;
+
+    let new_identity = NewUserAuthIdentity {
+        user_id: existing_user.id,
+        provider_type: "microsoft".to_string(),
+        external_id: ms_user.id.clone(),
+        email: ms_user.mail.clone(),
+        metadata: Some(identity_data),
+        password_hash: None,
+    };
+
+    identity_repo::create_identity(new_identity, conn)
+        .map_err(|e| format!("Failed to create Microsoft identity: {}", e))?;
+
+    // Update user with Microsoft UUID
+    let user_update = crate::models::UserUpdate {
+        name: None,
+        email: None,
+        role: None,
+        pronouns: None,
+        avatar_url: None,
+        banner_url: None,
+        avatar_thumb: None,
+        microsoft_uuid: Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?),
+        updated_at: Some(chrono::Utc::now().naive_utc()),
+    };
+
+    user_repo::update_user(existing_user.id, user_update, conn)
+        .map_err(|e| format!("Failed to update user with Microsoft UUID: {}", e))?;
+
+    stats.identities_linked += 1;
+    Ok(())
+}
+
+/// Create new user from Microsoft without photos (simplified)
+async fn create_new_user_from_microsoft_no_photos(
+    conn: &mut DbConnection,
+    provider_id: i32,
+    ms_user: &MicrosoftGraphUser,
+    stats: &mut UserSyncStats,
+) -> Result<(), String> {
+    // Generate UUID for new user
+    let user_uuid = Uuid::new_v4();
+    
+    // Determine name and email
+    let name = ms_user.display_name.clone()
+        .or_else(|| {
+            match (&ms_user.given_name, &ms_user.surname) {
+                (Some(first), Some(last)) => Some(format!("{} {}", first, last)),
+                (Some(first), None) => Some(first.clone()),
+                (None, Some(last)) => Some(last.clone()),
+                _ => None,
+            }
+        })
+        .unwrap_or_else(|| ms_user.user_principal_name.clone());
+
+    let primary_email = ms_user.mail.as_ref().unwrap_or(&ms_user.user_principal_name).clone();
+
+    // Create user with Microsoft UUID
+    let microsoft_uuid = Some(utils::parse_uuid(&ms_user.id).map_err(|_| "Invalid Microsoft UUID format")?);
+    let new_user = utils::NewUserBuilder::microsoft_user(
+        name.clone(),
+        primary_email,
+        crate::models::UserRole::User,
+        microsoft_uuid
+    )
+    .with_uuid(user_uuid)
+    .build();
+
+    let created_user = user_repo::create_user(new_user, conn)
+        .map_err(|e| format!("Failed to create user: {}", e))?;
+
+    // Create Microsoft identity
+    let identity_data = serde_json::to_value(ms_user)
+        .map_err(|e| format!("Failed to serialize Microsoft user data: {}", e))?;
+
+    let new_identity = NewUserAuthIdentity {
+        user_id: created_user.id,
+        provider_type: "microsoft".to_string(),
+        external_id: ms_user.id.clone(),
+        email: ms_user.mail.clone(),
+        metadata: Some(identity_data),
+        password_hash: None,
+    };
+
+    identity_repo::create_identity(new_identity, conn)
+        .map_err(|e| format!("Failed to create Microsoft identity: {}", e))?;
+
+    // Store emails if any
+    let emails = extract_user_emails(ms_user);
+    if !emails.is_empty() {
+        let email_data: Vec<(String, String, bool, String)> = emails
+            .into_iter()
+            .map(|(email, email_type, verified)| (email, email_type, verified, "microsoft".to_string()))
+            .collect();
+        
+        let _ = user_emails_repo::add_multiple_emails(conn, created_user.id, email_data);
+    }
+
+    info!("Created new user: {}", name);
+    stats.new_users_created += 1;
+    Ok(())
+}
+
+/// Find existing user by emails (simplified)
+fn find_existing_user_by_emails(
+    conn: &mut DbConnection,
+    emails: &Vec<(String, String, bool)>,
+) -> Option<User> {
+    for (email, _, _) in emails {
+        if let Ok(user) = user_repo::get_user_by_email(email, conn) {
+            return Some(user);
+        }
+    }
+    None
+}
+
+/// Find users without photos using SQL query (simplified)
+fn find_users_without_photos(
+    conn: &mut DbConnection,
+    _provider_id: i32,
+) -> Result<Vec<(i32, String, String)>, String> {
+    use crate::schema::{users, user_auth_identities};
+    use diesel::prelude::*;
+
+    // Query for users without photos and get their data
+    let results: Vec<(i32, uuid::Uuid, String)> = users::table
+        .inner_join(user_auth_identities::table.on(users::id.eq(user_auth_identities::user_id)))
+        .filter(user_auth_identities::provider_type.eq("microsoft"))
+        .filter(users::avatar_url.is_null())
+        .select((users::id, users::uuid, user_auth_identities::external_id))
+        .load(conn)
+        .map_err(|e| format!("Failed to find users without photos: {}", e))?;
+
+    // Convert UUID to String
+    let converted_results = results
+        .into_iter()
+        .map(|(id, uuid, external_id)| (id, uuid.to_string(), external_id))
+        .collect();
+
+    Ok(converted_results)
+}
+
+/// Sync user photo by ID (simplified)
+async fn sync_user_photo_by_id(
+    client: &reqwest::Client,
+    access_token: &str,
+    ms_user_id: &str,
+    user_uuid: &str,
+) -> Result<PhotoSyncUrls, String> {
+    // Try to download 120x120 photo first
+    let photo_url = format!("https://graph.microsoft.com/v1.0/users/{}/photos/120x120/$value", ms_user_id);
+    
+    let response = client
+        .get(&photo_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch profile photo: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Profile photo not found: {}", response.status()));
+    }
+
+    let photo_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read profile photo data: {}", e))?;
+
+    if photo_bytes.is_empty() {
+        return Err("Empty profile photo".to_string());
+    }
+
+    // Save photo to disk and return PhotoSyncUrls
+    let avatar_url = save_profile_photo_to_disk(&photo_bytes, user_uuid, "120x120").await?;
+    
+    Ok(PhotoSyncUrls {
+        avatar_url,
+        avatar_thumb: None, // We could add thumbnail support later
+    })
+}

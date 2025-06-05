@@ -19,7 +19,6 @@ DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS devices;
 DROP TABLE IF EXISTS user_emails;
 DROP TABLE IF EXISTS user_auth_identities;
-DROP TABLE IF EXISTS auth_providers;
 DROP TABLE IF EXISTS users;
 
 -- Drop custom types

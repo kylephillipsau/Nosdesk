@@ -10,6 +10,7 @@ const props = defineProps<{
   class?: string
   loading?: 'lazy' | 'eager'
   threshold?: number
+  objectFit?: 'cover' | 'contain' | 'fill' | 'none' | 'scale-down'
 }>()
 
 const emit = defineEmits<{
@@ -146,7 +147,8 @@ onUnmounted(() => {
       :src="imageSrc"
       :alt="alt || ''"
       :class="[
-        'w-full h-full object-cover transition-opacity duration-300',
+        'w-full h-full transition-opacity duration-300',
+        `object-${objectFit || 'cover'}`,
         isLoaded ? 'opacity-100' : 'opacity-0'
       ]"
       @load="handleLoad"

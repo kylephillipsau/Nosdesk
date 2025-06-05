@@ -359,41 +359,24 @@ const userService = {
   // Upload image and return the URL path
   async uploadImage(file: File, type: 'avatar' | 'banner'): Promise<string | null> {
     try {
-      // Try multiple ways to get the user UUID
+      // Always get fresh user data from the API to ensure we have the correct UUID
       let userUuid = '';
       
-      // Method 1: Get from localStorage directly
-      const userJson = localStorage.getItem('user');
-      if (userJson) {
-        try {
-          const userData = JSON.parse(userJson);
-          if (userData && userData.uuid) {
-            userUuid = userData.uuid;
-            console.log('Found user UUID in localStorage:', userUuid);
+      try {
+        const token = localStorage.getItem('token');
+        if (token) {
+          // Make a request to get current user to ensure we have the correct UUID
+          const userResponse = await apiClient.get('/auth/me');
+          if (userResponse.data && userResponse.data.uuid) {
+            userUuid = userResponse.data.uuid;
+            console.log('Retrieved user UUID from /auth/me endpoint:', userUuid);
+            
+            // Update localStorage with fresh user data
+            localStorage.setItem('user', JSON.stringify(userResponse.data));
           }
-        } catch (e) {
-          console.error('Error parsing user data from localStorage:', e);
         }
-      }
-      
-      // Method 2: Try to get from token if available
-      if (!userUuid) {
-        try {
-          const token = localStorage.getItem('token');
-          if (token) {
-            // Make a request to get current user if we have a token
-            const userResponse = await apiClient.get('/auth/me');
-            if (userResponse.data && userResponse.data.uuid) {
-              userUuid = userResponse.data.uuid;
-              console.log('Retrieved user UUID from /auth/me endpoint:', userUuid);
-              
-              // Also update localStorage for future use
-              localStorage.setItem('user', JSON.stringify(userResponse.data));
-            }
-          }
-        } catch (e) {
-          console.error('Error fetching current user data:', e);
-        }
+      } catch (e) {
+        console.error('Error fetching current user data:', e);
       }
       
       if (!userUuid) {
@@ -432,6 +415,77 @@ const userService = {
       return null;
     } catch (error) {
       console.error(`Error uploading ${type} image:`, error);
+      return null;
+    }
+  },
+
+  // MFA (Multi-Factor Authentication) related functions
+  
+  // Generate MFA secret and QR code for setup
+  async generateMfaSetup(): Promise<{ secret: string; qr_code: string; backup_codes: string[] } | null> {
+    try {
+      const response = await apiClient.post('/auth/mfa/setup');
+      return response.data;
+    } catch (error) {
+      console.error('Error generating MFA setup:', error);
+      return null;
+    }
+  },
+
+  // Verify MFA token during setup
+  async verifyMfaSetup(token: string, secret: string): Promise<{ success: boolean; backup_codes: string[] } | null> {
+    try {
+      const response = await apiClient.post('/auth/mfa/verify-setup', {
+        token,
+        secret
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error verifying MFA setup:', error);
+      return null;
+    }
+  },
+
+  // Enable MFA for user
+  async enableMfa(token: string): Promise<boolean> {
+    try {
+      await apiClient.post('/auth/mfa/enable', { token });
+      return true;
+    } catch (error) {
+      console.error('Error enabling MFA:', error);
+      return false;
+    }
+  },
+
+  // Disable MFA for user
+  async disableMfa(password: string): Promise<boolean> {
+    try {
+      await apiClient.post('/auth/mfa/disable', { password });
+      return true;
+    } catch (error) {
+      console.error('Error disabling MFA:', error);
+      return false;
+    }
+  },
+
+  // Regenerate backup codes
+  async regenerateBackupCodes(password: string): Promise<string[] | null> {
+    try {
+      const response = await apiClient.post('/auth/mfa/regenerate-backup-codes', { password });
+      return response.data.backup_codes;
+    } catch (error) {
+      console.error('Error regenerating backup codes:', error);
+      return null;
+    }
+  },
+
+  // Get user MFA status
+  async getMfaStatus(): Promise<{ enabled: boolean; has_backup_codes: boolean } | null> {
+    try {
+      const response = await apiClient.get('/auth/mfa/status');
+      return response.data;
+    } catch (error) {
+      console.error('Error getting MFA status:', error);
       return null;
     }
   },

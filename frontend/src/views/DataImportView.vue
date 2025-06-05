@@ -135,7 +135,7 @@ const getStatusBadge = (status: string) => {
               </svg>
               Data Synchronization Information
             </h3>
-            <ul class="list-disc list-inside space-y-1 ml-2">
+            <ul class="list-disc list-inside flex flex-col gap-1 ml-2">
               <li>Data synchronization may take several minutes depending on the amount of data</li>
               <li>Newly imported data will be available immediately after synchronization completes</li>
               <li>Existing data will be updated based on matching criteria (typically unique IDs)</li>
@@ -150,7 +150,7 @@ const getStatusBadge = (status: string) => {
               </svg>
               Important Considerations
             </h3>
-            <ul class="list-disc list-inside space-y-1 ml-2">
+            <ul class="list-disc list-inside flex flex-col gap-1 ml-2">
               <li>Ensure you have the necessary access rights to the data source before importing</li>
               <li>Validate data formats and mappings before performing large imports</li>
               <li>Data imports may trigger notifications to affected users</li>

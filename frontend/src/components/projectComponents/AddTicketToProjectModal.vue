@@ -181,7 +181,7 @@ const createAndAddTicket = async () => {
           <div v-if="filteredTickets.length === 0" class="text-center py-4 text-gray-400">
             No tickets found
           </div>
-          <div v-else class="space-y-1">
+          <div v-else class="flex flex-col gap-1">
             <div v-for="ticket in filteredTickets" :key="ticket.id"
               class="group px-2 py-1.5 rounded-lg transition-colors duration-200 hover:bg-slate-700 relative cursor-pointer flex items-center justify-between"
               @click="addTicketToProject(ticket.id)">

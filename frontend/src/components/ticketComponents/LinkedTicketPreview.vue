@@ -195,8 +195,10 @@ const formattedDate = (dateString: string) => {
             <span class="text-xs text-slate-400 uppercase tracking-wide">Assignee</span>
             <div class="flex items-center gap-2">
               <UserAvatar 
-                v-if="linkedTicket.assignee" 
-                :name="linkedTicket.assignee" 
+                v-if="linkedTicket.assignee_user || linkedTicket.assignee" 
+                :name="linkedTicket.assignee_user?.name || linkedTicket.assignee" 
+                :avatarUrl="linkedTicket.assignee_user?.avatar_thumb"
+                :userUuid="linkedTicket.assignee_user?.uuid"
                 size="xs" 
                 :showName="true"
               />
@@ -207,8 +209,10 @@ const formattedDate = (dateString: string) => {
             <span class="text-xs text-slate-400 uppercase tracking-wide">Requester</span>
             <div class="flex items-center gap-2">
               <UserAvatar 
-                v-if="linkedTicket.requester" 
-                :name="linkedTicket.requester" 
+                v-if="linkedTicket.requester_user || linkedTicket.requester" 
+                :name="linkedTicket.requester_user?.name || linkedTicket.requester" 
+                :avatarUrl="linkedTicket.requester_user?.avatar_thumb"
+                :userUuid="linkedTicket.requester_user?.uuid"
                 size="xs" 
                 :showName="true"
               />

@@ -17,7 +17,7 @@ pub fn create_local_auth_identity(
 ) -> NewUserAuthIdentity {
     NewUserAuthIdentity {
         user_id,
-        provider_id: 1, // Local provider ID (assuming 1 is local)
+        provider_type: "local".to_string(),
         external_id: user_uuid.to_string(), // Use UUID as external ID for local auth
         email: None, // Will be set by caller if needed
         metadata: None,
@@ -32,7 +32,7 @@ pub fn update_auth_identity_password(
 ) -> NewUserAuthIdentity {
     NewUserAuthIdentity {
         user_id: existing_identity.user_id,
-        provider_id: existing_identity.provider_id,
+        provider_type: existing_identity.provider_type.clone(),
         external_id: existing_identity.external_id.clone(),
         email: existing_identity.email.clone(),
         metadata: existing_identity.metadata.clone(),

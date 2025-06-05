@@ -10,13 +10,13 @@ use reqwest;
 use uuid::Uuid;
 
 use crate::db::{Pool, DbConnection};
-use crate::handlers::auth::{validate_token_internal, JWT_SECRET};
+use crate::handlers::auth::validate_token_internal;
+use crate::utils::jwt::{JwtUtils, JWT_SECRET};
 use crate::models::{
-    AuthProvider, AuthProviderConfigRequest, ConfigItem, NewAuthProvider,
-    AuthProviderUpdate, OAuthRequest, OAuthExchangeRequest,
-    OAuthState, UserAuthIdentity, Claims, NewUserAuthIdentity
+    OAuthRequest, OAuthExchangeRequest,
+    OAuthState, UserAuthIdentity, Claims, NewUserAuthIdentity, AuthProvider
 };
-use crate::repository::auth_providers as auth_provider_repo;
+// Auth providers are now configured via environment variables
 use crate::repository::user_auth_identities;
 use crate::config_utils;
 use crate::utils;
@@ -28,7 +28,64 @@ pub struct OAuthLogoutRequest {
     pub redirect_uri: String,
 }
 
-// Get all authentication providers (admin only)
+// Helper functions for environment-based auth providers
+fn get_provider_by_type(provider_type: &str) -> Result<AuthProvider, diesel::result::Error> {
+    match provider_type {
+        "local" => Ok(AuthProvider::new(
+            1,
+            "Local".to_string(),
+            "local".to_string(),
+            true,
+            true,
+        )),
+        "microsoft" => {
+            if std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+                && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() 
+                && std::env::var("MICROSOFT_TENANT_ID").is_ok() {
+                Ok(AuthProvider::new(
+                    2,
+                    "Microsoft".to_string(),
+                    "microsoft".to_string(),
+                    true,
+                    false,
+                ))
+            } else {
+                Err(diesel::result::Error::NotFound)
+            }
+        },
+        _ => Err(diesel::result::Error::NotFound),
+    }
+}
+
+fn get_provider_by_id(provider_id: i32) -> Result<AuthProvider, diesel::result::Error> {
+    match provider_id {
+        1 => Ok(AuthProvider::new(
+            1,
+            "Local".to_string(),
+            "local".to_string(),
+            true,
+            true,
+        )),
+        2 => {
+            if std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+                && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() 
+                && std::env::var("MICROSOFT_TENANT_ID").is_ok() {
+                Ok(AuthProvider::new(
+                    2,
+                    "Microsoft".to_string(),
+                    "microsoft".to_string(),
+                    true,
+                    false,
+                ))
+            } else {
+                Err(diesel::result::Error::NotFound)
+            }
+        },
+        _ => Err(diesel::result::Error::NotFound),
+    }
+}
+
+// Get all authentication providers (admin only) - now returns environment-based config
 pub async fn get_auth_providers(
     db_pool: web::Data<Pool>,
     auth: BearerAuth,
@@ -59,303 +116,66 @@ pub async fn get_auth_providers(
         }));
     }
 
-    // Get all providers with their configurations
-    match auth_provider_repo::get_all_providers(&mut conn) {
-        Ok(providers) => HttpResponse::Ok().json(providers),
-        Err(e) => {
-            eprintln!("Error getting auth providers: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to retrieve authentication providers"
-            }))
-        }
+    // Return hardcoded providers based on environment configuration
+    let mut providers = vec![
+        json!({
+            "id": 1,
+            "name": "Local",
+            "provider_type": "local",
+            "enabled": true,
+            "is_default": true
+        })
+    ];
+
+    // Check if Microsoft is configured
+    if std::env::var("MICROSOFT_CLIENT_ID").is_ok() && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() {
+        providers.push(json!({
+            "id": 2,
+            "name": "Microsoft",
+            "provider_type": "microsoft",
+            "enabled": true,
+            "is_default": false
+        }));
     }
+
+    HttpResponse::Ok().json(providers)
 }
 
-// Get enabled authentication providers (for login page)
+// Get enabled authentication providers (for login page) - now environment-based
 pub async fn get_enabled_auth_providers(
-    db_pool: web::Data<Pool>,
+    _db_pool: web::Data<Pool>,
 ) -> impl Responder {
-    // Get database connection
-    let mut conn = match db_pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Could not get database connection"
-        })),
-    };
+    // Return enabled providers based on environment configuration
+    let mut providers = vec![
+        json!({
+            "id": 1,
+            "provider_type": "local",
+            "name": "Local",
+            "is_default": true
+        })
+    ];
 
-    // Get enabled providers
-    match auth_provider_repo::get_enabled_providers(&mut conn) {
-        Ok(providers) => {
-            // Convert to simple response format (no secrets or configurations)
-            let response = providers.into_iter().map(|p| json!({
-                "id": p.id,
-                "provider_type": p.provider_type,
-                "name": p.name,
-                "is_default": p.is_default
-            })).collect::<Vec<_>>();
-            
-            HttpResponse::Ok().json(response)
-        },
-        Err(e) => {
-            eprintln!("Error getting enabled auth providers: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to retrieve authentication providers"
-            }))
-        }
-    }
-}
-
-// Get a specific authentication provider with its configuration (admin only)
-pub async fn get_auth_provider(
-    db_pool: web::Data<Pool>,
-    auth: BearerAuth,
-    path: web::Path<i32>,
-) -> impl Responder {
-    let provider_id = path.into_inner();
-    
-    // Get database connection
-    let mut conn = match db_pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Could not get database connection"
-        })),
-    };
-
-    // Validate the token and get admin info
-    let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => claims,
-        Err(_) => return HttpResponse::Unauthorized().json(json!({
-            "status": "error",
-            "message": "Invalid or expired token"
-        })),
-    };
-
-    // Check if the user is an admin
-    if claims.role != "admin" {
-        return HttpResponse::Forbidden().json(json!({
-            "status": "error",
-            "message": "Only administrators can manage authentication providers"
+    // Check if Microsoft is configured
+    if std::env::var("MICROSOFT_CLIENT_ID").is_ok() && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() {
+        providers.push(json!({
+            "id": 2,
+            "provider_type": "microsoft",
+            "name": "Microsoft",
+            "is_default": false
         }));
     }
 
-    // Get the provider with its configuration
-    match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
-        Ok(provider) => HttpResponse::Ok().json(provider),
-        Err(e) => {
-            if let diesel::result::Error::NotFound = e {
-                HttpResponse::NotFound().json(json!({
-                    "status": "error",
-                    "message": "Authentication provider not found"
-                }))
-            } else {
-                eprintln!("Error getting auth provider {}: {:?}", provider_id, e);
-                HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "Failed to retrieve authentication provider"
-                }))
-            }
-        }
-    }
+    HttpResponse::Ok().json(providers)
 }
 
-// Create a new authentication provider (admin only)
-pub async fn create_auth_provider(
-    db_pool: web::Data<Pool>,
-    auth: BearerAuth,
-    provider_data: web::Json<NewAuthProvider>,
-) -> impl Responder {
-    // Get database connection
-    let mut conn = match db_pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Could not get database connection"
-        })),
-    };
 
-    // Validate the token and get admin info
-    let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => claims,
-        Err(_) => return HttpResponse::Unauthorized().json(json!({
-            "status": "error",
-            "message": "Invalid or expired token"
-        })),
-    };
 
-    // Check if the user is an admin
-    if claims.role != "admin" {
-        return HttpResponse::Forbidden().json(json!({
-            "status": "error",
-            "message": "Only administrators can manage authentication providers"
-        }));
-    }
-
-    // Create the provider
-    match auth_provider_repo::create_provider(provider_data.into_inner(), &mut conn) {
-        Ok(provider) => HttpResponse::Created().json(provider),
-        Err(e) => {
-            eprintln!("Error creating auth provider: {:?}", e);
-            HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to create authentication provider"
-            }))
-        }
-    }
-}
-
-// Update an authentication provider (admin only)
+// Update an authentication provider (admin only) - now returns not implemented
 pub async fn update_auth_provider(
     db_pool: web::Data<Pool>,
     auth: BearerAuth,
-    path: web::Path<i32>,
-    provider_data: web::Json<AuthProviderUpdate>,
-) -> impl Responder {
-    let provider_id = path.into_inner();
-    
-    // Get database connection
-    let mut conn = match db_pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Could not get database connection"
-        })),
-    };
-
-    // Validate the token and get admin info
-    let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => claims,
-        Err(_) => return HttpResponse::Unauthorized().json(json!({
-            "status": "error",
-            "message": "Invalid or expired token"
-        })),
-    };
-
-    // Check if the user is an admin
-    if claims.role != "admin" {
-        return HttpResponse::Forbidden().json(json!({
-            "status": "error",
-            "message": "Only administrators can manage authentication providers"
-        }));
-    }
-
-    // If we're setting this provider as default, handle it with a transaction
-    if provider_data.is_default.unwrap_or(false) {
-        match auth_provider_repo::set_default_provider(provider_id, &mut conn) {
-            Ok(_) => {
-                // Continue with the rest of the update
-            },
-            Err(e) => {
-                eprintln!("Error setting default provider: {:?}", e);
-                return HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "Failed to set default provider"
-                }));
-            }
-        }
-    }
-
-    // Update the provider
-    match auth_provider_repo::update_provider(provider_id, provider_data.into_inner(), &mut conn) {
-        Ok(provider) => HttpResponse::Ok().json(provider),
-        Err(e) => {
-            if let diesel::result::Error::NotFound = e {
-                HttpResponse::NotFound().json(json!({
-                    "status": "error",
-                    "message": "Authentication provider not found"
-                }))
-            } else {
-                eprintln!("Error updating auth provider {}: {:?}", provider_id, e);
-                HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "Failed to update authentication provider"
-                }))
-            }
-        }
-    }
-}
-
-// Delete an authentication provider (admin only)
-pub async fn delete_auth_provider(
-    db_pool: web::Data<Pool>,
-    auth: BearerAuth,
-    path: web::Path<i32>,
-) -> impl Responder {
-    let provider_id = path.into_inner();
-    
-    // Get database connection
-    let mut conn = match db_pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json(json!({
-            "status": "error",
-            "message": "Could not get database connection"
-        })),
-    };
-
-    // Validate the token and get admin info
-    let claims = match validate_token_internal(&auth, &mut conn).await {
-        Ok(claims) => claims,
-        Err(_) => return HttpResponse::Unauthorized().json(json!({
-            "status": "error",
-            "message": "Invalid or expired token"
-        })),
-    };
-
-    // Check if the user is an admin
-    if claims.role != "admin" {
-        return HttpResponse::Forbidden().json(json!({
-            "status": "error",
-            "message": "Only administrators can manage authentication providers"
-        }));
-    }
-
-    // Don't allow deleting the local provider
-    match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
-        Ok(provider) => {
-            if provider.provider_type == "local" {
-                return HttpResponse::BadRequest().json(json!({
-                    "status": "error",
-                    "message": "The local authentication provider cannot be deleted"
-                }));
-            }
-        },
-        Err(e) => {
-            if let diesel::result::Error::NotFound = e {
-                return HttpResponse::NotFound().json(json!({
-                    "status": "error",
-                    "message": "Authentication provider not found"
-                }));
-            } else {
-                eprintln!("Error getting auth provider {}: {:?}", provider_id, e);
-                return HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "message": "Failed to retrieve authentication provider"
-                }));
-            }
-        }
-    }
-
-    // Delete the provider
-    match auth_provider_repo::delete_provider(provider_id, &mut conn) {
-        Ok(_) => HttpResponse::NoContent().finish(),
-        Err(e) => {
-            eprintln!("Error deleting auth provider {}: {:?}", provider_id, e);
-            HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to delete authentication provider"
-            }))
-        }
-    }
-}
-
-// Update provider configuration (admin only)
-pub async fn update_auth_provider_config(
-    db_pool: web::Data<Pool>,
-    auth: BearerAuth,
-    config_request: web::Json<AuthProviderConfigRequest>,
+    _path: web::Path<i32>,
+    _provider_data: web::Json<serde_json::Value>,
 ) -> impl Responder {
     // Get database connection
     let mut conn = match db_pool.get() {
@@ -383,32 +203,16 @@ pub async fn update_auth_provider_config(
         }));
     }
 
-    let provider_id = config_request.provider_id;
-    
-    // Get the provider type
-    let provider = match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
-        Ok(p) => p,
-        Err(_) => return HttpResponse::NotFound().json(json!({
-                "status": "error",
-            "message": "Provider not found"
-        }))
-    };
-
-    // Since we've removed the auth_provider_configs table, all configuration
-    // is now managed through environment variables for Microsoft providers
-    if provider.provider_type == "microsoft" {
-        return HttpResponse::Ok().json(json!({
-            "status": "success",
-            "message": "Microsoft provider configuration is managed by environment variables on the server. Please set MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET, and MICROSOFT_REDIRECT_URI in your server environment.",
-            "provider": provider
-        }));
-    } else {
-        return HttpResponse::BadRequest().json(json!({
-                "status": "error",
-            "message": "Configuration management for this provider type is not currently supported"
-        }));
-    }
+    // Auth providers are now configured via environment variables
+    HttpResponse::BadRequest().json(json!({
+        "status": "error",
+        "message": "Authentication providers are now configured via environment variables. Please update your .env file instead."
+    }))
 }
+
+
+
+
 
 // Generate OAuth authorization URL
 pub async fn oauth_authorize(
@@ -454,7 +258,7 @@ pub async fn oauth_authorize(
     let provider_type = &oauth_request.provider_type;
     
     // Get the provider by type
-    let provider = match auth_provider_repo::get_provider_by_type(provider_type, &mut conn) {
+    let provider = match get_provider_by_type(provider_type) {
         Ok(p) => {
             if !p.enabled {
                 return HttpResponse::BadRequest().json(json!({
@@ -517,7 +321,7 @@ pub async fn oauth_authorize(
         };
         
         // Generate a JWT state token
-        let state = match create_oauth_state(&provider.provider_type, oauth_request.redirect_uri.clone(), oauth_request.user_connection) {
+        let state = match create_oauth_state("microsoft", oauth_request.redirect_uri.clone(), oauth_request.user_connection) {
             Ok(token) => token,
             Err(e) => {
                 eprintln!("Error creating OAuth state token: {}", e);
@@ -592,7 +396,7 @@ pub async fn oauth_callback(
 
     // Get the provider by type
     let provider_type = &state_data.provider_type;
-    let provider = match auth_provider_repo::get_provider_by_type(provider_type, &mut conn) {
+    let provider = match get_provider_by_type(provider_type) {
         Ok(p) => {
             if !p.enabled {
                 return HttpResponse::BadRequest().json(json!({
@@ -859,7 +663,7 @@ pub async fn oauth_logout(
     let provider_type = &logout_request.provider_type;
     
     // Get the provider by type
-    let provider = match auth_provider_repo::get_provider_by_type(provider_type, &mut conn) {
+    let provider = match get_provider_by_type(provider_type) {
         Ok(p) => {
             if !p.enabled {
                 return HttpResponse::BadRequest().json(json!({
@@ -1105,7 +909,7 @@ async fn find_or_create_oauth_user(
                     // User found by email, create an identity for them
                     let new_identity = NewUserAuthIdentity {
                         user_id: user.id,
-                        provider_id: provider.id,
+                        provider_type: "microsoft".to_string(),
                         external_id: provider_user_id.clone(),
                         email: Some(email.clone()),
                         metadata: Some(user_info.clone()),
@@ -1145,25 +949,15 @@ async fn find_or_create_oauth_user(
         Err(e) => return Err(format!("Failed to hash password: {}", e)),
     };
     
-    let new_user = NewUser {
-        uuid: Uuid::new_v4(),
-        name,
-        email: email.clone(),
-        role: UserRole::User, // Default to regular user
-        password_hash: password_hash.as_bytes().to_vec(), // Convert string to bytes for model
-        pronouns: None,
-        avatar_url: None,
-        banner_url: None,
-        avatar_thumb: None,
-        microsoft_uuid: None, // OAuth users don't have Microsoft UUID initially
-    };
+    // Create local user with password hash
+    let new_user = utils::NewUserBuilder::local_user(name, email.clone(), UserRole::User, password_hash.as_bytes().to_vec()).build();
     
     match crate::repository::create_user(new_user, conn) {
         Ok(user) => {
             // Create an identity for the new user
             let new_identity = NewUserAuthIdentity {
                 user_id: user.id,
-                provider_id: provider.id,
+                provider_type: "microsoft".to_string(),
                 external_id: provider_user_id,
                 email: Some(email),
                 metadata: Some(user_info.clone()),
@@ -1181,7 +975,7 @@ async fn find_or_create_oauth_user(
 
 // Helper function to generate application JWT token
 fn generate_app_jwt_token(user: &crate::models::User) -> Result<String, String> {
-    let secret = crate::handlers::auth::JWT_SECRET.clone();
+    let secret = JWT_SECRET.clone();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1243,7 +1037,7 @@ async fn add_oauth_identity_to_user(
     // Create a new identity for the user
     let new_identity = crate::models::NewUserAuthIdentity {
         user_id: user.id,
-        provider_id: provider.id,
+        provider_type: "microsoft".to_string(),
         external_id,
         email,
         metadata: Some(user_info.clone()),
@@ -1304,7 +1098,7 @@ pub async fn oauth_connect(
     let provider_type = &oauth_request.provider_type;
     
     // Get the provider by type
-    let provider = match auth_provider_repo::get_provider_by_type(provider_type, &mut conn) {
+    let provider = match get_provider_by_type(provider_type) {
         Ok(p) => {
             if !p.enabled {
                 return HttpResponse::BadRequest().json(json!({
@@ -1438,7 +1232,7 @@ pub async fn test_microsoft_config(
     let provider_id = path.into_inner();
 
     // Get the provider
-    let provider = match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
+    let provider = match get_provider_by_id(provider_id) {
         Ok(p) => {
             if p.provider_type != "microsoft" {
                 return HttpResponse::BadRequest().json(json!({
@@ -1596,7 +1390,7 @@ pub async fn set_default_auth_provider(
     };
 
     // Verify the provider exists
-    match auth_provider_repo::get_provider_by_id(provider_id, &mut conn) {
+    match get_provider_by_id(provider_id) {
         Ok(_) => {},
         Err(e) => {
             if let diesel::result::Error::NotFound = e {
@@ -1614,18 +1408,9 @@ pub async fn set_default_auth_provider(
         }
     }
 
-    // Set the provider as default
-    match auth_provider_repo::set_default_provider(provider_id, &mut conn) {
-        Ok(_) => HttpResponse::Ok().json(json!({
-            "status": "success",
-            "message": "Default provider updated successfully"
-        })),
-        Err(e) => {
-            eprintln!("Error setting default provider {}: {:?}", provider_id, e);
-            HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Failed to set default provider"
-            }))
-        }
-    }
+    // Setting default providers is not supported for environment-based configuration
+    HttpResponse::BadRequest().json(json!({
+        "status": "error",
+        "message": "Default provider configuration must be done via environment variables. Environment-based providers don't support runtime default changes."
+    }))
 } 

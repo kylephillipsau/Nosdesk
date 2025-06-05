@@ -707,7 +707,7 @@ onMounted(async () => {
             </div>
             
             <!-- Progress Bar -->
-            <div class="space-y-2">
+            <div class="flex flex-col gap-2">
               <div class="w-full bg-slate-600 rounded-full h-3">
                 <div 
                   class="h-3 rounded-full transition-all duration-300" 
@@ -769,7 +769,7 @@ onMounted(async () => {
             No active synchronizations
           </div>
           
-          <div v-else class="space-y-3">
+          <div v-else class="flex flex-col gap-3">
             <div 
               v-for="sync in activeSyncs" 
               :key="sync.session_id"
@@ -1045,7 +1045,7 @@ onMounted(async () => {
         >
           <h4 class="text-lg font-medium text-white mb-3">Sync Results</h4>
           
-          <div class="space-y-3">
+          <div class="flex flex-col gap-3">
             <div v-for="result in syncResults.results" :key="result.entity" class="p-3 rounded-md border" :class="{
               'bg-green-900/30 border-green-700': result.status === 'completed',
               'bg-orange-900/30 border-orange-700': result.status === 'completed_with_errors',
@@ -1077,7 +1077,7 @@ onMounted(async () => {
               <!-- Error Details -->
               <div v-if="result.errors && result.errors.length > 0" class="mt-2">
                 <p class="text-sm font-medium text-red-300 mb-1">Errors:</p>
-                <ul class="text-sm text-red-200 space-y-1">
+                <ul class="text-sm text-red-200 flex flex-col gap-1">
                   <li v-for="error in result.errors.slice(0, 3)" :key="error" class="pl-2 border-l-2 border-red-500">
                     {{ error }}
                   </li>

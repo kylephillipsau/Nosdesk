@@ -3,10 +3,11 @@ import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BackButton from '@/components/common/BackButton.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
-import { getDeviceById } from '@/services/deviceService';
+import InlineEdit from '@/components/common/InlineEdit.vue';
+import { getDeviceById, updateDevice, createDevice } from '@/services/deviceService';
 import MicrosoftGraphService from '@/services/MicrosoftGraphService';
 import { IntuneIcon, EntraIcon } from '@/components/icons';
-import type { Device } from '@/types/device';
+import type { Device, DeviceFormData } from '@/types/device';
 
 const route = useRoute();
 const router = useRouter();
@@ -17,10 +18,66 @@ const loadingObjectId = ref(false);
 const entraObjectId = ref<string | null>(null);
 const objectIdError = ref<string | null>(null);
 
+// Creation and editing state
+const isCreationMode = ref(false);
+const isNewDevice = ref(false);
+const editingName = ref(false);
+const editingManufacturer = ref(false);
+const editingModel = ref(false);
+const editingHostname = ref(false);
+const editingSerialNumber = ref(false);
+const editingWarrantyStatus = ref(false);
+const isSaving = ref(false);
+
+// Editing values
+const editValues = ref({
+  name: '',
+  manufacturer: '',
+  model: '',
+  hostname: '',
+  serial_number: '',
+  warranty_status: ''
+});
+
 const fetchDeviceData = async () => {
   try {
     loading.value = true;
     error.value = null;
+    
+    // Check if we're in creation mode (no ID parameter)
+    if (!route.params.id || route.params.id === 'new') {
+      isCreationMode.value = true;
+      isNewDevice.value = true;
+      
+      // Set default values for new device
+      editValues.value = {
+        name: '',
+        manufacturer: '',
+        model: '',
+        hostname: '',
+        serial_number: '',
+        warranty_status: 'Unknown'
+      };
+      
+      // Enable editing mode for all fields
+      editingName.value = true;
+      editingManufacturer.value = true;
+      editingModel.value = true;
+      editingHostname.value = true;
+      editingSerialNumber.value = true;
+      editingWarrantyStatus.value = true;
+      
+      // Focus on name field after DOM update
+      setTimeout(() => {
+        const nameInput = document.getElementById('name-input') as HTMLInputElement;
+        if (nameInput) {
+          nameInput.focus();
+        }
+      }, 100);
+      
+      loading.value = false;
+      return;
+    }
     
     const deviceId = Number(route.params.id);
     if (isNaN(deviceId)) {
@@ -31,6 +88,32 @@ const fetchDeviceData = async () => {
     
     device.value = await getDeviceById(deviceId);
     console.log('Device data loaded:', device.value);
+    
+    // Check if this is a new device (name starts with "New Device")
+    isNewDevice.value = device.value.name.startsWith('New Device');
+    
+    // Set edit values
+    editValues.value = {
+      name: device.value.name,
+      manufacturer: device.value.manufacturer || '',
+      model: device.value.model,
+      hostname: device.value.hostname,
+      serial_number: device.value.serial_number,
+      warranty_status: device.value.warranty_status
+    };
+    
+    // If it's a new device, enable editing mode for key fields
+    if (isNewDevice.value) {
+      editingName.value = true;
+      // Focus on name field after DOM update
+      setTimeout(() => {
+        const nameInput = document.getElementById('name-input') as HTMLInputElement;
+        if (nameInput) {
+          nameInput.focus();
+          nameInput.select();
+        }
+      }, 100);
+    }
   } catch (e) {
     error.value = 'Failed to load device details';
     console.error('Error loading device:', e);
@@ -133,6 +216,143 @@ const openInEntra = async () => {
   }
 };
 
+// Save device (create or update)
+const saveDevice = async () => {
+  try {
+    isSaving.value = true;
+    
+    if (isCreationMode.value) {
+      // Create new device
+      const deviceData: DeviceFormData = {
+        name: editValues.value.name,
+        manufacturer: editValues.value.manufacturer,
+        model: editValues.value.model,
+        hostname: editValues.value.hostname,
+        serial_number: editValues.value.serial_number,
+        warranty_status: editValues.value.warranty_status,
+        type: 'Other' // Default type, could be made editable later
+      };
+      
+      const newDevice = await createDevice(deviceData);
+      
+      // Navigate to the newly created device (replace history so back button goes to devices list)
+      router.replace(`/devices/${newDevice.id}`);
+    } else {
+      // Update existing device
+      if (!device.value) return;
+      
+      const updatedDevice = await updateDevice(device.value.id, {
+        name: editValues.value.name,
+        manufacturer: editValues.value.manufacturer,
+        model: editValues.value.model,
+        hostname: editValues.value.hostname,
+        serial_number: editValues.value.serial_number,
+        warranty_status: editValues.value.warranty_status
+      });
+      
+      // Update the device data
+      device.value = { ...device.value, ...updatedDevice };
+      
+      // Exit edit mode for all fields
+      editingName.value = false;
+      editingManufacturer.value = false;
+      editingModel.value = false;
+      editingHostname.value = false;
+      editingSerialNumber.value = false;
+      editingWarrantyStatus.value = false;
+      isNewDevice.value = false;
+    }
+  } catch (err) {
+    console.error('Error saving device:', err);
+    error.value = 'Failed to save device. Please try again.';
+  } finally {
+    isSaving.value = false;
+  }
+};
+
+// Handle name updates from InlineEdit component
+const handleNameUpdate = (newName: string) => {
+  if (newName !== (device.value?.name || '') && newName.trim() !== '') {
+    saveField('name');
+  }
+};
+
+// Simple save function for individual fields (for existing devices)
+const saveField = async (field: keyof typeof editValues.value) => {
+  if (!device.value) return;
+  
+  try {
+    isSaving.value = true;
+    const updatedDevice = await updateDevice(device.value.id, {
+      [field]: editValues.value[field]
+    });
+    
+    // Update the device data
+    device.value = { ...device.value, ...updatedDevice };
+    
+    // Exit edit mode for this field
+    switch (field) {
+      case 'name':
+        editingName.value = false;
+        isNewDevice.value = false; // No longer a new device after saving name
+        break;
+      case 'manufacturer':
+        editingManufacturer.value = false;
+        break;
+      case 'model':
+        editingModel.value = false;
+        break;
+      case 'hostname':
+        editingHostname.value = false;
+        break;
+      case 'serial_number':
+        editingSerialNumber.value = false;
+        break;
+      case 'warranty_status':
+        editingWarrantyStatus.value = false;
+        break;
+    }
+  } catch (error) {
+    console.error('Error saving device field:', error);
+    // Reset the edit value to original
+    if (device.value) {
+      editValues.value[field] = device.value[field] || '';
+    }
+  } finally {
+    isSaving.value = false;
+  }
+};
+
+// Cancel editing
+const cancelEdit = (field: keyof typeof editValues.value) => {
+  if (!device.value) return;
+  
+  // Reset to original value
+  editValues.value[field] = device.value[field] || '';
+  
+  // Exit edit mode
+  switch (field) {
+    case 'name':
+      editingName.value = false;
+      break;
+    case 'manufacturer':
+      editingManufacturer.value = false;
+      break;
+    case 'model':
+      editingModel.value = false;
+      break;
+    case 'hostname':
+      editingHostname.value = false;
+      break;
+    case 'serial_number':
+      editingSerialNumber.value = false;
+      break;
+    case 'warranty_status':
+      editingWarrantyStatus.value = false;
+      break;
+  }
+};
+
 onMounted(() => {
   fetchDeviceData();
 });
@@ -140,7 +360,7 @@ onMounted(() => {
 
 <template>
   <div class="flex-1">
-    <div v-if="device" class="flex flex-col">
+    <div v-if="device || isCreationMode" class="flex flex-col">
       <!-- Navigation and actions bar -->
       <div class="pt-4 px-6 flex justify-between items-center">
         <BackButton 
@@ -160,65 +380,212 @@ onMounted(() => {
         <div class="bg-slate-800 rounded-2xl p-6">
           <div class="flex items-start justify-between">
             <div class="flex-1">
-              <div class="flex items-center gap-3">
-                <h1 class="text-2xl font-semibold text-white">{{ device.name }}</h1>
+              <!-- Device Name - Inline Editing -->
+              <InlineEdit
+                v-if="!isCreationMode"
+                v-model="editValues.name"
+                :placeholder="device?.name || 'Enter device name...'"
+                text-size="2xl"
+                :can-edit="true"
+                @update:modelValue="handleNameUpdate"
+              />
+              <div v-else class="flex items-center gap-3 group">
+                <div class="flex-1 relative">
+                  <input
+                    id="name-input"
+                    v-model="editValues.name"
+                    type="text"
+                    class="w-full bg-transparent text-2xl font-semibold text-white px-1 py-0.5 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none transition-all duration-150 border-2 border-transparent focus:border-blue-500/50 bg-slate-700/50"
+                    placeholder="Enter device name..."
+                  />
+                </div>
               </div>
-              <p class="text-slate-400 mt-1">{{ device.manufacturer || 'Unknown Manufacturer' }} {{ device.model }}</p>
-              <p class="text-sm text-slate-500 mt-2">
-                Last updated {{ device.updated_at ? formatDate(device.updated_at) : 'unknown' }}
+              
+              <p class="text-slate-400 mt-1">
+                {{ isCreationMode ? 'Enter device details below' : `${device?.manufacturer || 'Unknown Manufacturer'} ${device?.model}` }}
               </p>
+              <p v-if="!isCreationMode" class="text-sm text-slate-500 mt-2">
+                Last updated {{ device?.updated_at ? formatDate(device.updated_at) : 'unknown' }}
+              </p>
+            </div>
+            
+            
+          </div>
+        </div>
+
+        <!-- Error Display -->
+        <div v-if="error" class="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-200 text-sm">
+          {{ error }}
+        </div>
+
+        <!-- Device Creation Form -->
+        <div v-if="isCreationMode" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <!-- Basic Information -->
+          <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+            <!-- Header -->
+            <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+              <h2 class="text-lg font-medium text-white">Basic Information</h2>
+            </div>
+            
+            <!-- Content -->
+            <div class="p-4">
+              <div class="flex flex-col gap-4">
+                <!-- Device Name -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Device Name *</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <input
+                      v-model="editValues.name"
+                      type="text"
+                      placeholder="Enter device name"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </div>
+
+                <!-- Manufacturer -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Manufacturer</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <input
+                      v-model="editValues.manufacturer"
+                      type="text"
+                      placeholder="e.g., Dell, HP, Apple"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </div>
+
+                <!-- Model -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Model</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <input
+                      v-model="editValues.model"
+                      type="text"
+                      placeholder="Enter device model"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- System Details -->
+          <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+            <!-- Header -->
+            <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+              <h2 class="text-lg font-medium text-white">System Details</h2>
+            </div>
+            
+            <!-- Content -->
+            <div class="p-4">
+              <div class="flex flex-col gap-4">
+                <!-- Hostname -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Hostname</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <input
+                      v-model="editValues.hostname"
+                      type="text"
+                      placeholder="Enter hostname (optional)"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </div>
+
+                <!-- Serial Number -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Serial Number</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <input
+                      v-model="editValues.serial_number"
+                      type="text"
+                      placeholder="Enter serial number (optional)"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    />
+                  </div>
+                </div>
+
+                <!-- Warranty Status -->
+                <div class="flex flex-col gap-1.5">
+                  <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Warranty Status</h3>
+                  <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors">
+                    <select
+                      v-model="editValues.warranty_status"
+                      class="w-full bg-transparent border-none rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    >
+                      <option value="Active" class="bg-slate-700">Active</option>
+                      <option value="Expired" class="bg-slate-700">Expired</option>
+                      <option value="Unknown" class="bg-slate-700">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Device Details -->
-        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Existing Device Details -->
+        <div v-else-if="device" class="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <!-- System Information -->
           <div class="xl:col-span-1">
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-6">System Information</h2>
-              <div class="flex flex-col gap-6">
-                <!-- Basic Info Grid -->
-                <div class="grid grid-cols-1 gap-4">
-                  <div class="flex flex-col gap-2">
-                    <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Hostname</h3>
-                    <div class="bg-slate-700/50 rounded-lg p-3 border border-slate-600/30">
-                      <span class="text-white font-mono text-sm">{{ device.hostname }}</span>
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <!-- Header -->
+              <div class="px-4 py-3 bg-slate-700/30 rounded-t-xl border-b border-slate-700/50">
+                <h2 class="text-lg font-medium text-white">System Information</h2>
+              </div>
+              
+              <!-- Content -->
+              <div class="p-4">
+                <div class="flex flex-col gap-4">
+                  <!-- Basic Info -->
+                  <div class="grid grid-cols-1 gap-3">
+                    <div class="flex flex-col gap-1.5">
+                      <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Hostname</h3>
+                      <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 p-3">
+                        <span class="text-white font-mono text-sm">{{ device.hostname }}</span>
+                      </div>
+                    </div>
+                    
+                    <div class="flex flex-col gap-1.5">
+                      <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Serial Number</h3>
+                      <div class="bg-slate-700/50 rounded-lg border border-slate-600/30 p-3">
+                        <span class="text-white font-mono text-sm">{{ device.serial_number }}</span>
+                      </div>
                     </div>
                   </div>
                   
-                  <div class="flex flex-col gap-2">
-                    <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Serial Number</h3>
-                    <div class="bg-slate-700/50 rounded-lg p-3 border border-slate-600/30">
-                      <span class="text-white font-mono text-sm">{{ device.serial_number }}</span>
+                  <!-- Hardware Info -->
+                  <div class="pt-2 border-t border-slate-700/50">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div class="flex flex-col gap-1">
+                        <span class="text-xs text-slate-400 uppercase tracking-wide">Manufacturer</span>
+                        <span class="text-slate-200 text-sm">{{ device.manufacturer || 'Unknown' }}</span>
+                      </div>
+                      
+                      <div class="flex flex-col gap-1">
+                        <span class="text-xs text-slate-400 uppercase tracking-wide">Model</span>
+                        <span class="text-slate-200 text-sm">{{ device.model }}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                
-                <!-- Hardware Info -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div class="flex flex-col gap-2">
-                    <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Manufacturer</h3>
-                    <p class="text-slate-200 text-base font-medium">{{ device.manufacturer || 'Unknown' }}</p>
-                  </div>
                   
-                  <div class="flex flex-col gap-2">
-                    <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Model</h3>
-                    <p class="text-slate-200 text-base font-medium">{{ device.model }}</p>
-                  </div>
-                </div>
-                
-                <!-- Warranty Status -->
-                <div class="flex flex-col gap-3">
-                  <h3 class="text-sm font-medium text-slate-300 uppercase tracking-wide">Warranty Status</h3>
-                  <div class="inline-flex items-center px-3 py-2 rounded-lg text-sm font-medium w-fit"
-                       :class="{
-                         'bg-green-900/30 text-green-400 border border-green-700/30': device.warranty_status === 'Active',
-                         'bg-yellow-900/30 text-yellow-400 border border-yellow-700/30': device.warranty_status === 'Warning',
-                         'bg-red-900/30 text-red-400 border border-red-700/30': device.warranty_status === 'Expired',
-                         'bg-gray-900/30 text-gray-400 border border-gray-700/30': device.warranty_status === 'Unknown'
-                       }">
-                    {{ device.warranty_status }}
+                  <!-- Warranty Status -->
+                  <div class="pt-2 border-t border-slate-700/50">
+                    <div class="flex flex-col gap-2">
+                      <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Warranty Status</h3>
+                      <div class="inline-flex items-center px-3 py-2 rounded-lg text-sm font-medium w-fit"
+                           :class="{
+                             'bg-green-900/30 text-green-400 border border-green-700/30': device.warranty_status === 'Active',
+                             'bg-yellow-900/30 text-yellow-400 border border-yellow-700/30': device.warranty_status === 'Warning',
+                             'bg-red-900/30 text-red-400 border border-red-700/30': device.warranty_status === 'Expired',
+                             'bg-gray-900/30 text-gray-400 border border-gray-700/30': device.warranty_status === 'Unknown'
+                           }">
+                        {{ device.warranty_status }}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -227,8 +594,14 @@ onMounted(() => {
 
           <!-- Microsoft Entra/Intune Information -->
           <div class="xl:col-span-1">
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-6">Microsoft Entra/Intune</h2>
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <!-- Header -->
+              <div class="px-4 py-3 bg-slate-700/30 rounded-t-xl border-b border-slate-700/50">
+                <h2 class="text-lg font-medium text-white">Microsoft Entra/Intune</h2>
+              </div>
+              
+              <!-- Content -->
+              <div class="p-4">
               
               <!-- Device IDs Section -->
               <div class="flex flex-col gap-6">
@@ -309,12 +682,13 @@ onMounted(() => {
                   <p class="text-slate-400 text-sm">This device is not managed by Microsoft Intune</p>
                 </div>
               </div>
+              </div>
             </div>
           </div>
 
           <!-- User Account Information -->
           <div class="xl:col-span-1">
-            <div class="bg-slate-800 rounded-2xl overflow-hidden">
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors overflow-hidden">
               <!-- Primary User Heading -->
               <div class="px-6 pt-6 pb-0">
                 <h2 class="text-lg font-medium text-white">Primary User</h2>
@@ -390,6 +764,31 @@ onMounted(() => {
             </div>
           </div>
         </div>
+        
+        <!-- Creation Mode Buttons -->
+        <div v-if="isCreationMode" class="flex justify-end mt-6">
+          <div class="flex gap-3">
+            <button
+              @click="router.push('/devices')"
+              :disabled="isSaving"
+              class="px-6 py-2.5 bg-slate-600 text-white rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors text-sm font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              @click="saveDevice"
+              :disabled="isSaving || !editValues.name"
+              class="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+            >
+              <svg v-if="isSaving" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              {{ isSaving ? 'Creating...' : 'Create Device' }}
+            </button>
+          </div>
+        </div>
+      
       </div>
     </div>
 
@@ -401,4 +800,32 @@ onMounted(() => {
       Device not found
     </div>
   </div>
-</template> 
+</template>
+
+<style scoped>
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.transition-colors {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+.transition-opacity {
+  transition-property: opacity;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transition-all,
+  .transition-colors,
+  .transition-opacity {
+    transition: opacity 0.1s ease-in-out;
+    transform: none;
+  }
+}
+</style> 

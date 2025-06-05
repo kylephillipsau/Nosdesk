@@ -55,7 +55,7 @@ const handleDrop = () => {
 <template>
   <div class="h-full flex flex-col">
     <div class="flex-1 min-h-0 overflow-y-auto">
-      <div class="space-y-0.5 pt-1 pb-1 px-1">
+      <div class="flex flex-col gap-0.5 pt-1 pb-1 px-1">
         <!-- Wrap each ticket item with QuickTooltip -->
         <div v-for="ticket in recentTicketsStore.recentTickets" :key="ticket.id" class="block">
           <QuickTooltip 
