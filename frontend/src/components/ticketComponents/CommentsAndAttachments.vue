@@ -333,10 +333,10 @@ const handleDrop = (event: DragEvent) => {
     </div>
     
     <!-- Content -->
-    <div class="p-4 flex flex-col gap-4">
+    <div class="flex flex-col">
       <!-- Add New Comment Form -->
       <div
-        class="bg-slate-700/50 p-3 rounded-lg border border-slate-600/30 relative"
+        class="bg-slate-700/50 p-3 rounded-lg-bottom border-b border-slate-600/30 relative"
         @dragenter="handleDragEnter"
         @dragleave="handleDragLeave"
         @dragover="handleDragOver"
@@ -504,7 +504,7 @@ const handleDrop = (event: DragEvent) => {
       </div>
 
       <!-- List of Comments -->
-      <div class="flex flex-col gap-3">
+      <div class="flex flex-col gap-2 p-2">
         <div
           v-for="comment in props.comments"
           :key="comment.id"

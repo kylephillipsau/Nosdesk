@@ -26,6 +26,7 @@ interface Props {
   showName?: boolean;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | 'full';
   avatar?: string | null;
+  avatarUrl?: string | null; // Direct avatar URL from API responses
   clickable?: boolean;
 }
 
@@ -33,6 +34,7 @@ const props = withDefaults(defineProps<Props>(), {
   showName: true,
   size: 'md',
   avatar: null,
+  avatarUrl: null,
   clickable: true
 })
 
@@ -74,6 +76,21 @@ onUnmounted(() => {
   // No cleanup needed since we removed periodic refresh
 })
 
+// Simple error handler - just refresh user data if needed
+const handleImageError = async () => {
+  if (isUuid(props.name)) {
+    console.log('UserAvatar: Image failed to load, refreshing user data for:', props.name)
+    
+    try {
+      // Force refresh the user data in case avatar URLs have been updated
+      await dataStore.getUserByUuid(props.name, true)
+      forceRefresh.value++ // Trigger reactivity update
+    } catch (error) {
+      console.warn('Failed to refresh user data after image error:', error)
+    }
+  }
+}
+
 // Watch for changes to props.name with debouncing
 watch(() => props.name, async (newName, oldName) => {
   // Skip if name hasn't actually changed
@@ -93,40 +110,45 @@ watch(() => props.name, async (newName, oldName) => {
 
 // Check if the name is a UUID and get the actual name if it is
 const displayName = computed(() => {
-  // Force reactivity by accessing forceRefresh
-  forceRefresh.value
-
   // If we have a pre-loaded user name, use it immediately
   if (props.userName) {
     return props.userName;
   }
   
-  // Check if the name looks like a UUID
-  if (isUuid(props.name)) {
-    // Try to get name from lookup service cache
-    const cachedName = getUserName(props.name);
-    if (cachedName) {
-      return cachedName;
-    }
-    
-    // Fallback to UUID if no cached name available
+  // If the name is not a UUID, use it as-is
+  if (!isUuid(props.name)) {
     return props.name;
   }
   
+  // Only for UUID lookups do we need the reactive forceRefresh
+  forceRefresh.value
+  
+  // Try to get name from lookup service cache for UUIDs
+  const cachedName = getUserName(props.name);
+  if (cachedName) {
+    return cachedName;
+  }
+  
+  // Fallback to UUID if no cached name available
   return props.name;
 })
 
 // Get the avatar URL either from props or from the user data if loaded by UUID
 const effectiveAvatarUrl = computed(() => {
-  // Force reactivity by accessing forceRefresh
-  forceRefresh.value
+  // If an avatarUrl was directly provided as a prop (from API response), use it immediately
+  if (props.avatarUrl) {
+    return props.avatarUrl;
+  }
   
-  // If an avatar was directly provided as a prop, use it
+  // If an avatar was directly provided as a prop, use it immediately
   if (props.avatar) {
     return props.avatar;
   }
   
-  // If name is a UUID, try to get avatar from lookup service
+  // Only for UUID lookups do we need the reactive forceRefresh
+  forceRefresh.value
+  
+  // If name is a UUID, try to get avatar from lookup service (with cache busting)
   if (isUuid(props.name)) {
     const preferThumb = props.size !== 'full';
     return getUserAvatar(props.name, preferThumb);
@@ -185,17 +207,17 @@ const sizeClasses = computed(() => {
     },
     md: {
       base: 'h-[2rem] w-[2rem]', // 32px at default font size
-      text: 'text-sm',
+      text: 'text-md',
       responsive: 'sm:h-[2.25rem] sm:w-[2.25rem]' // Slightly larger on small screens
     },
     lg: {
       base: 'h-[2.25rem] w-[2.25rem]', // 36px at default font size
-      text: 'text-sm',
+      text: 'text-lg',
       responsive: 'sm:h-[2.5rem] sm:w-[2.5rem]' // 40px on small screens
     },
     xl: {
       base: 'h-[3.75rem] w-[3.75rem]', // 60px at default font size
-      text: 'text-sm',
+      text: 'text-2xl',
       responsive: 'sm:h-[3.5rem] sm:w-[3.5rem]' // 56px on small screens
     },
     full: {
@@ -227,14 +249,8 @@ const nameTextClasses = computed(() => {
 })
 
 const navigateToProfile = () => {
-  if (props.clickable) {
-    // If the name is a UUID, use it directly for navigation
-    // Otherwise, we can't navigate to a profile (profiles are accessed by UUID)
-    if (isUuid(props.name)) {
-      router.push(`/users/${props.name}`)
-    } else {
-      console.warn('Cannot navigate to profile: name is not a UUID', props.name)
-    }
+  if (props.clickable && isUuid(props.name)) {
+    router.push(`/users/${props.name}`)
   }
 }
 
@@ -246,7 +262,7 @@ watch(effectiveAvatarUrl, () => {
   imageLoaded.value = false
 })
 
-// Export the refreshUser method for external components to use
+// Export methods for external components to use
 defineExpose({
   refreshUser
 })
@@ -278,9 +294,10 @@ defineExpose({
         :src="effectiveAvatarUrl"
         :alt="displayName"
         class="w-full h-full rounded-full"
+        object-fit="cover"
         loading="lazy"
         @load="imageLoaded = true"
-        @error="imageLoaded = false"
+        @error="imageLoaded = false; handleImageError()"
       />
       
       <!-- Fallback initials (hidden when image loads) -->

@@ -27,7 +27,7 @@ let activeRequestCount = 0
 
 // Cache cleanup interval (5 minutes)
 const CACHE_CLEANUP_INTERVAL = 5 * 60 * 1000
-// Cache expiry time (30 minutes)
+// Cache expiry time (30 minutes - standard practice)
 const CACHE_EXPIRY_TIME = 30 * 60 * 1000
 
 // Cleanup expired cache entries periodically

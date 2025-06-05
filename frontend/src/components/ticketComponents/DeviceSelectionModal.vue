@@ -43,11 +43,28 @@ const scrollContainer = ref<HTMLElement | null>(null);
 
 // Load requester's devices first (for immediate display at top)
 const loadRequesterDevices = async () => {
-  if (!props.requesterUuid) return;
+  if (import.meta.env.DEV) {
+    console.log('DeviceSelectionModal: loadRequesterDevices called with requesterUuid:', props.requesterUuid);
+  }
+  
+  if (!props.requesterUuid) {
+    if (import.meta.env.DEV) {
+      console.log('DeviceSelectionModal: No requester UUID provided, skipping requester devices load');
+    }
+    return;
+  }
   
   loadingRequesterDevices.value = true;
   try {
+    if (import.meta.env.DEV) {
+      console.log(`DeviceSelectionModal: Fetching devices for requester ${props.requesterUuid}`);
+    }
+    
     const devices = await getUserDevices(props.requesterUuid);
+    
+    if (import.meta.env.DEV) {
+      console.log(`DeviceSelectionModal: Received ${devices.length} devices from getUserDevices:`, devices);
+    }
     
     // Filter out already assigned devices
     let filteredDevices = devices;
@@ -55,12 +72,20 @@ const loadRequesterDevices = async () => {
       filteredDevices = devices.filter(device => 
         !props.existingDeviceIds?.includes(device.id)
       );
+      
+      if (import.meta.env.DEV) {
+        console.log(`DeviceSelectionModal: Filtered out existing devices. ${devices.length} -> ${filteredDevices.length} devices`);
+        console.log('DeviceSelectionModal: Existing device IDs:', props.existingDeviceIds);
+      }
     }
     
     requesterDevices.value = filteredDevices;
-    console.log(`Loaded ${filteredDevices.length} devices for requester ${props.requesterUuid}`);
+    
+    if (import.meta.env.DEV) {
+      console.log(`DeviceSelectionModal: Set requesterDevices to ${filteredDevices.length} devices:`, filteredDevices);
+    }
   } catch (err) {
-    console.error('Error loading requester devices:', err);
+    console.error('DeviceSelectionModal: Error loading requester devices:', err);
     // Don't show error for this as it's optional
     requesterDevices.value = [];
   } finally {
@@ -177,6 +202,15 @@ const allDevicesForDisplay = computed(() => {
     ...devices.value.map(device => ({ ...device, isRequesterDevice: false }))
   ];
   
+  if (import.meta.env.DEV) {
+    console.log('DeviceSelectionModal: allDevicesForDisplay computed:', {
+      requesterDevicesCount: requesterDevices.value.length,
+      paginatedDevicesCount: devices.value.length,
+      totalCombined: combinedDevices.length,
+      combinedDevices
+    });
+  }
+  
   return combinedDevices;
 });
 
@@ -193,6 +227,14 @@ const hasDevicesToShow = computed(() => {
 // Watch for modal visibility
 watch(() => props.show, (newValue) => {
   if (newValue) {
+    if (import.meta.env.DEV) {
+      console.log('DeviceSelectionModal: Modal opened, initializing...', {
+        requesterUuid: props.requesterUuid,
+        existingDeviceIds: props.existingDeviceIds,
+        currentTicketId: props.currentTicketId
+      });
+    }
+    
     // Reset state
     devices.value = [];
     requesterDevices.value = [];
@@ -204,6 +246,9 @@ watch(() => props.show, (newValue) => {
     
     // Load initial data
     nextTick(() => {
+      if (import.meta.env.DEV) {
+        console.log('DeviceSelectionModal: Starting data load in nextTick');
+      }
       loadRequesterDevices();
       loadDevices(1, '', false);
     });

@@ -32,6 +32,9 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const authProvider = ref<string | null>(localStorage.getItem('authProvider'));
+  
+  // Track ongoing fetchUserData requests to prevent duplicates
+  let fetchUserDataPromise: Promise<any> | null = null;
 
   // Set up axios auth header if token exists
   if (token.value) {
@@ -43,9 +46,12 @@ export const useAuthStore = defineStore('auth', () => {
     }
     
     // Load user data from backend when store initializes with a token
-    fetchUserData().catch(err => {
-      console.error('Failed to load initial user data:', err);
-    });
+    // Only if we don't already have user data and not already loading
+    if (!user.value && !loading.value) {
+      fetchUserData().catch(err => {
+        console.error('Failed to load initial user data:', err);
+      });
+    }
   }
 
   // Computed properties
@@ -67,52 +73,64 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUserData() {
     if (!token.value) return null;
 
-    try {
-      loading.value = true;
-      // Only log in development or when explicitly requested
-      if (import.meta.env.DEV) {
-        console.log('Fetching user data...');
-      }
-      
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${token.value}`
-      };
-      
-      // Add provider header if we have it or can detect it
-      if (authProvider.value) {
-        headers['X-Auth-Provider'] = authProvider.value;
-      } else if (token.value) {
-        // Try to detect token type
-        const detectedProvider = detectTokenType(token.value);
-        if (detectedProvider === 'microsoft') {
-          headers['X-Auth-Provider'] = 'microsoft';
-          authProvider.value = 'microsoft';
-          localStorage.setItem('authProvider', 'microsoft');
-        }
-      }
-      
-      const response = await axios.get('/api/auth/me', { headers });
-      user.value = response.data;
-      return response.data;
-    } catch (err: any) {
-      console.error('Error fetching user data:', err);
-      
-      // Only logout on unauthorized errors, not on network/server errors
-      if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-        console.log('Logging out due to authentication error:', err.response.status);
-        // Token is definitely invalid or expired
-        logout();
-      } else {
-        // For other errors (network, server, etc.), just throw the error
-        // but keep the user logged in
-        error.value = 'Failed to load profile data. Please try again.';
-        throw err;
-      }
-      
-      return null;
-    } finally {
-      loading.value = false;
+    // Return existing promise if already fetching
+    if (fetchUserDataPromise) {
+      return fetchUserDataPromise;
     }
+
+    // Create and cache the promise
+    fetchUserDataPromise = (async () => {
+      try {
+        loading.value = true;
+        // Only log in development or when explicitly requested
+        if (import.meta.env.DEV) {
+          console.log('Fetching user data...');
+        }
+        
+        const headers: Record<string, string> = {
+          'Authorization': `Bearer ${token.value}`
+        };
+        
+        // Add provider header if we have it or can detect it
+        if (authProvider.value) {
+          headers['X-Auth-Provider'] = authProvider.value;
+        } else if (token.value) {
+          // Try to detect token type
+          const detectedProvider = detectTokenType(token.value);
+          if (detectedProvider === 'microsoft') {
+            headers['X-Auth-Provider'] = 'microsoft';
+            authProvider.value = 'microsoft';
+            localStorage.setItem('authProvider', 'microsoft');
+          }
+        }
+        
+        const response = await axios.get('/api/auth/me', { headers });
+        user.value = response.data;
+        return response.data;
+      } catch (err: any) {
+        console.error('Error fetching user data:', err);
+        
+        // Only logout on unauthorized errors, not on network/server errors
+        if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+          console.log('Logging out due to authentication error:', err.response.status);
+          // Token is definitely invalid or expired
+          logout();
+        } else {
+          // For other errors (network, server, etc.), just throw the error
+          // but keep the user logged in
+          error.value = 'Failed to load profile data. Please try again.';
+          throw err;
+        }
+        
+        return null;
+      } finally {
+        loading.value = false;
+        // Clear the promise cache
+        fetchUserDataPromise = null;
+      }
+    })();
+
+    return fetchUserDataPromise;
   }
 
   // Actions

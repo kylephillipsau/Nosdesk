@@ -136,6 +136,12 @@ pub fn get_user_by_email(email: &str, conn: &mut DbConnection) -> Result<User, E
         .first::<User>(conn)
 }
 
+pub fn get_user_by_name(name: &str, conn: &mut DbConnection) -> Result<User, Error> {
+    users::table
+        .filter(users::name.eq(name))
+        .first::<User>(conn)
+}
+
 pub fn create_user(
     user: NewUser,
     conn: &mut DbConnection,
@@ -156,7 +162,33 @@ pub fn update_user(
 }
 
 pub fn delete_user(id: i32, conn: &mut DbConnection) -> Result<usize, Error> {
-    diesel::delete(users::table.find(id)).execute(conn)
+    use crate::schema::{comments, devices, user_auth_identities, user_emails};
+    
+    // Start a transaction to ensure all-or-nothing deletion
+    conn.transaction::<_, Error, _>(|conn| {
+        // 1. Delete all comments by this user (set user_id to NULL or delete)
+        // For now we'll delete the comments entirely, but you could also set user_id to NULL
+        diesel::delete(comments::table.filter(comments::user_id.eq(id)))
+            .execute(conn)?;
+        
+        // 2. Update devices to remove user associations (set user_id to NULL)
+        diesel::update(devices::table.filter(devices::user_id.eq(id)))
+            .set(devices::user_id.eq::<Option<i32>>(None))
+            .execute(conn)?;
+        
+        // 3. Delete user auth identities (these have ON DELETE CASCADE so they should delete automatically, but let's be explicit)
+        diesel::delete(user_auth_identities::table.filter(user_auth_identities::user_id.eq(id)))
+            .execute(conn)?;
+        
+        // 4. Delete user emails (these have ON DELETE CASCADE so they should delete automatically, but let's be explicit)
+        diesel::delete(user_emails::table.filter(user_emails::user_id.eq(id)))
+            .execute(conn)?;
+        
+        // 5. Finally delete the user
+        let deleted_count = diesel::delete(users::table.find(id)).execute(conn)?;
+        
+        Ok(deleted_count)
+    })
 }
 
 // Batch get users by UUIDs
@@ -170,4 +202,15 @@ pub fn get_users_by_uuids(uuids: &[Uuid], conn: &mut DbConnection) -> Result<Vec
 // Count total users in the database (for onboarding check)
 pub fn count_users(conn: &mut DbConnection) -> Result<i64, Error> {
     users::table.count().get_result(conn)
+}
+
+/// Update user MFA fields by UUID
+pub fn update_user_mfa(
+    uuid: &Uuid,
+    mfa_update: UserMfaUpdate,
+    conn: &mut DbConnection,
+) -> Result<User, Error> {
+    diesel::update(users::table.filter(users::uuid.eq(uuid)))
+        .set(mfa_update)
+        .get_result(conn)
 } 

@@ -1,6 +1,5 @@
 // Domain-specific modules
 pub mod article_content;
-pub mod auth_providers;
 pub mod comments;
 pub mod devices;
 pub mod documentation;
@@ -14,7 +13,6 @@ pub mod users;
 
 // Re-export all functions
 pub use article_content::*;
-pub use auth_providers::*;
 pub use comments::*;
 pub use devices::*;
 pub use documentation::*;

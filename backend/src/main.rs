@@ -16,6 +16,8 @@ use dotenv::dotenv;
 use serde_json;
 use std::env;
 use std::time::Duration;
+use tracing::{info, warn, error, debug};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("Helpdesk API is running!")
@@ -42,14 +44,16 @@ async fn validator(req: ServiceRequest, credentials: BearerAuth) -> Result<Servi
         }
     };
 
-    match handlers::auth::validate_token_internal(&credentials, &mut conn).await {
-        Ok(_claims) => {
+    // Use the new JWT utilities for authentication
+    use crate::utils::jwt::JwtUtils;
+    
+    match JwtUtils::authenticate_request(&credentials, &mut conn).await {
+        Ok((_claims, _user)) => {
             // Token is valid, continue to the protected route
             Ok(req)
         },
         Err(err) => {
             // Return the specific authentication error (401 for invalid token, etc.)
-            // This ensures proper HTTP status codes instead of 404
             eprintln!("JWT validation failed: {:?}", err);
             Err((err, req))
         }
@@ -60,8 +64,23 @@ async fn validator(req: ServiceRequest, credentials: BearerAuth) -> Result<Servi
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     
+    // Initialize tracing/logging subsystem
+    let log_level = env::var("RUST_LOG")
+        .unwrap_or_else(|_| {
+            if env::var("ENVIRONMENT").unwrap_or_default() == "production" {
+                "info".to_string()
+            } else {
+                "debug".to_string()
+            }
+        });
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::new(log_level))
+        .init();
+    
     // === SECURITY STARTUP VALIDATION ===
-    println!("🚀 Starting Nosdesk API Server...");
+    info!("🚀 Starting Nosdesk API Server...");
     
     // Validate that JWT_SECRET is set and secure
     let _jwt_secret = match std::env::var("JWT_SECRET") {
@@ -97,18 +116,18 @@ async fn main() -> std::io::Result<()> {
     }
     
     // === RATE LIMITING CONFIGURATION ===
-    // Get rate limiting configuration from environment with higher defaults for data-heavy operations
+    // Get rate limiting configuration from environment with reasonable defaults
     let rate_limit_per_minute = env::var("RATE_LIMIT_PER_MINUTE")
-        .unwrap_or("300".to_string()) // Increased from 60 to 300 for better UX
+        .unwrap_or("60".to_string()) // Conservative limit for public endpoints
         .parse::<u64>()
-        .unwrap_or(300)
-        .clamp(60, 2000); // Reasonable limits: 60-2000 requests per minute
+        .unwrap_or(60)
+        .clamp(30, 1000); // Reasonable limits: 30-1000 requests per minute
 
     let auth_rate_limit_per_minute = env::var("AUTH_RATE_LIMIT_PER_MINUTE")
-        .unwrap_or("600".to_string()) // Higher limit for authenticated users
+        .unwrap_or("600".to_string()) // Higher limit for authenticated users (10x public rate)
         .parse::<u64>()
         .unwrap_or(600)
-        .clamp(120, 3000); // Higher limits for authenticated users
+        .clamp(120, 5000); // Higher limits for authenticated users: 120-5000 requests per minute
 
     // Create rate limiter with Redis backend (fallback to in-memory for development)
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| {
@@ -158,7 +177,7 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
-    let _auth_limiter = match auth_limiter {
+    let auth_limiter = match auth_limiter {
         Ok(limiter) => limiter,
         Err(e) => {
             eprintln!("⚠️  Auth rate limiter fallback: {}", e);
@@ -247,9 +266,13 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize WebSocket app state for collaborative editing
     let yjs_app_state = web::Data::new(handlers::collaboration::YjsAppState::new(web::Data::new(pool.clone())));
+    
+    // Initialize SSE state for real-time ticket updates
+    let sse_state = web::Data::new(handlers::sse::SseState::new());
 
-    // Share the limiter across all app instances
-    let limiter_data = web::Data::new(public_limiter);
+    // Share the limiters across all app instances
+    let public_limiter_data = web::Data::new(public_limiter);
+    let auth_limiter_data = web::Data::new(auth_limiter);
 
     println!("🌐 Server running at http://{}:{}", host, port);
     if environment == "production" {
@@ -290,10 +313,11 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(cors)
-            .wrap(RateLimiter::default())
-            .app_data(limiter_data.clone())
+            .app_data(public_limiter_data.clone())
+            .app_data(auth_limiter_data.clone())
             .app_data(web::Data::new(pool.clone()))
             .app_data(yjs_app_state.clone())
+            .app_data(sse_state.clone())
             .app_data(json_config)
             .app_data(multipart_config)
             
@@ -316,6 +340,10 @@ async fn main() -> std::io::Result<()> {
             .route("/api/files/tickets/{filename:.*}", web::get().to(handlers::serve_ticket_file))
             .route("/api/files/temp/{filename:.*}", web::get().to(handlers::serve_temp_file))
             
+            // SSE endpoints (with custom token-based auth)
+            .route("/api/events/tickets", web::get().to(handlers::sse::ticket_events_stream))
+            .route("/api/events/status", web::get().to(handlers::sse::sse_status))
+            
             // Authentication routes (public by design)
             .service(
                 web::scope("/api/auth")
@@ -327,7 +355,7 @@ async fn main() -> std::io::Result<()> {
                     )
                     .route("/login", web::post().to(handlers::login))
                     .route("/register", web::post().to(handlers::register))
-                    .route("/providers", web::get().to(handlers::get_auth_providers))
+                    .route("/providers", web::get().to(handlers::get_enabled_auth_providers))
                     .route("/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/oauth/callback", web::get().to(handlers::oauth_callback))
                     .route("/oauth/logout", web::post().to(handlers::oauth_logout))
@@ -335,6 +363,17 @@ async fn main() -> std::io::Result<()> {
                     .route("/me", web::get().to(handlers::get_current_user).wrap(HttpAuthentication::bearer(validator)))
                     .route("/change-password", web::post().to(handlers::change_password).wrap(HttpAuthentication::bearer(validator)))
                     .route("/oauth/connect", web::post().to(handlers::oauth_connect).wrap(HttpAuthentication::bearer(validator)))
+                    // MFA (Multi-Factor Authentication) endpoints
+                    .service(
+                        web::scope("/mfa")
+                            .wrap(HttpAuthentication::bearer(validator))
+                            .route("/setup", web::post().to(handlers::mfa_setup))
+                            .route("/verify-setup", web::post().to(handlers::mfa_verify_setup))
+                            .route("/enable", web::post().to(handlers::mfa_enable))
+                            .route("/disable", web::post().to(handlers::mfa_disable))
+                            .route("/regenerate-backup-codes", web::post().to(handlers::mfa_regenerate_backup_codes))
+                            .route("/status", web::get().to(handlers::mfa_status))
+                    )
             )
             
             // === PROTECTED ROUTES (AUTHENTICATION REQUIRED) ===
@@ -342,15 +381,8 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .wrap(HttpAuthentication::bearer(validator))
                     
-                    // Authentication Provider management (admin only) - moved to /admin to avoid conflicts
+                    // Authentication Provider management (admin only) - simplified for environment-based config
                     .route("/admin/auth/providers", web::get().to(handlers::get_auth_providers))
-                    .route("/admin/auth/providers", web::post().to(handlers::create_auth_provider))
-                    .route("/admin/auth/providers/{id}", web::get().to(handlers::get_auth_provider))
-                    .route("/admin/auth/providers/{id}", web::put().to(handlers::update_auth_provider))
-                    .route("/admin/auth/providers/{id}", web::delete().to(handlers::delete_auth_provider))
-                    .route("/admin/auth/providers/config", web::post().to(handlers::update_auth_provider_config))
-                    .route("/admin/auth/providers/default", web::post().to(handlers::set_default_auth_provider))
-                    .route("/admin/auth/providers/{id}/test", web::get().to(handlers::test_microsoft_config))
                     
                     // Microsoft Graph API endpoints
                     .route("/auth/microsoft/graph", web::post().to(handlers::process_graph_request))
@@ -378,6 +410,9 @@ async fn main() -> std::io::Result<()> {
                     
                     // File upload endpoint
                     .route("/upload", web::post().to(handlers::upload_files))
+                    
+                    // ===== SERVER-SENT EVENTS (SSE) =====
+                    .route("/events/token", web::post().to(handlers::sse::get_sse_token))
                     
                     // ===== TICKET MANAGEMENT =====
                     .route("/tickets", web::get().to(handlers::get_tickets))

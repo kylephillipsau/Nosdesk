@@ -188,6 +188,8 @@ export const createDevice = async (deviceData: DeviceFormData): Promise<Device> 
   }
 };
 
+
+
 /**
  * Update a device
  * @param id - The ID of the device to update

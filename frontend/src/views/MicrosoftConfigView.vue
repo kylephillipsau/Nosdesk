@@ -891,7 +891,7 @@ onMounted(() => {
                       <p class="text-red-200 text-xs">
                         <strong>Important:</strong> Add these as <strong>Application permissions</strong> (not Delegated):
                       </p>
-                      <ul class="text-red-200 text-xs mt-2 pl-4 list-disc list-inside space-y-1">
+                      <ul class="text-red-200 text-xs mt-2 pl-4 list-disc list-inside flex flex-col gap-1">
                         <li>Directory.Read.All</li>
                         <li>DeviceManagement.ManagedDevices.Read.All</li>
                         <li>User.Read.All</li>
@@ -1115,7 +1115,7 @@ onMounted(() => {
                     <ol class="text-slate-300 text-sm pl-4 list-decimal list-inside flex flex-col gap-1">
                       <li>Go to your app registration → API permissions</li>
                       <li>Verify you have <strong>Application permissions</strong> (not Delegated) for:
-                        <ul class="ml-4 pl-4 list-disc list-inside mt-1 space-y-1">
+                        <ul class="ml-4 pl-4 list-disc list-inside mt-1 flex flex-col gap-1">
                           <li>Directory.Read.All</li>
                           <li>DeviceManagement.ManagedDevices.Read.All</li>
                           <li>User.Read.All</li>

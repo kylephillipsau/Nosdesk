@@ -1,5 +1,9 @@
 pub mod auth;
+pub mod user;
 pub mod validation;
+pub mod image;
+pub mod jwt;
+pub mod sse;
 
 use uuid::Uuid;
 use crate::models::{UserRole, UserInfo};
@@ -95,4 +99,11 @@ pub fn unwrap_optional_string(opt_str: &Option<String>) -> String {
 /// Wrap string in Some() for Option<String> fields
 pub fn wrap_string(s: String) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
-} 
+}
+
+pub use auth::*;
+pub use user::*;
+pub use validation::*;
+pub use image::*;
+pub use jwt::*;
+pub use sse::*; 

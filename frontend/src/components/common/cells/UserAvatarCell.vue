@@ -22,7 +22,7 @@ const props = withDefaults(defineProps<Props>(), {
     <UserAvatar 
       :name="userId" 
       :user-name="userName"
-      :avatar="avatar"
+      :avatarUrl="avatar"
       :size="size" 
       :clickable="false"
       :show-name="showName"

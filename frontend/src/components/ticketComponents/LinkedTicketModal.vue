@@ -372,7 +372,9 @@ const formatDate = (dateString: string): string => {
                   <div class="col-span-2 min-w-0">
                     <div v-if="ticket.requester" class="flex items-center gap-2">
                       <UserAvatar 
-                        :name="ticket.requester" 
+                        :name="ticket.requester_user?.name || ticket.requester" 
+                        :avatarUrl="ticket.requester_user?.avatar_thumb"
+                        :userUuid="ticket.requester_user?.uuid"
                         size="sm" 
                         :show-name="true" 
                         :clickable="true"

@@ -6,8 +6,37 @@ use urlencoding;
 
 use crate::db::Pool;
 use crate::handlers::auth::validate_token_internal;
-use crate::repository::auth_providers as auth_provider_repo;
+// Auth providers are now configured via environment variables
 use crate::config_utils;
+use crate::models::AuthProvider;
+
+// Helper functions for environment-based auth providers
+fn get_default_microsoft_provider_id() -> Result<i32, diesel::result::Error> {
+    // Since we're using environment variables, we'll just return a fixed ID for Microsoft
+    if std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+        && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() 
+        && std::env::var("MICROSOFT_TENANT_ID").is_ok() {
+        Ok(2) // Microsoft provider ID
+    } else {
+        Err(diesel::result::Error::NotFound)
+    }
+}
+
+fn get_provider_by_id(provider_id: i32) -> Result<AuthProvider, diesel::result::Error> {
+    match provider_id {
+        1 => Ok(AuthProvider::new(1, "Local".to_string(), "local".to_string(), true, true)),
+        2 => {
+            if std::env::var("MICROSOFT_CLIENT_ID").is_ok() 
+                && std::env::var("MICROSOFT_CLIENT_SECRET").is_ok() 
+                && std::env::var("MICROSOFT_TENANT_ID").is_ok() {
+                Ok(AuthProvider::new(2, "Microsoft".to_string(), "microsoft".to_string(), true, false))
+            } else {
+                Err(diesel::result::Error::NotFound)
+            }
+        },
+        _ => Err(diesel::result::Error::NotFound)
+    }
+}
 
 // Structure for Microsoft Graph API requests
 #[derive(Deserialize, Debug)]
@@ -49,8 +78,8 @@ pub async fn process_graph_request(
         Some(id) => id,
         None => {
             // Find the default Microsoft provider
-            match auth_provider_repo::get_default_provider_by_type("microsoft", &mut conn) {
-                Ok(provider) => provider.id,
+            match get_default_microsoft_provider_id() {
+                Ok(provider_id) => provider_id,
                 Err(e) => {
                     if let diesel::result::Error::NotFound = e {
                         return HttpResponse::NotFound().json(json!({
@@ -70,7 +99,7 @@ pub async fn process_graph_request(
     };
 
     // Get the provider
-    let provider = match auth_provider_repo::get_provider_by_id(provider_id_val, &mut conn) {
+    let provider = match get_provider_by_id(provider_id_val) {
         Ok(p) => {
             if p.provider_type != "microsoft" {
                 return HttpResponse::BadRequest().json(json!({

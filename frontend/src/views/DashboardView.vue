@@ -105,58 +105,52 @@ onMounted(() => {
 <template>
   <div class="flex flex-col h-full">
     <!-- Content -->
-    <div class="flex flex-col gap-6 p-6">
+    <div class="flex flex-col gap-4 p-6">
       <!-- Greeting Card -->
       <div class="mb-2">
         <h2 class="text-3xl font-medium text-white">
           {{ formattedGreeting }}
         </h2>
-        <p class="text-gray-400 mt-2">
+        <p class="text-slate-400 mt-2">
           Welcome to your Nosdesk dashboard
         </p>
       </div>
 
-      <!-- Stats Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Ticket Activity Heatmap - Full Width at Top -->
+      <div class="w-full">
+        <TicketHeatmap ticketStatus="closed" />
+      </div>
+
+      <!-- Condensed Stats Row -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <!-- Total Tickets -->
-        <div class="bg-slate-800 rounded-lg p-6">
-          <h3 class="text-gray-400 text-sm font-medium">Total Tickets</h3>
-          <p class="text-2xl font-semibold text-white mt-2">{{ ticketStats.total }}</p>
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-colors p-4">
+          <h3 class="text-slate-400 text-xs font-medium uppercase tracking-wide">Total</h3>
+          <p class="text-xl font-semibold text-white mt-1">{{ ticketStats.total }}</p>
         </div>
 
         <!-- Open Tickets -->
-        <div class="bg-slate-800 rounded-lg p-6">
-          <h3 class="text-gray-400 text-sm font-medium">Open Tickets</h3>
-          <p class="text-2xl font-semibold text-green-500 mt-2">{{ ticketStats.open }}</p>
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-colors p-4">
+          <h3 class="text-slate-400 text-xs font-medium uppercase tracking-wide">Open</h3>
+          <p class="text-xl font-semibold text-green-500 mt-1">{{ ticketStats.open }}</p>
         </div>
 
         <!-- In Progress -->
-        <div class="bg-slate-800 rounded-lg p-6">
-          <h3 class="text-gray-400 text-sm font-medium">In Progress</h3>
-          <p class="text-2xl font-semibold text-blue-500 mt-2">{{ ticketStats.inProgress }}</p>
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-colors p-4">
+          <h3 class="text-slate-400 text-xs font-medium uppercase tracking-wide">Progress</h3>
+          <p class="text-xl font-semibold text-blue-500 mt-1">{{ ticketStats.inProgress }}</p>
         </div>
 
         <!-- Closed -->
-        <div class="bg-slate-800 rounded-lg p-6">
-          <h3 class="text-gray-400 text-sm font-medium">Closed</h3>
-          <p class="text-2xl font-semibold text-gray-400 mt-2">{{ ticketStats.closed }}</p>
+        <div class="bg-slate-800 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-colors p-4">
+          <h3 class="text-slate-400 text-xs font-medium uppercase tracking-wide">Closed</h3>
+          <p class="text-xl font-semibold text-slate-400 mt-1">{{ ticketStats.closed }}</p>
         </div>
       </div>
 
-      <!-- Two column layout for assigned tickets and heatmap -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Assigned Tickets -->
-        <div class="lg:col-span-2">
-          <UserAssignedTickets :limit="5" />
-        </div>
-
-        <!-- Ticket Activity -->
-        <div>
-          <div class="bg-slate-800 rounded-lg p-6">
-            <h3 class="text-lg font-medium text-white mb-4">Ticket Activity</h3>
-            <TicketHeatmap ticketStatus="closed" />
-          </div>
-        </div>
+      <!-- Assigned Tickets - Full Width -->
+      <div class="w-full">
+        <UserAssignedTickets :limit="8" />
       </div>
     </div>
   </div>

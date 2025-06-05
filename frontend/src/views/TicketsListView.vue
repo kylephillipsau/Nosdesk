@@ -1,7 +1,8 @@
 // views/TicketsListView.vue
 <script setup lang="ts">
 import ticketService from "@/services/ticketService";
-import { computed } from "vue";
+import { computed, onMounted, watch, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import BaseListView from "@/components/common/BaseListView.vue";
 import DataTable from "@/components/common/DataTable.vue";
 import DebouncedSearchInput from "@/components/common/DebouncedSearchInput.vue";
@@ -12,11 +13,59 @@ import UserAvatar from "@/components/UserAvatar.vue";
 import { useListManagement } from "@/composables/useListManagement";
 import type { Ticket } from "@/services/ticketService";
 
-// Use the composable for all common functionality
+const route = useRoute();
+const router = useRouter();
+
+// Extract URL params first
+const urlParams = route.query;
+const initialFilters: Record<string, string> = {};
+
+// Set initial values from URL
+if (urlParams.status && typeof urlParams.status === 'string') {
+  initialFilters.status = urlParams.status;
+}
+if (urlParams.priority && typeof urlParams.priority === 'string') {
+  initialFilters.priority = urlParams.priority;
+}
+if (urlParams.createdOn && typeof urlParams.createdOn === 'string') {
+  initialFilters.createdOn = urlParams.createdOn;
+}
+if (urlParams.createdAfter && typeof urlParams.createdAfter === 'string') {
+  initialFilters.createdAfter = urlParams.createdAfter;
+}
+if (urlParams.createdBefore && typeof urlParams.createdBefore === 'string') {
+  initialFilters.createdBefore = urlParams.createdBefore;
+}
+if (urlParams.modifiedOn && typeof urlParams.modifiedOn === 'string') {
+  initialFilters.modifiedOn = urlParams.modifiedOn;
+}
+if (urlParams.modifiedAfter && typeof urlParams.modifiedAfter === 'string') {
+  initialFilters.modifiedAfter = urlParams.modifiedAfter;
+}
+if (urlParams.modifiedBefore && typeof urlParams.modifiedBefore === 'string') {
+  initialFilters.modifiedBefore = urlParams.modifiedBefore;
+}
+if (urlParams.closedOn && typeof urlParams.closedOn === 'string') {
+  initialFilters.closedOn = urlParams.closedOn;
+}
+if (urlParams.closedAfter && typeof urlParams.closedAfter === 'string') {
+  initialFilters.closedAfter = urlParams.closedAfter;
+}
+if (urlParams.closedBefore && typeof urlParams.closedBefore === 'string') {
+  initialFilters.closedBefore = urlParams.closedBefore;
+}
+
+const initialSearchQuery = (urlParams.search && typeof urlParams.search === 'string') ? urlParams.search : '';
+const initialPage = (urlParams.page && typeof urlParams.page === 'string') ? parseInt(urlParams.page) : 1;
+const initialPageSize = (urlParams.pageSize && typeof urlParams.pageSize === 'string') ? parseInt(urlParams.pageSize) : 25;
+const initialSortField = (urlParams.sortField && typeof urlParams.sortField === 'string') ? urlParams.sortField : 'id';
+const initialSortDirection = (urlParams.sortDirection && typeof urlParams.sortDirection === 'string') ? urlParams.sortDirection as 'asc' | 'desc' : 'asc';
+
+// Use the composable with initial values
 const listManager = useListManagement<Ticket>({
   itemIdField: 'id',
-  defaultSortField: 'id',
-  defaultSortDirection: 'asc',
+  defaultSortField: initialSortField,
+  defaultSortDirection: initialSortDirection,
   fetchFunction: async (params) => {
     return await ticketService.getPaginatedTickets({
       page: params.page,
@@ -25,11 +74,114 @@ const listManager = useListManagement<Ticket>({
       sortDirection: params.sortDirection,
       search: params.search,
       status: params.status,
-      priority: params.priority
-    });
+      priority: params.priority,
+      createdAfter: params.createdAfter,
+      createdBefore: params.createdBefore,
+      createdOn: params.createdOn,
+      modifiedAfter: params.modifiedAfter,
+      modifiedBefore: params.modifiedBefore,
+      modifiedOn: params.modifiedOn
+    }, 'paginated-tickets');
   },
   routeBuilder: (ticket) => `/tickets/${ticket.id}`
 });
+
+// Set initial values
+listManager.searchQuery.value = initialSearchQuery;
+listManager.filters.value = initialFilters;
+listManager.currentPage.value = initialPage;
+listManager.pageSize.value = initialPageSize;
+
+// Update URL when filters change
+watch(
+  [
+    () => listManager.searchQuery.value,
+    () => listManager.filters.value,
+    () => listManager.currentPage.value,
+    () => listManager.pageSize.value,
+    () => listManager.sortField.value,
+    () => listManager.sortDirection.value
+  ],
+  () => {
+    const query: Record<string, string> = {};
+    
+    // Add search to URL
+    if (listManager.searchQuery.value) {
+      query.search = listManager.searchQuery.value;
+    }
+    
+    // Add filters to URL
+    if (listManager.filters.value.status && listManager.filters.value.status !== 'all') {
+      query.status = listManager.filters.value.status;
+    }
+    
+    if (listManager.filters.value.priority && listManager.filters.value.priority !== 'all') {
+      query.priority = listManager.filters.value.priority;
+    }
+    
+    // Add date filters to URL
+    if (listManager.filters.value.createdOn) {
+      query.createdOn = listManager.filters.value.createdOn;
+    }
+    
+    if (listManager.filters.value.createdAfter) {
+      query.createdAfter = listManager.filters.value.createdAfter;
+    }
+    
+    if (listManager.filters.value.createdBefore) {
+      query.createdBefore = listManager.filters.value.createdBefore;
+    }
+    
+    if (listManager.filters.value.modifiedOn) {
+      query.modifiedOn = listManager.filters.value.modifiedOn;
+    }
+    
+    if (listManager.filters.value.modifiedAfter) {
+      query.modifiedAfter = listManager.filters.value.modifiedAfter;
+    }
+    
+    if (listManager.filters.value.modifiedBefore) {
+      query.modifiedBefore = listManager.filters.value.modifiedBefore;
+    }
+    
+    if (listManager.filters.value.closedOn) {
+      query.closedOn = listManager.filters.value.closedOn;
+    }
+    
+    if (listManager.filters.value.closedAfter) {
+      query.closedAfter = listManager.filters.value.closedAfter;
+    }
+    
+    if (listManager.filters.value.closedBefore) {
+      query.closedBefore = listManager.filters.value.closedBefore;
+    }
+    
+    // Add pagination to URL (only if not default)
+    if (listManager.currentPage.value > 1) {
+      query.page = listManager.currentPage.value.toString();
+    }
+    
+    if (listManager.pageSize.value !== 10) {
+      query.pageSize = listManager.pageSize.value.toString();
+    }
+    
+    // Add sorting to URL (only if not default)
+    if (listManager.sortField.value !== 'id') {
+      query.sortField = listManager.sortField.value;
+    }
+    
+    if (listManager.sortDirection.value !== 'asc') {
+      query.sortDirection = listManager.sortDirection.value;
+    }
+    
+    // Update URL without triggering navigation
+    router.replace({ 
+      path: route.path, 
+      query: Object.keys(query).length > 0 ? query : undefined 
+    });
+  },
+  { deep: true }
+);
 
 // Define table columns with responsive behavior
 const columns = [
@@ -38,8 +190,8 @@ const columns = [
   { field: 'status', label: 'Status', width: 'minmax(100px,auto)', sortable: true, responsive: 'always' as const },
   { field: 'priority', label: 'Priority', width: 'minmax(100px,auto)', sortable: true, responsive: 'md' as const },
   { field: 'created', label: 'Created', width: 'minmax(120px,auto)', sortable: true, responsive: 'lg' as const },
-  { field: 'requester', label: 'Requester', width: 'minmax(120px,auto)', sortable: false, responsive: 'lg' as const },
-  { field: 'assignee', label: 'Assignee', width: 'minmax(120px,auto)', sortable: false, responsive: 'lg' as const }
+  { field: 'requester', label: 'Requester', width: 'minmax(120px,auto)', sortable: true, responsive: 'lg' as const },
+  { field: 'assignee', label: 'Assignee', width: 'minmax(120px,auto)', sortable: true, responsive: 'lg' as const }
 ];
 
 // Get available filter options
@@ -184,14 +336,18 @@ const gridClass = "grid-cols-[auto_1fr_minmax(80px,auto)] md:grid-cols-[auto_min
             
             <template #cell-requester="{ item }">
               <UserAvatarCell 
-                :user-id="item.requester" 
+                :user-id="item.requester_user?.uuid || item.requester" 
+                :avatar="item.requester_user?.avatar_thumb"
+                :user-name="item.requester_user?.name || item.requester"
                 :show-name="true" 
               />
             </template>
             
             <template #cell-assignee="{ item }">
               <UserAvatarCell 
-                :user-id="item.assignee" 
+                :user-id="item.assignee_user?.uuid || item.assignee" 
+                :avatar="item.assignee_user?.avatar_thumb"
+                :user-name="item.assignee_user?.name || item.assignee"
                 :show-name="true"
               />
             </template>
@@ -227,12 +383,24 @@ const gridClass = "grid-cols-[auto_1fr_minmax(80px,auto)] md:grid-cols-[auto_min
                   </div>
                   <div class="mt-2 flex items-center gap-2 text-xs">
                     <div class="flex items-center gap-1">
-                      <UserAvatar v-if="ticket.requester" :name="ticket.requester" size="xs" />
+                      <UserAvatar 
+                        v-if="ticket.requester_user || ticket.requester" 
+                        :name="ticket.requester_user?.name || ticket.requester" 
+                        :avatarUrl="ticket.requester_user?.avatar_thumb" 
+                        :userUuid="ticket.requester_user?.uuid"
+                        size="xs" 
+                      />
                       <span v-else class="text-slate-500">No requester</span>
                       <span class="text-slate-400">Requester</span>
                     </div>
                     <div class="flex items-center gap-1">
-                      <UserAvatar v-if="ticket.assignee" :name="ticket.assignee" size="xs" />
+                      <UserAvatar 
+                        v-if="ticket.assignee_user || ticket.assignee" 
+                        :name="ticket.assignee_user?.name || ticket.assignee" 
+                        :avatarUrl="ticket.assignee_user?.avatar_thumb" 
+                        :userUuid="ticket.assignee_user?.uuid"
+                        size="xs" 
+                      />
                       <span v-else class="text-slate-500">Unassigned</span>
                       <span class="text-slate-400">Assignee</span>
                     </div>

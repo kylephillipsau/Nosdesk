@@ -539,7 +539,7 @@ watch(() => docNavStore.needsRefresh, (needsRefresh) => {
       </div>
     </div>
     <div v-else class="relative">
-      <ul class="space-y-1 p-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-600 scrollbar-thumb-rounded">
+      <ul class="flex flex-col gap-1 p-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-600 scrollbar-thumb-rounded">
         <DocumentationNavItem
           v-for="page in pages"
           :key="page.id"

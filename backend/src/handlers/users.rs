@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder, Result as ActixResult};
 use actix_web_httpauth::extractors::bearer::BearerAuth;
 use bcrypt::DEFAULT_COST;
 use diesel::prelude::*;
@@ -10,6 +10,7 @@ use actix_multipart::Multipart;
 use std::fs;
 use std::path::Path;
 use std::collections::HashSet;
+use chrono::NaiveDateTime;
 
 use crate::models::{NewUser, UserResponse, UserUpdate, UserUpdateWithPassword, UserProfileUpdate};
 use crate::repository;
@@ -273,19 +274,18 @@ pub async fn create_user(
     // Generate UUID if provided
     let user_uuid = user_data.uuid;
 
-    // Create new user with normalized data
-    let new_user = NewUser {
-        uuid: user_uuid,
-        name: user_data.name.trim().to_string(),
-        email: user_data.email.trim().to_lowercase(), // Normalize email to lowercase
-        role: user_data.role,   // Use the UserRole enum directly
-        password_hash: Vec::new(), // Empty password hash, will be set via auth identity
-        pronouns: user_data.pronouns.as_ref().map(|p| p.trim().to_string()),
-        avatar_url: user_data.avatar_url.as_ref().map(|u| u.trim().to_string()),
-        banner_url: user_data.banner_url.as_ref().map(|u| u.trim().to_string()),
-        avatar_thumb: user_data.avatar_thumb.as_ref().map(|u| u.trim().to_string()),
-        microsoft_uuid: user_data.microsoft_uuid, // Use the Uuid directly
-    };
+    // Create new user with normalized data using builder
+    let (normalized_name, normalized_email) = utils::normalization::normalize_user_data(&user_data.name, &user_data.email);
+    let new_user = utils::NewUserBuilder::new(normalized_name, normalized_email, user_data.role)
+        .with_uuid(user_uuid)
+        .with_pronouns(user_data.pronouns.as_ref().map(|p| p.trim().to_string()))
+        .with_avatar(
+            user_data.avatar_url.as_ref().map(|u| u.trim().to_string()),
+            user_data.avatar_thumb.as_ref().map(|u| u.trim().to_string())
+        )
+        .with_banner(user_data.banner_url.as_ref().map(|u| u.trim().to_string()))
+        .with_microsoft_uuid(user_data.microsoft_uuid)
+        .build();
 
     match repository::create_user(new_user, &mut conn) {
         Ok(user) => {
@@ -309,7 +309,7 @@ pub async fn create_user(
             // Create local auth identity with default password
             let new_identity = NewUserAuthIdentity {
                 user_id: user.id,
-                provider_id: 1, // Local auth provider
+                provider_type: "local".to_string(),
                 external_id: utils::uuid_to_string(&user.uuid),
                 email: Some(user.email.clone()),
                 metadata: None,
@@ -798,7 +798,7 @@ pub async fn update_user_profile(
         };
         
         // Find local identity
-        let local_identity = auth_identities.iter().find(|identity| identity.provider_id == 1);
+        let local_identity = auth_identities.iter().find(|identity| identity.provider_type == "local");
         
         match local_identity {
             Some(identity) => {
@@ -820,7 +820,7 @@ pub async fn update_user_profile(
                 // Create new identity with updated password
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    provider_id: identity.provider_id,
+                    provider_type: identity.provider_type.clone(),
                     external_id: identity.external_id.clone(),
                     email: identity.email.clone(),
                     metadata: identity.metadata.clone(),
@@ -839,7 +839,7 @@ pub async fn update_user_profile(
                 // Create new local identity if none exists
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    provider_id: 1, // Local provider
+                    provider_type: "local".to_string(),
                     external_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
                     email: profile_data.email.clone(),
                     metadata: None,
@@ -995,26 +995,80 @@ pub async fn upload_user_image(
             file_data.extend_from_slice(&data);
         }
         
-        // Write the file
-        if let Err(e) = fs::write(&filepath, &file_data) {
-            eprintln!("Error writing file: {:?}", e);
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "message": "Error saving uploaded file"
-            }));
-        }
+        // Process the image based on type
+        let (final_url, thumbnail_url) = if image_type == "avatar" {
+            // For avatars, process and resize to WebP format with fixed dimensions (200x200 max)
+            match crate::utils::image::process_avatar_image(&file_data, &user_uuid, 200).await {
+                Ok(Some(avatar_url)) => {
+                    println!("Successfully processed avatar for user {}: {}", user_uuid, avatar_url);
+                    
+                    // Generate thumbnail from the processed avatar
+                    let thumb_url = match crate::utils::image::generate_user_avatar_thumbnail(&avatar_url, &user_uuid).await {
+                        Ok(Some(thumb_url)) => {
+                            println!("Successfully generated thumbnail for user {}: {}", user_uuid, thumb_url);
+                            Some(thumb_url)
+                        },
+                        Ok(None) => {
+                            println!("Failed to generate thumbnail for user {}", user_uuid);
+                            None
+                        },
+                        Err(e) => {
+                            eprintln!("Error generating thumbnail for user {}: {}", user_uuid, e);
+                            None
+                        }
+                    };
+                    
+                    (avatar_url, thumb_url)
+                },
+                Ok(None) => {
+                    eprintln!("Failed to process avatar for user {}", user_uuid);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to process avatar image"
+                    }));
+                },
+                Err(e) => {
+                    eprintln!("Error processing avatar for user {}: {}", user_uuid, e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error processing avatar image"
+                    }));
+                }
+            }
+        } else {
+            // For banners, process and resize to WebP format with banner dimensions (1200x400 max)
+            match crate::utils::image::process_banner_image(&file_data, &user_uuid, 1200, 400).await {
+                Ok(Some(banner_url)) => {
+                    println!("Successfully processed banner for user {}: {}", user_uuid, banner_url);
+                    (banner_url, None) // Banners don't need thumbnails
+                },
+                Ok(None) => {
+                    eprintln!("Failed to process banner for user {}", user_uuid);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Failed to process banner image"
+                    }));
+                },
+                Err(e) => {
+                    eprintln!("Error processing banner for user {}: {}", user_uuid, e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "status": "error",
+                        "message": "Error processing banner image"
+                    }));
+                }
+            }
+        };
         
         // Update the user record with the new image URL
-        let url = format!("/{}", filepath); // URL will be relative to the server root
         
         let user_update = UserUpdate {
             name: None,
             email: None,
             role: None,
             pronouns: None,
-            avatar_url: if image_type == "avatar" { Some(url.clone()) } else { None },
-            banner_url: if image_type == "banner" { Some(url.clone()) } else { None },
-            avatar_thumb: None,
+            avatar_url: if image_type == "avatar" { Some(final_url.clone()) } else { None },
+            banner_url: if image_type == "banner" { Some(final_url.clone()) } else { None },
+            avatar_thumb: thumbnail_url,
             microsoft_uuid: None, // Don't update Microsoft UUID in regular user updates
             updated_at: Some(chrono::Utc::now().naive_utc()),
         };
@@ -1024,7 +1078,7 @@ pub async fn upload_user_image(
                 return HttpResponse::Ok().json(json!({
                     "status": "success",
                     "message": format!("User {} updated successfully", image_type),
-                    "url": url,
+                    "url": final_url,
                     "user": UserResponse::from(updated_user)
                 }));
             },
@@ -1241,38 +1295,50 @@ async fn cleanup_directory_stale_files(
 
 /// Determine if a file should be kept based on naming patterns
 fn should_keep_file(filename: &str, valid_uuids: &HashSet<String>, valid_suffixes: &[&str]) -> bool {
-    // Skip hidden files and non-image files
-    if filename.starts_with('.') || !filename.contains('.') {
+    // Skip hidden files like .DS_Store
+    if filename.starts_with('.') {
+        return true;
+    }
+    
+    // Skip non-image files
+    if !filename.contains('.') {
         return true;
     }
     
     // Extract the base name without extension
     let base_name = filename.split('.').next().unwrap_or("");
     
-    // Check for new format: {uuid}_{suffix}
+    // Check for new format: {uuid}_{suffix} (like uuid_avatar.webp or uuid_thumb.webp)
     if let Some(underscore_pos) = base_name.find('_') {
         let uuid_part = &base_name[..underscore_pos];
         let suffix_part = &base_name[underscore_pos + 1..];
         
-        // Check if this matches our expected pattern
+        // Check if this matches our expected NEW pattern
         if valid_uuids.contains(uuid_part) && valid_suffixes.contains(&suffix_part) {
+            println!("Keeping new format file: {}", filename);
             return true; // Keep this file
         }
-    }
-    
-    // Check for old format with random UUIDs: {uuid}_{random_uuid}_{suffix}
-    // These should be removed as they're the old stale files
-    let parts: Vec<&str> = base_name.split('_').collect();
-    if parts.len() >= 3 {
-        // This looks like an old format file, check if the first part is a valid user UUID
-        if valid_uuids.contains(parts[0]) {
-            // This is an old format file for a valid user, but we want to remove it
-            // since we're using the new format now
-            return false;
+        
+        // Check for old format patterns that should be removed
+        // Old patterns: {uuid}_120x120.jpg, {uuid}_48x48.jpg, {uuid}_{random-uuid}_banner.jpg
+        if valid_uuids.contains(uuid_part) {
+            // This is for a valid user but in old format - remove it
+            if suffix_part.contains("x") || suffix_part.len() > 20 { // Likely old format
+                println!("Removing old format file: {}", filename);
+                return false;
+            }
         }
     }
     
-    // If we can't determine the pattern, keep the file to be safe
+    // Check for files that don't start with a valid UUID - these are definitely stale
+    let parts: Vec<&str> = base_name.split('_').collect();
+    if !parts.is_empty() && !valid_uuids.contains(parts[0]) {
+        println!("Removing file with invalid UUID: {}", filename);
+        return false;
+    }
+    
+    // If we can't determine the pattern clearly, keep the file to be safe
+    println!("Keeping unknown pattern file: {}", filename);
     true
 }
 
@@ -1346,7 +1412,7 @@ pub async fn update_user_by_uuid(
         };
         
         // Find local identity
-        let local_identity = auth_identities.iter().find(|identity| identity.provider_id == 1);
+        let local_identity = auth_identities.iter().find(|identity| identity.provider_type == "local");
         
         match local_identity {
             Some(identity) => {
@@ -1368,7 +1434,7 @@ pub async fn update_user_by_uuid(
                 // Create new identity with updated password
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    provider_id: identity.provider_id,
+                    provider_type: identity.provider_type.clone(),
                     external_id: identity.external_id.clone(),
                     email: identity.email.clone(),
                     metadata: identity.metadata.clone(),
@@ -1387,7 +1453,7 @@ pub async fn update_user_by_uuid(
                 // Create new local identity if none exists
                 let new_auth_identity = NewUserAuthIdentity {
                     user_id,
-                    provider_id: 1, // Local provider
+                    provider_type: "local".to_string(),
                     external_id: Uuid::new_v4().to_string(), // Generate a new provider user ID
                     email: user_data.email.clone(),
                     metadata: None,

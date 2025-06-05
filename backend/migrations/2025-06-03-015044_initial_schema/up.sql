@@ -50,38 +50,25 @@ CREATE TABLE users (
     avatar_url VARCHAR(500),
     banner_url VARCHAR(500),
     avatar_thumb VARCHAR(500),
-    microsoft_uuid UUID
-);
-
--- Auth providers for external authentication
-CREATE TABLE auth_providers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    provider_type VARCHAR(50) NOT NULL DEFAULT 'local',
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
-    client_id VARCHAR(255) NOT NULL,
-    client_secret VARCHAR(255) NOT NULL,
-    authorization_url VARCHAR(500) NOT NULL,
-    token_url VARCHAR(500) NOT NULL,
-    redirect_uri VARCHAR(500) NOT NULL,
-    scope VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    microsoft_uuid UUID,
+    mfa_secret VARCHAR(255), -- Base32 encoded TOTP secret
+    mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    mfa_backup_codes JSONB, -- Array of backup codes for MFA recovery
+    passkey_credentials JSONB -- WebAuthn passkey credentials
 );
 
 -- User authentication identities for external auth
 CREATE TABLE user_auth_identities (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider_id INTEGER NOT NULL REFERENCES auth_providers(id) ON DELETE CASCADE,
+    provider_type VARCHAR(50) NOT NULL, -- 'microsoft', 'google', etc.
     external_id VARCHAR(255) NOT NULL,
     email VARCHAR(255),
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     password_hash VARCHAR(255),
-    UNIQUE(provider_id, external_id)
+    UNIQUE(provider_type, external_id)
 );
 
 -- User emails for multiple email addresses per user
@@ -105,7 +92,7 @@ CREATE TABLE devices (
     serial_number VARCHAR(255),
     manufacturer VARCHAR(255),
     model VARCHAR(255),
-    warranty_status VARCHAR(100),
+    warranty_status VARCHAR(50),
     location VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -146,7 +133,7 @@ CREATE TABLE tickets (
     assignee_uuid UUID REFERENCES users(uuid),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    device_id INTEGER REFERENCES devices(id)
+    closed_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Ticket-device junction table for many-to-many relationship
@@ -287,7 +274,6 @@ CREATE INDEX idx_project_tickets_ticket_id ON project_tickets(ticket_id);
 
 -- Setup updated_at triggers
 SELECT diesel_manage_updated_at('users');
-SELECT diesel_manage_updated_at('auth_providers');
 SELECT diesel_manage_updated_at('user_auth_identities');
 SELECT diesel_manage_updated_at('user_emails');
 SELECT diesel_manage_updated_at('devices');
@@ -296,3 +282,6 @@ SELECT diesel_manage_updated_at('tickets');
 SELECT diesel_manage_updated_at('comments');
 SELECT diesel_manage_updated_at('documentation_pages');
 SELECT diesel_manage_updated_at('documentation_revisions');
+
+-- Set the sequence to continue from ID 1
+SELECT setval('users_id_seq', 1, true);
