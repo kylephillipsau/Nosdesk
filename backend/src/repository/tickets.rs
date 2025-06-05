@@ -23,6 +23,16 @@ pub fn get_paginated_tickets(
     search: Option<String>,
     status: Option<String>,
     priority: Option<String>,
+    assignee: Option<String>,
+    created_after: Option<String>,
+    created_before: Option<String>,
+    created_on: Option<String>,
+    modified_after: Option<String>,
+    modified_before: Option<String>,
+    modified_on: Option<String>,
+    closed_after: Option<String>,
+    closed_before: Option<String>,
+    closed_on: Option<String>,
 ) -> Result<(Vec<Ticket>, i64), Error> {
     // Build the main query
     let mut query = tickets::table.into_boxed();
@@ -110,6 +120,96 @@ pub fn get_paginated_tickets(
         }
     }
     
+    // Handle assignee filter for count query  
+    if let Some(assignee_filter) = &assignee {
+        if assignee_filter != "all" {
+            // Parse the UUID string
+            if let Ok(assignee_uuid) = uuid::Uuid::parse_str(assignee_filter) {
+                count_query = count_query.filter(tickets::assignee_uuid.eq(Some(assignee_uuid)));
+                query = query.filter(tickets::assignee_uuid.eq(Some(assignee_uuid)));
+            }
+        }
+    }
+    
+    // Handle date filtering
+    // Created date filters
+    if let Some(created_after_str) = &created_after {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(created_after_str, "%Y-%m-%d") {
+            let datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            query = query.filter(tickets::created_at.ge(datetime));
+            count_query = count_query.filter(tickets::created_at.ge(datetime));
+        }
+    }
+    
+    if let Some(created_before_str) = &created_before {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(created_before_str, "%Y-%m-%d") {
+            let datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::created_at.le(datetime));
+            count_query = count_query.filter(tickets::created_at.le(datetime));
+        }
+    }
+    
+    if let Some(created_on_str) = &created_on {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(created_on_str, "%Y-%m-%d") {
+            let start_datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            let end_datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::created_at.between(start_datetime, end_datetime));
+            count_query = count_query.filter(tickets::created_at.between(start_datetime, end_datetime));
+        }
+    }
+    
+    // Modified date filters (using updated_at column)
+    if let Some(modified_after_str) = &modified_after {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(modified_after_str, "%Y-%m-%d") {
+            let datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            query = query.filter(tickets::updated_at.ge(datetime));
+            count_query = count_query.filter(tickets::updated_at.ge(datetime));
+        }
+    }
+    
+    if let Some(modified_before_str) = &modified_before {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(modified_before_str, "%Y-%m-%d") {
+            let datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::updated_at.le(datetime));
+            count_query = count_query.filter(tickets::updated_at.le(datetime));
+        }
+    }
+    
+    if let Some(modified_on_str) = &modified_on {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(modified_on_str, "%Y-%m-%d") {
+            let start_datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            let end_datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::updated_at.between(start_datetime, end_datetime));
+            count_query = count_query.filter(tickets::updated_at.between(start_datetime, end_datetime));
+        }
+    }
+    
+    // Closed date filtering
+    if let Some(closed_after_str) = &closed_after {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(closed_after_str, "%Y-%m-%d") {
+            let start_datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            query = query.filter(tickets::closed_at.gt(start_datetime));
+            count_query = count_query.filter(tickets::closed_at.gt(start_datetime));
+        }
+    }
+    
+    if let Some(closed_before_str) = &closed_before {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(closed_before_str, "%Y-%m-%d") {
+            let end_datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::closed_at.lt(end_datetime));
+            count_query = count_query.filter(tickets::closed_at.lt(end_datetime));
+        }
+    }
+    
+    if let Some(closed_on_str) = &closed_on {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(closed_on_str, "%Y-%m-%d") {
+            let start_datetime = date.and_hms_opt(0, 0, 0).unwrap();
+            let end_datetime = date.and_hms_opt(23, 59, 59).unwrap();
+            query = query.filter(tickets::closed_at.between(start_datetime, end_datetime));
+            count_query = count_query.filter(tickets::closed_at.between(start_datetime, end_datetime));
+        }
+    }
+    
     // Count total matching records (before pagination)
     let total: i64 = count_query.count().get_result(conn)?;
     
@@ -140,6 +240,66 @@ pub fn get_paginated_tickets(
     let results = query.load::<Ticket>(conn)?;
     
     Ok((results, total))
+}
+
+// Get paginated tickets with user information for list views
+pub fn get_paginated_tickets_with_users(
+    conn: &mut DbConnection,
+    page: i64,
+    page_size: i64,
+    sort_field: Option<String>,
+    sort_direction: Option<String>,
+    search: Option<String>,
+    status: Option<String>,
+    priority: Option<String>,
+    assignee: Option<String>,
+    created_after: Option<String>,
+    created_before: Option<String>,
+    created_on: Option<String>,
+    modified_after: Option<String>,
+    modified_before: Option<String>,
+    modified_on: Option<String>,
+    closed_after: Option<String>,
+    closed_before: Option<String>,
+    closed_on: Option<String>,
+) -> Result<(Vec<crate::models::TicketListItem>, i64), Error> {
+    // First get the basic tickets and total count
+    let (tickets, total) = get_paginated_tickets(
+        conn, page, page_size, sort_field, sort_direction, 
+        search, status, priority, assignee,
+        created_after, created_before, created_on,
+        modified_after, modified_before, modified_on,
+        closed_after, closed_before, closed_on
+    )?;
+
+    // Convert to TicketListItem with user information
+    let mut ticket_list_items = Vec::new();
+    
+    for ticket in tickets {
+        // Look up complete user data for requester and assignee
+        let requester_user = match crate::repository::get_user_by_uuid(&ticket.requester_uuid, conn) {
+            Ok(user) => Some(crate::models::UserInfoWithAvatar::from(user)),
+            Err(_) => None,
+        };
+        
+        let assignee_user = match ticket.assignee_uuid {
+            Some(assignee_uuid) => {
+                match crate::repository::get_user_by_uuid(&assignee_uuid, conn) {
+                    Ok(user) => Some(crate::models::UserInfoWithAvatar::from(user)),
+                    Err(_) => None,
+                }
+            },
+            None => None,
+        };
+
+        ticket_list_items.push(crate::models::TicketListItem {
+            ticket,
+            requester_user,
+            assignee_user,
+        });
+    }
+
+    Ok((ticket_list_items, total))
 }
 
 pub fn get_ticket_by_id(conn: &mut DbConnection, ticket_id: i32) -> QueryResult<Ticket> {
@@ -179,6 +339,22 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     let ticket = get_ticket_by_id(conn, ticket_id)?;
     println!("Found ticket: {} - {}", ticket.id, ticket.title);
     
+    // Look up complete user data for requester and assignee
+    let requester_user = match crate::repository::get_user_by_uuid(&ticket.requester_uuid, conn) {
+        Ok(user) => Some(UserInfoWithAvatar::from(user)),
+        Err(_) => None, // User not found
+    };
+    
+    let assignee_user = match ticket.assignee_uuid {
+        Some(assignee_uuid) => {
+            match crate::repository::get_user_by_uuid(&assignee_uuid, conn) {
+                Ok(user) => Some(UserInfoWithAvatar::from(user)),
+                Err(_) => None, // User not found
+            }
+        },
+        None => None, // No assignee
+    };
+    
     // Get devices associated with this ticket through the junction table
     let devices = get_devices_for_ticket(conn, ticket_id).unwrap_or_default();
     
@@ -189,9 +365,9 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     for comment in comments {
         let attachments = crate::repository::comments::get_attachments_by_comment_id(conn, comment.id)?;
         
-        // Get user information for this comment
+        // Get user information for this comment with avatar
         let user = match crate::repository::users::get_user_by_id(comment.user_id, conn) {
-            Ok(user) => Some(UserInfo::from(user)),
+            Ok(user) => Some(UserInfoWithAvatar::from(user)),
             Err(_) => None,
         };
         
@@ -217,6 +393,8 @@ pub fn get_complete_ticket(conn: &mut DbConnection, ticket_id: i32) -> Result<Co
     
     Ok(CompleteTicket {
         ticket,
+        requester_user,
+        assignee_user,
         devices,
         comments: comments_with_attachments,
         article_content,
@@ -264,7 +442,6 @@ pub fn import_ticket_from_json(conn: &mut DbConnection, ticket_json: &TicketJson
         } else { 
             Uuid::parse_str(&ticket_json.assignee).ok()
         },
-        device_id: None, // Will be set separately if device exists
     };
     
     let ticket = create_ticket(conn, new_ticket)?;
@@ -375,7 +552,6 @@ pub fn create_complete_ticket(conn: &mut DbConnection, ticket_json: TicketJson) 
         } else { 
             Uuid::parse_str(&ticket_json.assignee).ok()
         },
-        device_id: None, // Will be set separately if device exists
     };
     
     let ticket = create_ticket(conn, new_ticket)?;

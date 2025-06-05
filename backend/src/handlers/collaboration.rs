@@ -687,41 +687,17 @@ pub async fn ws_handler(
         .and_then(|param| param.split('=').nth(1))
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("No authentication token provided"))?;
     
-    // Validate the token using existing auth logic
+    // Validate the token using our JWT utilities
     if let Some(pool) = req.app_data::<web::Data<crate::db::Pool>>() {
         let mut conn = pool.get()
             .map_err(|_| actix_web::error::ErrorInternalServerError("Database connection failed"))?;
         
-        // Use JWT validation logic directly
-        use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-        use crate::models::Claims;
-        use crate::handlers::auth::JWT_SECRET;
+        // Use our centralized JWT validation
+        use crate::utils::jwt::JwtUtils;
         
-        // Create validation with same requirements as auth handler
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.validate_exp = true;
-        validation.validate_nbf = true;
-        validation.leeway = 30;
-        
-        // Decode the token
-        let token_data = match decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(JWT_SECRET.as_bytes()),
-            &validation,
-        ) {
-            Ok(data) => data,
+        match JwtUtils::validate_token_with_user_check(token, &mut conn).await {
+            Ok((_claims, _user)) => (),
             Err(_) => return Err(actix_web::error::ErrorUnauthorized("Invalid or expired token")),
-        };
-        
-        // Verify user still exists in database
-        let user_uuid = match crate::utils::parse_uuid(&token_data.claims.sub) {
-            Ok(uuid) => uuid,
-            Err(_) => return Err(actix_web::error::ErrorUnauthorized("Invalid user UUID in token")),
-        };
-
-        match crate::repository::users::get_user_by_uuid(&user_uuid, &mut conn) {
-            Ok(_) => (),
-            Err(_) => return Err(actix_web::error::ErrorUnauthorized("User not found")),
         }
     } else {
         return Err(actix_web::error::ErrorInternalServerError("Database pool not available"));

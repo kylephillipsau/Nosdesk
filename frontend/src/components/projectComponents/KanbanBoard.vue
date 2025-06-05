@@ -12,6 +12,7 @@ interface KanbanTicket {
   id: number;
   title: string;
   assignee: string;
+  assignee_avatar?: string | null;
   priority: 'low' | 'medium' | 'high';
   status: string;
 }
@@ -91,6 +92,7 @@ const fetchProjectTickets = async () => {
         id: ticket.id,
         title: ticket.title,
         assignee: ticket.assignee || 'Unassigned',
+        assignee_avatar: ticket.assignee_avatar,
         priority: ticket.priority as 'low' | 'medium' | 'high',
         status: ticket.status
       }
@@ -410,6 +412,7 @@ const shouldShowInsertionAfter = (columnId: string, ticketIndex: number): boolea
                     <UserAvatar 
                       v-if="ticket.assignee && ticket.assignee !== 'Unassigned'" 
                       :name="ticket.assignee" 
+                      :avatarUrl="ticket.assignee_avatar"
                       size="xs" 
                       :showName="true"
                       :clickable="false"

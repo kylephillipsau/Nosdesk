@@ -42,32 +42,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    auth_providers (id) {
-        id -> Int4,
-        #[max_length = 100]
-        name -> Varchar,
-        #[max_length = 50]
-        provider_type -> Varchar,
-        enabled -> Bool,
-        is_default -> Bool,
-        #[max_length = 255]
-        client_id -> Varchar,
-        #[max_length = 255]
-        client_secret -> Varchar,
-        #[max_length = 500]
-        authorization_url -> Varchar,
-        #[max_length = 500]
-        token_url -> Varchar,
-        #[max_length = 500]
-        redirect_uri -> Varchar,
-        #[max_length = 255]
-        scope -> Nullable<Varchar>,
-        created_at -> Timestamptz,
-        updated_at -> Timestamptz,
-    }
-}
-
-diesel::table! {
     comments (id) {
         id -> Int4,
         content -> Text,
@@ -93,7 +67,7 @@ diesel::table! {
         manufacturer -> Nullable<Varchar>,
         #[max_length = 255]
         model -> Nullable<Varchar>,
-        #[max_length = 100]
+        #[max_length = 50]
         warranty_status -> Nullable<Varchar>,
         #[max_length = 255]
         location -> Nullable<Varchar>,
@@ -246,7 +220,7 @@ diesel::table! {
         assignee_uuid -> Nullable<Uuid>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
-        device_id -> Nullable<Int4>,
+        closed_at -> Nullable<Timestamptz>,
     }
 }
 
@@ -254,7 +228,8 @@ diesel::table! {
     user_auth_identities (id) {
         id -> Int4,
         user_id -> Int4,
-        provider_id -> Int4,
+        #[max_length = 50]
+        provider_type -> Varchar,
         #[max_length = 255]
         external_id -> Varchar,
         #[max_length = 255]
@@ -304,6 +279,11 @@ diesel::table! {
         #[max_length = 500]
         avatar_thumb -> Nullable<Varchar>,
         microsoft_uuid -> Nullable<Uuid>,
+        #[max_length = 255]
+        mfa_secret -> Nullable<Varchar>,
+        mfa_enabled -> Bool,
+        mfa_backup_codes -> Nullable<Jsonb>,
+        passkey_credentials -> Nullable<Jsonb>,
     }
 }
 
@@ -318,15 +298,12 @@ diesel::joinable!(project_tickets -> projects (project_id));
 diesel::joinable!(project_tickets -> tickets (ticket_id));
 diesel::joinable!(ticket_devices -> devices (device_id));
 diesel::joinable!(ticket_devices -> tickets (ticket_id));
-diesel::joinable!(tickets -> devices (device_id));
-diesel::joinable!(user_auth_identities -> auth_providers (provider_id));
 diesel::joinable!(user_auth_identities -> users (user_id));
 diesel::joinable!(user_emails -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     article_contents,
     attachments,
-    auth_providers,
     comments,
     devices,
     documentation_pages,

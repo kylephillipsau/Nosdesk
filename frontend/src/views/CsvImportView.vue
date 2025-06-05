@@ -243,7 +243,7 @@ const showTemplateDialog = () => {
       <!-- Import Guidelines -->
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-4">
         <h2 class="text-xl font-medium text-white mb-4">CSV Import Guidelines</h2>
-        <div class="space-y-4 text-sm text-slate-300">
+        <div class="flex flex-col gap-4 text-sm text-slate-300">
           <div class="bg-blue-900/20 border border-blue-800/50 rounded-md p-4">
             <h3 class="font-medium text-blue-300 mb-2 flex items-center">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -251,7 +251,7 @@ const showTemplateDialog = () => {
               </svg>
               CSV File Requirements
             </h3>
-            <ul class="list-disc list-inside space-y-1 ml-2">
+            <ul class="list-disc list-inside flex flex-col gap-1 ml-2">
               <li>Files must be in CSV format with UTF-8 encoding</li>
               <li>The first row must contain column headers matching the expected fields</li>
               <li>Required fields must not be empty</li>
@@ -267,7 +267,7 @@ const showTemplateDialog = () => {
               </svg>
               Important Notes
             </h3>
-            <ul class="list-disc list-inside space-y-1 ml-2">
+            <ul class="list-disc list-inside flex flex-col gap-1 ml-2">
               <li>Existing records will be updated if they share a unique identifier (like email or ID)</li>
               <li>Data validation is performed before import - records with invalid data will be skipped</li>
               <li>For large imports, the process may take several minutes to complete</li>
@@ -284,7 +284,7 @@ const showTemplateDialog = () => {
           Use these templates as a starting point for your CSV imports
         </p>
         
-        <div class="space-y-4">
+        <div class="flex flex-col gap-4">
           <div v-for="template in sampleTemplates" :key="template.type" 
                class="p-4 bg-slate-700 rounded-lg border border-slate-600">
             <div class="flex items-start md:items-center flex-col md:flex-row md:justify-between">
@@ -322,7 +322,7 @@ const showTemplateDialog = () => {
       contentClass="max-w-lg"
       @close="showImportModal = false"
     >
-      <div class="space-y-4">
+      <div class="flex flex-col gap-4">
         <div>
           <label class="block text-sm font-medium text-slate-300 mb-1">
             Data Type
@@ -342,7 +342,7 @@ const showTemplateDialog = () => {
             CSV File
           </label>
           <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed border-slate-600 rounded-md">
-            <div class="space-y-1 text-center">
+            <div class="flex flex-col gap-1 text-center">
               <svg
                 v-if="!fileUploaded"
                 class="mx-auto h-12 w-12 text-slate-400"
@@ -420,12 +420,12 @@ const showTemplateDialog = () => {
       contentClass="max-w-lg"
       @close="showTemplateModal = false"
     >
-      <div class="space-y-4">
+      <div class="flex flex-col gap-4">
         <p class="text-slate-300 mb-4">
           Download our CSV templates to ensure your data is formatted correctly for import.
         </p>
         
-        <div class="space-y-3">
+        <div class="flex flex-col gap-3">
           <div v-for="template in sampleTemplates" :key="template.type"
                class="p-3 bg-slate-700 rounded-lg flex justify-between items-center">
             <div>

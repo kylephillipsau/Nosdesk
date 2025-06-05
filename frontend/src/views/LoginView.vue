@@ -129,7 +129,7 @@ const handleMicrosoftLogout = async () => {
       </div>
 
       <!-- Login Form -->
-      <form @submit.prevent="handleLogin" class="flex flex-col gap-4 space-y-6">
+      <form @submit.prevent="handleLogin" class="flex flex-col gap-6">
         <div>
           <label for="email" class="block text-sm font-medium text-slate-300">Email</label>
           <input

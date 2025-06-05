@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import axios from 'axios';
+import apiClient from '@/services/apiConfig';
 
 const route = useRoute();
 const router = useRouter();
@@ -48,7 +48,7 @@ onMounted(async () => {
     message.value = 'Processing authentication response...';
     console.log('Sending callback request to backend...');
     
-    const response = await axios.get(`/api/auth/microsoft/callback`, {
+    const response = await apiClient.get(`auth/oauth/callback`, {
       params: {
         code,
         state
@@ -112,13 +112,13 @@ onMounted(async () => {
 <template>
   <div class="h-screen flex items-center justify-center bg-slate-900">
     <div class="bg-slate-800 p-8 rounded-lg shadow-lg max-w-md w-full">
-      <div v-if="loading" class="flex flex-col items-center justify-center space-y-4">
+      <div v-if="loading" class="flex flex-col items-center justify-center gap-4">
         <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
         <h2 class="text-xl font-medium text-white">{{ message }}</h2>
         <p class="text-slate-400 text-center">Please wait while we complete your authentication</p>
       </div>
       
-      <div v-else-if="error" class="flex flex-col items-center justify-center space-y-4">
+      <div v-else-if="error" class="flex flex-col items-center justify-center gap-4">
         <div class="bg-red-500 rounded-full p-3">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />

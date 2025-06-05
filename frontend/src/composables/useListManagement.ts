@@ -44,6 +44,9 @@ export function useListManagement<T extends Record<string, any>>(options: ListOp
   const selectedItems = ref<string[]>([])
   const lastSelectedItemId = ref<string | null>(null)
   
+  // Initialization control
+  const isInitialized = ref(false)
+  
   // Computed properties
   const itemIdField = options.itemIdField || 'id'
   
@@ -215,11 +218,19 @@ export function useListManagement<T extends Record<string, any>>(options: ListOp
     }
   }
   
-  // Watchers
+  // Initialize first fetch
+  const initialize = () => {
+    isInitialized.value = true
+    fetchItems()
+  }
+  
+  // Watchers - only trigger after initialization
   watch(
     [currentPage, pageSize, sortField, sortDirection, searchQuery],
     () => {
+      if (isInitialized.value) {
       fetchItems()
+      }
     }
   )
   
@@ -227,14 +238,16 @@ export function useListManagement<T extends Record<string, any>>(options: ListOp
   watch(
     () => filters.value,
     () => {
+      if (isInitialized.value) {
       fetchItems()
+      }
     },
     { deep: true }
   )
   
-  // Initialize
+  // Initialize after mount
   onMounted(() => {
-    fetchItems()
+    initialize()
   })
   
   return {
@@ -263,6 +276,7 @@ export function useListManagement<T extends Record<string, any>>(options: ListOp
     
     // Methods
     fetchItems,
+    initialize,
     toggleSelection,
     toggleAllItems,
     navigateToItem,

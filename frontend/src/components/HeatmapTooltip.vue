@@ -83,7 +83,7 @@ onUnmounted(() => {
       <div class="text-sm text-gray-400 mb-1">{{ details.date }}</div>
       <div class="text-white font-medium mb-2">{{ details.title }}</div>
       
-      <div v-if="details.tickets && details.tickets.length > 0" class="space-y-1">
+      <div v-if="details.tickets && details.tickets.length > 0" class="flex flex-col gap-1">
         <div
           v-for="ticket in details.tickets"
           :key="ticket.id"

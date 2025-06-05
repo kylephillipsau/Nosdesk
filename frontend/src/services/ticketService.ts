@@ -82,6 +82,8 @@ export interface Ticket {
   modified: string;
   assignee: string;
   requester: string;
+  requester_user?: UserInfo | null;  // Complete requester data
+  assignee_user?: UserInfo | null;   // Complete assignee data
   closed_at?: string;
   devices?: Device[];
   comments?: Comment[];
@@ -100,6 +102,17 @@ export interface PaginationParams {
   search?: string;
   status?: string;
   priority?: string;
+  assignee?: string;
+  // Date filtering parameters
+  createdAfter?: string;
+  createdBefore?: string;
+  createdOn?: string;
+    modifiedAfter?: string;
+  modifiedBefore?: string; 
+  modifiedOn?: string;
+  closedAfter?: string;
+  closedBefore?: string;
+  closedOn?: string;
 }
 
 // Paginated response interface
@@ -115,6 +128,7 @@ export interface PaginatedResponse<T> {
 export interface UserInfo {
   uuid: string;
   name: string;
+  avatar_thumb?: string | null; // Avatar thumbnail for comment users
 }
 
 // Add CommentWithAttachments interface
@@ -238,13 +252,12 @@ export const unlinkTicket = async (ticketId: number, linkedTicketId: number): Pr
 export const addCommentToTicket = async (
   ticketId: number, 
   content: string, 
-  userUuid: string,
   attachments: { url: string; name: string }[] = []
 ): Promise<Comment> => {
   try {
     const response = await axios.post(`${API_BASE_URL}/tickets/${ticketId}/comments`, {
       content,
-      user_uuid: userUuid,
+      // user information is extracted from JWT token on backend for security
       attachments
     });
     return response.data;

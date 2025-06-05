@@ -30,12 +30,34 @@ export interface LoginResponse {
 }
 
 class AuthService {
+  private setupStatusCache: {
+    data: OnboardingStatus | null;
+    timestamp: number;
+    ttl: number; // time to live in milliseconds
+  } = {
+    data: null,
+    timestamp: 0,
+    ttl: 5 * 60 * 1000 // Cache for 5 minutes
+  };
+
   /**
    * Check if the system requires initial setup
    */
   async checkSetupStatus(): Promise<OnboardingStatus> {
+    // Check if we have cached data that's still valid
+    const now = Date.now();
+    if (this.setupStatusCache.data && 
+        (now - this.setupStatusCache.timestamp) < this.setupStatusCache.ttl) {
+      return this.setupStatusCache.data;
+    }
+
     try {
       const response = await axios.get(`${API_BASE_URL}/api/auth/setup/status`);
+      
+      // Cache the response
+      this.setupStatusCache.data = response.data;
+      this.setupStatusCache.timestamp = now;
+      
       return response.data;
     } catch (error) {
       console.error('Error checking setup status:', error);
@@ -117,6 +139,14 @@ class AuthService {
    */
   setToken(token: string): void {
     localStorage.setItem('authToken', token);
+  }
+
+  /**
+   * Clear the setup status cache (useful after admin setup completes)
+   */
+  clearSetupStatusCache(): void {
+    this.setupStatusCache.data = null;
+    this.setupStatusCache.timestamp = 0;
   }
 }
 

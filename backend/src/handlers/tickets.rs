@@ -1,7 +1,7 @@
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder, Result as ActixResult};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 use uuid::Uuid;
@@ -23,6 +23,26 @@ pub struct PaginationParams {
     search: Option<String>,
     status: Option<String>,
     priority: Option<String>,
+    assignee: Option<String>,
+    // Date filtering parameters
+    #[serde(rename = "createdAfter")]
+    created_after: Option<String>,
+    #[serde(rename = "createdBefore")]
+    created_before: Option<String>,
+    #[serde(rename = "createdOn")]
+    created_on: Option<String>,
+    #[serde(rename = "modifiedAfter")]
+    modified_after: Option<String>,
+    #[serde(rename = "modifiedBefore")]
+    modified_before: Option<String>,
+    #[serde(rename = "modifiedOn")]
+    modified_on: Option<String>,
+    #[serde(rename = "closedAfter")]
+    closed_after: Option<String>,
+    #[serde(rename = "closedBefore")]
+    closed_before: Option<String>,
+    #[serde(rename = "closedOn")]
+    closed_on: Option<String>,
 }
 
 // Paginated response
@@ -64,7 +84,7 @@ pub async fn get_paginated_tickets(
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(10).clamp(1, 100);
 
-    match repository::get_paginated_tickets(
+    match repository::get_paginated_tickets_with_users(
         &mut conn,
         page,
         page_size,
@@ -73,6 +93,16 @@ pub async fn get_paginated_tickets(
         query.search.clone(),
         query.status.clone(),
         query.priority.clone(),
+        query.assignee.clone(),
+        query.created_after.clone(),
+        query.created_before.clone(),
+        query.created_on.clone(),
+        query.modified_after.clone(),
+        query.modified_before.clone(),
+        query.modified_on.clone(),
+        query.closed_after.clone(),
+        query.closed_before.clone(),
+        query.closed_on.clone(),
     ) {
         Ok((tickets, total)) => {
             // Calculate total pages
@@ -109,8 +139,8 @@ pub async fn get_ticket(
     };
     
     match repository::get_complete_ticket(&mut conn, ticket_id) {
-        Ok(ticket) => {
-            HttpResponse::Ok().json(ticket)
+        Ok(complete_ticket) => {
+            HttpResponse::Ok().json(complete_ticket)
         },
         Err(_) => HttpResponse::NotFound().json("Ticket not found"),
     }
@@ -245,21 +275,33 @@ pub async fn import_tickets_from_json_string(
 // Create an empty ticket with default values
 pub async fn create_empty_ticket(
     pool: web::Data<crate::db::Pool>,
+    auth: actix_web_httpauth::extractors::bearer::BearerAuth,
 ) -> impl Responder {
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    // Create a new ticket with default values using proper model fields
+    // Validate token and get authenticated user's UUID
+    let claims = match crate::handlers::auth::validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
+    };
+
+    // Parse the user UUID from the JWT claims
+    let user_uuid = match crate::utils::parse_uuid(&claims.sub) {
+        Ok(uuid) => uuid,
+        Err(_) => return HttpResponse::BadRequest().json("Invalid user UUID in token"),
+    };
+
+    // Create a new ticket with default values using the authenticated user's UUID
     let empty_ticket = NewTicket {
         title: "New Ticket".to_string(),
         description: Some("".to_string()),
         status: TicketStatus::Open,
         priority: TicketPriority::Medium,
-        requester_uuid: Uuid::new_v4(), // TODO: Get from authenticated user
+        requester_uuid: user_uuid, // Use authenticated user's UUID
         assignee_uuid: None,
-        device_id: None,
     };
 
     // Create the ticket and then add empty article content
@@ -295,40 +337,144 @@ pub async fn create_empty_ticket(
 // Update ticket partially
 pub async fn update_ticket_partial(
     pool: web::Data<crate::db::Pool>,
-    path: web::Path<i32>,
-    ticket_update: web::Json<TicketUpdate>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
+    auth: actix_web_httpauth::extractors::bearer::BearerAuth,
+    params: web::Path<i32>,
+    body: web::Json<Value>,
 ) -> impl Responder {
-    let ticket_id = path.into_inner();
+    let ticket_id = params.into_inner();
+    
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
-
-    println!("Received update request for ticket {}: {:?}", ticket_id, ticket_update);
     
-    // Ensure updated_at date is set if not provided
-    let mut update_data = ticket_update.into_inner();
-    if update_data.updated_at.is_none() {
-        let now = chrono::Utc::now().naive_utc();
-        println!("No updated_at date provided, using current time: {}", now);
-        update_data.updated_at = Some(now);
-    } else {
-        println!("Using provided updated_at date: {:?}", update_data.updated_at);
+    // Get user info for SSE events
+    let user_info = match crate::handlers::auth::validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid token"),
+    };
+    
+    // Parse JSON and build TicketUpdate with user lookups
+    let mut ticket_update = TicketUpdate {
+        title: None,
+        description: None,
+        status: None,
+        priority: None,
+        requester_uuid: None,
+        assignee_uuid: None,
+        updated_at: Some(chrono::Utc::now().naive_utc()),
+        closed_at: None,
+    };
+    
+    // Handle simple string fields
+    if let Some(title) = body.get("title").and_then(|v| v.as_str()) {
+        ticket_update.title = Some(title.to_string());
     }
-
-    match repository::update_ticket_partial(&mut conn, ticket_id, update_data) {
-        Ok(ticket) => {
-            println!("Successfully updated ticket {}: {:?}", ticket_id, ticket);
-            
-            // Return the complete ticket with all related data
-            match repository::get_complete_ticket(&mut conn, ticket_id) {
-                Ok(complete_ticket) => HttpResponse::Ok().json(complete_ticket),
-                Err(_) => HttpResponse::Ok().json(ticket), // Fallback to just the ticket
+    
+    if let Some(description) = body.get("description").and_then(|v| v.as_str()) {
+        ticket_update.description = Some(description.to_string());
+    }
+    
+    // Handle enum fields
+    if let Some(status_str) = body.get("status").and_then(|v| v.as_str()) {
+        match status_str {
+            "open" => ticket_update.status = Some(crate::models::TicketStatus::Open),
+            "in-progress" => ticket_update.status = Some(crate::models::TicketStatus::InProgress),
+            "closed" => ticket_update.status = Some(crate::models::TicketStatus::Closed),
+            _ => {}
+        }
+    }
+    
+    if let Some(priority_str) = body.get("priority").and_then(|v| v.as_str()) {
+        match priority_str {
+            "low" => ticket_update.priority = Some(crate::models::TicketPriority::Low),
+            "medium" => ticket_update.priority = Some(crate::models::TicketPriority::Medium),
+            "high" => ticket_update.priority = Some(crate::models::TicketPriority::High),
+            _ => {}
+        }
+    }
+    
+    // Handle requester (can be name or UUID)
+    if let Some(requester_str) = body.get("requester").and_then(|v| v.as_str()) {
+        if let Ok(uuid) = Uuid::parse_str(requester_str) {
+            // It's already a UUID
+            ticket_update.requester_uuid = Some(uuid);
+        } else {
+            // Try to look up by name
+            match crate::repository::users::get_user_by_name(requester_str, &mut conn) {
+                Ok(user) => ticket_update.requester_uuid = Some(user.uuid),
+                Err(_) => {
+                    println!("Warning: Could not find user with name '{}'", requester_str);
+                }
             }
+        }
+    }
+    
+    // Handle assignee (can be name, UUID, or empty string for unassign)
+    if let Some(assignee_str) = body.get("assignee").and_then(|v| v.as_str()) {
+        if assignee_str.is_empty() {
+            // Empty string means unassign
+            ticket_update.assignee_uuid = Some(None);
+        } else if let Ok(uuid) = Uuid::parse_str(assignee_str) {
+            // It's already a UUID
+            ticket_update.assignee_uuid = Some(Some(uuid));
+        } else {
+            // Try to look up by name
+            match crate::repository::users::get_user_by_name(assignee_str, &mut conn) {
+                Ok(user) => ticket_update.assignee_uuid = Some(Some(user.uuid)),
+                Err(_) => {
+                    println!("Warning: Could not find user with name '{}'", assignee_str);
+                }
+            }
+        }
+    }
+    
+    // Update the ticket
+    match repository::update_ticket_partial(&mut conn, ticket_id, ticket_update) {
+        Ok(_) => {
+            // Get the updated ticket to include user information in SSE events
+            let updated_ticket = match repository::get_complete_ticket(&mut conn, ticket_id) {
+                Ok(ticket) => ticket,
+                Err(_) => return HttpResponse::InternalServerError().json("Failed to fetch updated ticket"),
+            };
+            
+            // Broadcast SSE events for each field that was updated, including user info for assignee/requester
+            for (key, value) in body.as_object().unwrap_or(&serde_json::Map::new()) {
+                let mut event_value = value.clone();
+                
+                // For assignee and requester updates, include the user information
+                if key == "assignee" || key == "requester" {
+                    let user_info_field = if key == "assignee" { 
+                        updated_ticket.assignee_user.as_ref()
+                    } else { 
+                        updated_ticket.requester_user.as_ref()
+                    };
+                    
+                    if let Some(user_info) = user_info_field {
+                        event_value = serde_json::json!({
+                            "uuid": value,
+                            "user_info": user_info
+                        });
+                    }
+                }
+                
+                println!("Broadcasting SSE event for ticket {}: {} = {:?}", ticket_id, key, event_value);
+                crate::handlers::sse::broadcast_ticket_updated(
+                    &sse_state,
+                    ticket_id,
+                    key,
+                    event_value,
+                    &user_info.sub,
+                );
+            }
+            
+            // Return the updated complete ticket
+            HttpResponse::Ok().json(updated_ticket)
         },
         Err(e) => {
-            println!("Error updating ticket {}: {:?}", ticket_id, e);
-            HttpResponse::InternalServerError().json(format!("Error updating ticket: {}", e))
+            println!("Error updating ticket: {:?}", e);
+            HttpResponse::InternalServerError().json("Failed to update ticket")
         }
     }
 }

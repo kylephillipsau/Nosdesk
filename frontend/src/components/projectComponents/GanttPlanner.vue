@@ -496,7 +496,7 @@ const hideTooltip = () => {
           </button>
         </div>
         
-        <div class="flex items-center space-x-1 gap-2">
+        <div class="flex items-center gap-2">
           <button 
             @click="moveRangeLeft" 
             class="p-1 bg-slate-700 text-slate-300 rounded-md hover:bg-slate-600 transition-colors"
@@ -643,6 +643,7 @@ const hideTooltip = () => {
                     <UserAvatar 
                       v-if="ticket.assignee && ticket.assignee !== 'Unassigned'" 
                       :name="ticket.assignee" 
+                      :avatarUrl="ticket.assignee_avatar"
                       size="xs" 
                       :show-name="false"
                       :clickable="false"
@@ -731,7 +732,7 @@ const hideTooltip = () => {
           top: `${tooltipPosition.y - 60}px`
         }"
       >
-        <div class="text-sm space-y-1">
+        <div class="text-sm flex flex-col gap-1">
           <div class="font-medium text-white">{{ hoveredTask.title }}</div>
           <div class="text-xs text-slate-400">
             <div>Start: {{ formatDate(hoveredTask.start) }}</div>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import logo from '@/assets/logo.svg';
 import authService, { type AdminSetupRequest } from '@/services/authService';
 
 const router = useRouter();
+const authStore = useAuthStore();
 const isLoading = ref(false);
 const errorMessage = ref('');
 const successMessage = ref('');
@@ -80,10 +82,25 @@ const handleSetup = async () => {
     if (response.success) {
       successMessage.value = response.message;
       
-      // Wait a moment to show success message, then redirect to login
-      setTimeout(() => {
-        router.push('/login?message=Setup completed successfully. Please log in.');
-      }, 2000);
+      // Clear the setup status cache since setup is now complete
+      authService.clearSetupStatusCache();
+      
+      // Account created successfully - now log them in using existing flow
+      successMessage.value = 'Admin account created successfully! Logging you in...';
+      
+      // Use the existing login flow with the credentials they just provided
+      const loginSuccess = await authStore.login({
+        email: adminData.value.email,
+        password: adminData.value.password
+      });
+      
+      if (!loginSuccess) {
+        // If auto-login fails, redirect to login page
+        setTimeout(() => {
+          router.push('/login?message=Account created successfully. Please log in.');
+        }, 1500);
+      }
+      // If login succeeds, the auth store will automatically redirect to home
     } else {
       errorMessage.value = response.message || 'Setup failed. Please try again.';
     }
@@ -136,7 +153,7 @@ const handleSetup = async () => {
       </div>
 
       <!-- Setup Form -->
-      <form @submit.prevent="handleSetup" class="flex flex-col gap-4 space-y-2">
+      <form @submit.prevent="handleSetup" class="flex flex-col gap-4">
         <div>
           <label for="admin-name" class="block text-sm font-medium text-slate-300">Administrator Name</label>
           <input
@@ -170,6 +187,7 @@ const handleSetup = async () => {
             v-model="adminData.password"
             type="password"
             required
+            autocomplete="new-password"
             :disabled="isLoading"
             class="mt-1 block w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
             placeholder="Choose a secure password (8+ characters)"
@@ -183,6 +201,7 @@ const handleSetup = async () => {
             v-model="confirmPassword"
             type="password"
             required
+            autocomplete="new-password"
             :disabled="isLoading"
             class="mt-1 block w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
             placeholder="Confirm your password"

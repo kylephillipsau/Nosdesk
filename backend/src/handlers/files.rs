@@ -214,7 +214,7 @@ async fn validate_file_access_token(
     // Use JWT validation logic directly instead of creating BearerAuth
     use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
     use crate::models::Claims;
-    use crate::handlers::auth::JWT_SECRET;
+    use crate::utils::jwt::JWT_SECRET;
     
     // Create validation with same requirements as auth handler
     let mut validation = Validation::new(Algorithm::HS256);

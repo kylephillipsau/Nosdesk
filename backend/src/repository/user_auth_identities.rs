@@ -1,11 +1,10 @@
 use diesel::prelude::*;
 use diesel::result::Error;
-use chrono::Utc;
 use uuid::Uuid;
 
 use crate::db::DbConnection;
-use crate::models::{UserAuthIdentity, NewUserAuthIdentity, UserAuthIdentityDisplay, AuthProvider};
-use crate::schema::{user_auth_identities, auth_providers, users};
+use crate::models::{UserAuthIdentity, NewUserAuthIdentity, UserAuthIdentityDisplay};
+use crate::schema::{user_auth_identities, users};
 
 // Create a new user auth identity
 pub fn create_identity(
@@ -44,12 +43,11 @@ pub fn get_user_identities_display(
     conn: &mut DbConnection,
 ) -> Result<Vec<UserAuthIdentityDisplay>, Error> {
     user_auth_identities::table
-        .inner_join(auth_providers::table)
         .filter(user_auth_identities::user_id.eq(user_id))
         .select((
             user_auth_identities::id,
-            auth_providers::provider_type,
-            auth_providers::name,
+            user_auth_identities::provider_type,
+            user_auth_identities::provider_type, // Use provider_type as provider_name too
             user_auth_identities::email,
             user_auth_identities::created_at,
         ))
@@ -78,12 +76,11 @@ pub fn get_user_identities_display_by_uuid(
     let user = crate::repository::users::get_user_by_uuid(user_uuid, conn)?;
     
     user_auth_identities::table
-        .inner_join(auth_providers::table)
         .filter(user_auth_identities::user_id.eq(user.id))
         .select((
             user_auth_identities::id,
-            auth_providers::provider_type,
-            auth_providers::name,
+            user_auth_identities::provider_type,
+            user_auth_identities::provider_type, // Use provider_type as provider_name too
             user_auth_identities::email,
             user_auth_identities::created_at,
         ))
@@ -110,14 +107,9 @@ pub fn find_user_by_identity(
     provider_user_id: &str,
     conn: &mut DbConnection,
 ) -> Result<Option<i32>, Error> {
-    // First find the auth provider
-    let provider = auth_providers::table
-        .filter(auth_providers::provider_type.eq(provider_type))
-        .first::<AuthProvider>(conn)?;
-    
-    // Then find the identity and return the user_id
+    // Find the identity and return the user_id
     let result = user_auth_identities::table
-        .filter(user_auth_identities::provider_id.eq(provider.id))
+        .filter(user_auth_identities::provider_type.eq(provider_type))
         .filter(user_auth_identities::external_id.eq(provider_user_id))
         .select(user_auth_identities::user_id)
         .first::<i32>(conn)
@@ -162,27 +154,22 @@ pub fn has_provider_identity(
     provider_type: &str,
     conn: &mut DbConnection,
 ) -> Result<bool, Error> {
-    // First find the auth provider
-    let provider = auth_providers::table
-        .filter(auth_providers::provider_type.eq(provider_type))
-        .first::<AuthProvider>(conn)?;
-    
     // Check if the user has an identity for this provider
     let count = user_auth_identities::table
         .filter(user_auth_identities::user_id.eq(user_id))
-        .filter(user_auth_identities::provider_id.eq(provider.id))
+        .filter(user_auth_identities::provider_type.eq(provider_type))
         .count()
         .get_result::<i64>(conn)?;
     
     Ok(count > 0)
 }
 
-// Get all identities for a specific provider
-pub fn get_identities_by_provider(
-    provider_id: i32,
+// Get all identities for a specific provider type
+pub fn get_identities_by_provider_type(
+    provider_type: &str,
     conn: &mut DbConnection,
 ) -> Result<Vec<UserAuthIdentity>, Error> {
     user_auth_identities::table
-        .filter(user_auth_identities::provider_id.eq(provider_id))
+        .filter(user_auth_identities::provider_type.eq(provider_type))
         .load::<UserAuthIdentity>(conn)
 } 
