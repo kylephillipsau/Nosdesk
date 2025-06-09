@@ -14,6 +14,7 @@ use crate::models::{
 use crate::repository;
 use crate::utils::{self, ValidationResult, ValidationError, parse_uuid};
 use crate::utils::auth::hash_password;
+use crate::utils::mfa;
 
 // Import JWT utilities
 use crate::utils::jwt::{JwtUtils, helpers as jwt_helpers};
@@ -39,7 +40,7 @@ impl From<ValidationError> for HttpResponse {
                 "status": "error", 
                 "message": error.to_string()
             })),
-            ValidationError::General(msg) => HttpResponse::InternalServerError().json(json!({
+            ValidationError::ValidationFailed(msg) => HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": msg
             })),
@@ -136,8 +137,131 @@ pub async fn login(
         }));
     }
 
-    // Create login response with JWT token using JWT utilities
+    // Check if user has MFA enabled - if so, require MFA verification
+    if mfa::user_has_mfa_enabled(&user) {
+        let response = jwt_helpers::create_mfa_required_response(user.uuid);
+        return HttpResponse::Ok().json(response);
+    }
+
+    // Check MFA policy enforcement (for users without MFA enabled)
+    if let Err(_policy_error) = mfa::validate_mfa_policy(&user).await {
+        // Instead of blocking, offer MFA setup for users who need it
+        let response = jwt_helpers::create_mfa_setup_required_response(user.uuid);
+        return HttpResponse::Ok().json(response);
+    }
+
+    // Create standard login response (no MFA required)
     match jwt_helpers::create_login_response(user) {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(error_response) => error_response,
+    }
+}
+
+/// MFA Login - Verify MFA token and complete login
+pub async fn mfa_login(
+    db_pool: web::Data<crate::db::Pool>,
+    login_data: web::Json<crate::models::MfaLoginRequest>,
+    request: actix_web::HttpRequest,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Find user by email (same as regular login)
+    let user = match repository::get_user_by_email(&login_data.email, &mut conn) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    // Verify password first
+    let password_hash = match String::from_utf8(user.password_hash.clone()) {
+        Ok(hash) => {
+            if hash.is_empty() {
+                return HttpResponse::Unauthorized().json(json!({
+                    "status": "error",
+                    "message": "Invalid email or password"
+                }));
+            }
+            hash
+        }
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    let password_matches = match verify(&login_data.password, &password_hash) {
+        Ok(matches) => matches,
+        Err(_) => false,
+    };
+
+    if !password_matches {
+        return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid email or password"
+        }));
+    }
+
+    // Check that user actually has MFA enabled
+    if !mfa::user_has_mfa_enabled(&user) {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA is not enabled for this account"
+        }));
+    }
+
+    // Check rate limiting for MFA attempts
+    if !mfa::check_mfa_rate_limit(&user.uuid).await {
+        return HttpResponse::TooManyRequests().json(json!({
+            "status": "error",
+            "message": "Too many MFA attempts. Please try again later."
+        }));
+    }
+
+    // Verify MFA token (TOTP or backup code)
+    let mfa_result = match mfa::verify_mfa_token(&user.uuid, &login_data.mfa_token, &mut conn).await {
+        Ok(result) => result,
+        Err(e) => {
+            // Log failed MFA attempt for security monitoring
+            mfa::log_mfa_attempt(&user.uuid, false, "login", &request).await;
+            
+            return HttpResponse::BadRequest().json(json!({
+                "status": "error",
+                "message": format!("MFA verification failed: {}", e)
+            }));
+        }
+    };
+
+    if !mfa_result.is_valid {
+        // Log failed MFA attempt
+        mfa::log_mfa_attempt(&user.uuid, false, "login", &request).await;
+        
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid MFA token"
+        }));
+    }
+
+    // Log successful MFA attempt
+    mfa::log_mfa_attempt(&user.uuid, true, "login", &request).await;
+
+    // Create successful MFA login response
+    match jwt_helpers::create_mfa_login_response(
+        user,
+        mfa_result.backup_code_used.is_some(),
+        mfa_result.requires_backup_code_regeneration,
+    ) {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(error_response) => error_response,
     }
@@ -674,75 +798,6 @@ pub async fn setup_initial_admin(
 
 // === MFA (Multi-Factor Authentication) Handlers ===
 
-use base32;
-use base64::{Engine as _, engine::general_purpose};
-use qrcode::{QrCode, render::svg};
-use totp_rs::{Algorithm as TotpAlgorithm, TOTP, Secret};
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
-
-/// Generate a random string for TOTP secret (32 characters, base32-encoded)
-fn generate_totp_secret() -> String {
-    let secret_bytes: Vec<u8> = (0..20).map(|_| thread_rng().gen()).collect(); // 20 bytes = 160 bits
-    base32::encode(base32::Alphabet::RFC4648 { padding: true }, &secret_bytes)
-}
-
-/// Generate backup codes for MFA recovery
-fn generate_backup_codes() -> Vec<String> {
-    (0..8)
-        .map(|_| {
-            // Generate 8-character alphanumeric codes
-            thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(8)
-                .map(char::from)
-                .collect::<String>()
-                .to_uppercase()
-        })
-        .collect()
-}
-
-/// Generate QR code as SVG string
-fn generate_qr_code(secret: &str, user_email: &str, service_name: &str) -> Result<String, String> {
-    // Create TOTP URL for authenticator apps
-    let totp_url = format!(
-        "otpauth://totp/{}:{}?secret={}&issuer={}",
-        service_name, user_email, secret, service_name
-    );
-    
-    match QrCode::new(&totp_url) {
-        Ok(code) => {
-            let svg = code
-                .render::<svg::Color>()
-                .min_dimensions(200, 200)
-                .build();
-            
-            // Convert SVG to base64 data URL for frontend
-            let base64_svg = general_purpose::STANDARD.encode(svg);
-            Ok(format!("data:image/svg+xml;base64,{}", base64_svg))
-        }
-        Err(e) => Err(format!("Failed to generate QR code: {}", e)),
-    }
-}
-
-/// Verify TOTP token
-fn verify_totp_token(secret: &str, token: &str) -> bool {
-    match Secret::Encoded(secret.to_string()).to_bytes() {
-        Ok(secret_bytes) => {
-            let totp = TOTP::new(
-                TotpAlgorithm::SHA1,
-                6,        // 6-digit codes
-                1,        // 1 step = 30 seconds
-                30,       // 30-second window
-                secret_bytes,
-            ).unwrap();
-            
-            totp.check_current(token).unwrap_or(false)
-        }
-        Err(_) => false,
-    }
-}
-
 /// MFA Setup - Generate secret and QR code
 pub async fn mfa_setup(
     db_pool: web::Data<crate::db::Pool>,
@@ -764,23 +819,37 @@ pub async fn mfa_setup(
         })),
     };
 
-    // Generate new TOTP secret
-    let secret = generate_totp_secret();
-    let backup_codes = generate_backup_codes();
+    // Check if MFA_ENCRYPTION_KEY is set - use the util function
+    if mfa::encrypt_mfa_secret("test").is_err() {
+        tracing::error!("MFA setup failed: encryption key not configured");
+        return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "MFA not properly configured on server"
+        }));
+    }
+
+    // Generate new TOTP secret and backup codes (async hashing for security + performance)
+    let secret = mfa::generate_totp_secret();
+    let (backup_codes_plaintext, backup_codes_hashed) = mfa::generate_backup_codes_async().await;
     
     // Generate QR code
-    let qr_code = match generate_qr_code(&secret, &user.email, "Nosdesk") {
+    let qr_code = match mfa::generate_qr_code(secret.as_str(), &user.email, "Nosdesk") {
         Ok(qr) => qr,
-        Err(e) => return HttpResponse::InternalServerError().json(json!({
+        Err(e) => {
+            tracing::error!("Failed to generate QR code: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": format!("Failed to generate QR code: {}", e)
-        })),
+                "message": "Failed to generate QR code"
+            }));
+        }
     };
 
+    tracing::info!("MFA setup initiated for user: {}", user.uuid);
+
     let response = crate::models::MfaSetupResponse {
-        secret,
+        secret: secret.as_str().to_string(),
         qr_code,
-        backup_codes,
+        backup_codes: backup_codes_plaintext,
     };
 
     HttpResponse::Ok().json(response)
@@ -808,20 +877,21 @@ pub async fn mfa_verify_setup(
         })),
     };
 
-    // Verify the TOTP token
-    if !verify_totp_token(&request.secret, &request.token) {
+    // Verify the TOTP token (timing-safe verification)
+    if !mfa::verify_totp_token(&request.secret, &request.token) {
+        tracing::warn!("MFA setup verification failed for user: {}", claims.sub);
         return HttpResponse::BadRequest().json(json!({
             "status": "error",
             "message": "Invalid verification code"
         }));
     }
 
-    // Generate backup codes for successful setup
-    let backup_codes = generate_backup_codes();
+    tracing::info!("MFA setup verification successful for user: {}", claims.sub);
 
+    // Return success - backup codes were already generated in setup phase
     let response = crate::models::MfaVerifySetupResponse {
         success: true,
-        backup_codes,
+        backup_codes: vec![], // Empty - codes already provided in setup
     };
 
     HttpResponse::Ok().json(response)
@@ -858,22 +928,91 @@ pub async fn mfa_enable(
         })),
     };
 
-    // Note: In a real implementation, you would store the secret and backup codes from the setup phase
-    // For now, we'll just enable MFA flag
+    tracing::info!("Enabling MFA for user: {}", user_uuid);
+
+    // Validate inputs securely
+    let mfa_secret = match &request.secret {
+        Some(secret) if !secret.is_empty() => secret,
+        _ => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA secret is required"
+        })),
+    };
+
+    let backup_codes = match &request.backup_codes {
+        Some(codes) if !codes.is_empty() => codes,
+        _ => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Backup codes are required"
+        })),
+    };
+
+    // Final TOTP verification before enabling
+    if !mfa::verify_totp_token(mfa_secret, &request.token) {
+        tracing::warn!("MFA enable verification failed for user: {}", user_uuid);
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid verification code"
+        }));
+    }
+
+    // Encrypt the MFA secret before storage
+    let encrypted_secret = match mfa::encrypt_mfa_secret(mfa_secret) {
+        Ok(encrypted) => encrypted,
+        Err(e) => {
+            tracing::error!("Failed to encrypt MFA secret: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to secure MFA data"
+            }));
+        }
+    };
+
+    // Hash backup codes with bcrypt (moved from setup to enable for performance)
+    let mut hashed_backup_codes = Vec::new();
+    for code in backup_codes {
+        let hashed_code = match bcrypt::hash(code, bcrypt::DEFAULT_COST) {
+            Ok(hash) => hash,
+            Err(e) => {
+                tracing::error!("Failed to hash backup code: {}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to secure backup codes"
+                }));
+            }
+        };
+        hashed_backup_codes.push(hashed_code);
+    }
+
+    // Use the pre-hashed backup codes from setup phase
+    // Note: backup_codes from frontend are plaintext from setup, but we hash them here
+    // This maintains security while keeping the API simple
+    
+    let backup_codes_json = match serde_json::to_value(&hashed_backup_codes) {
+        Ok(json) => json,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Failed to serialize backup codes"
+        })),
+    };
+
     let mfa_update = crate::models::UserMfaUpdate {
         mfa_enabled: Some(true),
-        mfa_secret: None, // This should be set during the setup phase
-        mfa_backup_codes: None, // This should be set during the setup phase
+        mfa_secret: Some(encrypted_secret),
+        mfa_backup_codes: Some(backup_codes_json),
         updated_at: Some(chrono::Utc::now().naive_utc()),
     };
 
     match repository::update_user_mfa(&user_uuid, mfa_update, &mut conn) {
-        Ok(_) => HttpResponse::Ok().json(json!({
+        Ok(_) => {
+            tracing::info!("MFA enabled successfully for user: {}", user_uuid);
+            HttpResponse::Ok().json(json!({
             "status": "success",
             "message": "MFA enabled successfully"
-        })),
+            }))
+        },
         Err(e) => {
-            eprintln!("Error enabling MFA: {:?}", e);
+            tracing::error!("Failed to enable MFA in database: {:?}", e);
             HttpResponse::InternalServerError().json(json!({
                 "status": "error",
                 "message": "Failed to enable MFA"
@@ -1018,8 +1157,8 @@ pub async fn mfa_regenerate_backup_codes(
     }
 
     // Generate new backup codes
-    let backup_codes = generate_backup_codes();
-    let backup_codes_json = serde_json::to_value(&backup_codes).unwrap();
+    let (backup_codes_plaintext, backup_codes_hashed) = mfa::generate_backup_codes_async().await;
+    let backup_codes_json = serde_json::to_value(&backup_codes_hashed).unwrap();
 
     let mfa_update = crate::models::UserMfaUpdate {
         mfa_enabled: None, // Don't change MFA enabled status
@@ -1031,7 +1170,7 @@ pub async fn mfa_regenerate_backup_codes(
     match repository::update_user_mfa(&user_uuid, mfa_update, &mut conn) {
         Ok(_) => {
             let response = crate::models::MfaRegenerateBackupCodesResponse {
-                backup_codes,
+                backup_codes: backup_codes_plaintext,
             };
             HttpResponse::Ok().json(response)
         },
@@ -1084,11 +1223,324 @@ pub async fn mfa_status(
         })),
     };
 
-    // Check if user has backup codes (for now, we'll assume they do if MFA is enabled)
+    // Check if user has backup codes
+    let has_backup_codes = user.mfa_backup_codes
+        .as_ref()
+        .and_then(|codes| codes.as_array())
+        .map(|array| !array.is_empty())
+        .unwrap_or(false);
+
     let response = crate::models::MfaStatusResponse {
-        enabled: false, // Will be updated when we have MFA fields in the User model
-        has_backup_codes: false, // Will be updated when we have MFA fields in the User model
+        enabled: user.mfa_enabled,
+        has_backup_codes,
     };
 
     HttpResponse::Ok().json(response)
+}
+
+
+
+/// MFA Setup for Login (Unauthenticated) - For users who need MFA to login but haven't set it up yet
+pub async fn mfa_setup_login(
+    db_pool: web::Data<crate::db::Pool>,
+    request: web::Json<crate::models::MfaSetupLoginRequest>,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Find user by email and verify password (same as login flow)
+    let user = match repository::get_user_by_email(&request.email, &mut conn) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    // Verify password
+    let password_hash = match String::from_utf8(user.password_hash.clone()) {
+        Ok(hash) => {
+            if hash.is_empty() {
+                return HttpResponse::Unauthorized().json(json!({
+                    "status": "error",
+                    "message": "Invalid email or password"
+                }));
+            }
+            hash
+        }
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    let password_matches = match verify(&request.password, &password_hash) {
+        Ok(matches) => matches,
+        Err(_) => false,
+    };
+
+    if !password_matches {
+        return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid email or password"
+        }));
+    }
+
+    // Verify that user actually needs MFA setup (security check)
+    if mfa::user_has_mfa_enabled(&user) {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA is already enabled for this account"
+        }));
+    }
+
+    // Verify that MFA is required for this user
+    if let Ok(_) = mfa::validate_mfa_policy(&user).await {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA is not required for this account"
+        }));
+    }
+
+    // Check if MFA_ENCRYPTION_KEY is set
+    if mfa::encrypt_mfa_secret("test").is_err() {
+        tracing::error!("MFA setup failed: encryption key not configured");
+        return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "MFA not properly configured on server"
+        }));
+    }
+
+    // Generate new TOTP secret and backup codes
+    let secret = mfa::generate_totp_secret();
+    let (backup_codes_plaintext, _backup_codes_hashed) = mfa::generate_backup_codes_async().await;
+    
+    // Generate QR code
+    let qr_code = match mfa::generate_qr_code(secret.as_str(), &user.email, "Nosdesk") {
+        Ok(qr) => qr,
+        Err(e) => {
+            tracing::error!("Failed to generate QR code: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to generate QR code"
+            }));
+        }
+    };
+
+    tracing::info!("MFA setup initiated for user during login: {}", user.uuid);
+
+    let response = crate::models::MfaSetupResponse {
+        secret: secret.as_str().to_string(),
+        qr_code,
+        backup_codes: backup_codes_plaintext,
+    };
+
+    HttpResponse::Ok().json(response)
+}
+
+/// MFA Enable for Login (Unauthenticated) - Complete MFA setup and login
+pub async fn mfa_enable_login(
+    db_pool: web::Data<crate::db::Pool>,
+    request: web::Json<crate::models::MfaEnableLoginRequest>,
+) -> impl Responder {
+    let mut conn = match db_pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Could not get database connection"
+        })),
+    };
+
+    // Find user by email and verify password again (security)
+    let user = match repository::get_user_by_email(&request.email, &mut conn) {
+        Ok(user) => user,
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    // Verify password
+    let password_hash = match String::from_utf8(user.password_hash.clone()) {
+        Ok(hash) => {
+            if hash.is_empty() {
+                return HttpResponse::Unauthorized().json(json!({
+                    "status": "error",
+                    "message": "Invalid email or password"
+                }));
+            }
+            hash
+        }
+        Err(_) => {
+            return HttpResponse::Unauthorized().json(json!({
+                "status": "error",
+                "message": "Invalid email or password"
+            }));
+        }
+    };
+
+    let password_matches = match verify(&request.password, &password_hash) {
+        Ok(matches) => matches,
+        Err(_) => false,
+    };
+
+    if !password_matches {
+        return HttpResponse::Unauthorized().json(json!({
+            "status": "error",
+            "message": "Invalid email or password"
+        }));
+    }
+
+    // Security checks - same as setup
+    if mfa::user_has_mfa_enabled(&user) {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA is already enabled for this account"
+        }));
+    }
+
+    if let Ok(_) = mfa::validate_mfa_policy(&user).await {
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA is not required for this account"
+        }));
+    }
+
+    // Validate inputs securely
+    let mfa_secret = match &request.secret {
+        Some(secret) if !secret.is_empty() => secret,
+        _ => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "MFA secret is required"
+        })),
+    };
+
+    let backup_codes = match &request.backup_codes {
+        Some(codes) if !codes.is_empty() => codes,
+        _ => return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Backup codes are required"
+        })),
+    };
+
+    // Final TOTP verification before enabling
+    if !mfa::verify_totp_token(mfa_secret, &request.token) {
+        tracing::warn!("MFA enable verification failed for user during login: {}", user.uuid);
+        return HttpResponse::BadRequest().json(json!({
+            "status": "error",
+            "message": "Invalid verification code"
+        }));
+    }
+
+    // Encrypt the MFA secret before storage
+    let encrypted_secret = match mfa::encrypt_mfa_secret(mfa_secret) {
+        Ok(encrypted) => encrypted,
+        Err(e) => {
+            tracing::error!("Failed to encrypt MFA secret: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to secure MFA data"
+            }));
+        }
+    };
+
+    // Hash backup codes with bcrypt
+    let mut hashed_backup_codes = Vec::new();
+    for code in backup_codes {
+        let hashed_code = match bcrypt::hash(code, bcrypt::DEFAULT_COST) {
+            Ok(hash) => hash,
+            Err(e) => {
+                tracing::error!("Failed to hash backup code: {}", e);
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "message": "Failed to secure backup codes"
+                }));
+            }
+        };
+        hashed_backup_codes.push(hashed_code);
+    }
+
+    let backup_codes_json = match serde_json::to_value(&hashed_backup_codes) {
+        Ok(json) => json,
+        Err(_) => return HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Failed to serialize backup codes"
+        })),
+    };
+
+    // Enable MFA in database
+    let mfa_update = crate::models::UserMfaUpdate {
+        mfa_enabled: Some(true),
+        mfa_secret: Some(encrypted_secret),
+        mfa_backup_codes: Some(backup_codes_json),
+        updated_at: Some(chrono::Utc::now().naive_utc()),
+    };
+
+    match repository::update_user_mfa(&user.uuid, mfa_update, &mut conn) {
+        Ok(_) => {
+            tracing::info!("MFA enabled successfully for user during login: {}", user.uuid);
+            
+            // Generate JWT token and complete login
+            match jwt_helpers::create_login_response(user) {
+                Ok(response) => HttpResponse::Ok().json(response),
+                Err(error_response) => error_response,
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to enable MFA in database: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Failed to enable MFA"
+            }))
+        }
+    }
+}
+
+/// Enhanced MFA reset with multiple verification steps (OWASP recommendations)
+/// This function demonstrates a secure MFA reset procedure
+async fn initiate_secure_mfa_reset(
+    user_uuid: &uuid::Uuid, 
+    password: &str,
+    conn: &mut DbConnection
+) -> Result<String, String> {
+    // Step 1: Verify current password
+    let user = repository::get_user_by_uuid(user_uuid, conn)
+        .map_err(|_| "User not found")?;
+    
+    let password_hash_str = String::from_utf8(user.password_hash.clone())
+        .map_err(|_| "Error reading password hash")?;
+    
+    if !bcrypt::verify(password, &password_hash_str).unwrap_or(false) {
+        return Err("Invalid password".to_string());
+    }
+    
+    // Step 2: Generate secure reset token
+    use rand::Rng;
+    let reset_token: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    
+    // Step 3: In production, you would:
+    // - Store reset token in database with expiry (15 minutes)
+    // - Send email with reset link containing token
+    // - Require user to click email link AND re-enter password
+    // - Log the reset attempt for security monitoring
+    // - Consider requiring admin approval for high-privilege users
+    
+    tracing::warn!("MFA reset initiated for user: {} (secure procedures should be implemented)", user_uuid);
+    
+    Ok(reset_token)
 }

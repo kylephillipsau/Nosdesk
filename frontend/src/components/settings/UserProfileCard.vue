@@ -357,6 +357,31 @@ const cancelEdit = (field: 'email' | 'pronouns') => {
       break;
   }
 };
+
+// Role badge styling functions
+const getRoleBadgeClass = (role: string) => {
+  switch (role) {
+    case 'admin':
+      return 'bg-red-600/20 text-red-400';
+    case 'technician':
+      return 'bg-blue-600/20 text-blue-400';
+    case 'user':
+    default:
+      return 'bg-slate-600/20 text-slate-400';
+  }
+};
+
+const getRoleDisplayName = (role: string) => {
+  switch (role) {
+    case 'admin':
+      return 'Administrator';
+    case 'technician':
+      return 'Technician';
+    case 'user':
+    default:
+      return 'User';
+  }
+};
 </script>
 
 <template>
@@ -436,13 +461,13 @@ const cancelEdit = (field: 'email' | 'pronouns') => {
             />
           </div>
           
-          <!-- Role badges section -->
+          <!-- Role badge section -->
           <div class="flex gap-2 mb-3">
-            <div class="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm font-medium">
-              {{ displayUser?.role || 'User' }}
-            </div>
-            <div v-if="displayUser?.role === 'admin'" class="px-3 py-1 bg-red-600/20 text-red-400 rounded-full text-sm font-medium">
-              Admin
+            <div 
+              class="px-3 py-1 rounded-full text-sm font-medium"
+              :class="getRoleBadgeClass(displayUser?.role || 'user')"
+            >
+              {{ getRoleDisplayName(displayUser?.role || 'user') }}
             </div>
           </div>
         </div>
@@ -471,7 +496,7 @@ const cancelEdit = (field: 'email' | 'pronouns') => {
               <span v-if="loading && pronounsModified" class="animate-spin h-4 w-4 mr-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 718-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 818-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 004 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
               </span>
               Save
@@ -499,7 +524,7 @@ const cancelEdit = (field: 'email' | 'pronouns') => {
               <span v-if="loading && emailModified" class="animate-spin h-4 w-4 mr-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 718-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 818-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 004 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
               </span>
               Save

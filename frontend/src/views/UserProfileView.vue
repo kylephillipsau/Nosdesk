@@ -64,6 +64,7 @@ const roleOptions = [
 // Check permissions
 const canEdit = ref(false);
 const canEditRole = ref(false);
+const isOwnProfile = ref(false);
 
 // Update document title when user profile changes
 watch(userProfile, (newProfile) => {
@@ -151,10 +152,11 @@ const fetchUserData = async () => {
     isNewUser.value = user.name.startsWith('New User');
     
     // Set permissions
-    const isOwnProfile = authStore.user?.uuid === userUuid;
+    const userIsOwnProfile = authStore.user?.uuid === userUuid;
     const isAdmin = authStore.isAdmin || authStore.user?.role === 'admin';
     
-    canEdit.value = isOwnProfile || isAdmin;
+    isOwnProfile.value = userIsOwnProfile;
+    canEdit.value = userIsOwnProfile || isAdmin;
     canEditRole.value = isAdmin; // Only admins can change roles
     
     // Name editing is now handled by UserProfileCard
@@ -232,7 +234,7 @@ const saveUser = async () => {
     
     if (isCreationMode.value) {
       // Create new user
-      const userData: UserFormData = {
+      const userData = {
         name: editValues.value.name,
         email: editValues.value.email,
         role: editValues.value.role,
@@ -303,23 +305,103 @@ onMounted(() => {
       <div class="pt-4 px-6 flex justify-between items-center">
         <BackButton fallbackRoute="/users" label="Back to Users" />
         <div v-if="!isCreationMode" class="flex items-center gap-2">
+          <!-- Delete Button or Protected Warning (appears first) -->
           <DeleteButton 
-            v-if="canEdit && userProfile"
+            v-if="canEdit && userProfile && !isOwnProfile && userProfile.role !== 'admin'"
             :item-name="`${userProfile.name}`"
             fallback-route="/users"
             @delete="handleDeleteUser"
           />
+          
+          <!-- Info tooltip for when delete is not available -->
+          <div 
+            v-else-if="canEdit && userProfile && (isOwnProfile || userProfile.role === 'admin')"
+            class="relative flex gap-1 items-center text-slate-400 text-sm"
+            title="Delete not available - You cannot delete your own account or administrator accounts for security reasons"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4 mr-1"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            Delete Protected
+          </div>
+
+          <!-- Own Profile Settings Button -->
+          <RouterLink
+            v-if="isOwnProfile"
+            to="/profile/settings"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-1"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+            Manage Profile Settings
+          </RouterLink>
+          
+          <!-- Admin: Manage User Settings Button -->
+          <RouterLink
+            v-else-if="canEditRole && userProfile && !isOwnProfile"
+            :to="`/users/${userProfile.uuid}/settings`"
+            class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium flex items-center gap-2"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+              />
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+            Manage User Settings
+          </RouterLink>
         </div>
       </div>
       
       <div class="flex flex-col gap-4 px-6 py-4 mx-auto w-full max-w-8xl">
         <!-- Creation Mode Header -->
-        <div v-if="isCreationMode" class="bg-slate-800 rounded-2xl p-6">
-          <div class="flex items-start justify-between">
-            <div class="flex-1">
-              <h1 class="text-2xl font-semibold text-white">Create New User</h1>
-              <p class="text-slate-400 mt-1">Enter user details below</p>
-            </div>
+        <div v-if="isCreationMode" class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+          <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+            <h1 class="text-lg font-medium text-white">Create New User</h1>
+            <p class="text-slate-400 text-sm mt-1">Enter user details below</p>
           </div>
         </div>
 
@@ -329,14 +411,14 @@ onMounted(() => {
         </div>
 
         <!-- User Creation Form -->
-        <div v-if="isCreationMode" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div v-if="isCreationMode" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <!-- Basic Information -->
           <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
-            <div class="px-4 py-3 rounded-t-xl bg-slate-700/30 border-b border-slate-700/50">
+            <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
               <h2 class="text-lg font-medium text-white">Basic Information</h2>
             </div>
-            <div class="p-4">
-              <div class="flex flex-col gap-4">
+            <div class="p-3">
+              <div class="flex flex-col gap-3">
                 <!-- Name -->
                 <div class="flex flex-col gap-1.5">
                   <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Name *</h3>
@@ -383,11 +465,11 @@ onMounted(() => {
 
           <!-- Additional Details -->
           <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
-            <div class="px-4 py-3 rounded-t-xl bg-slate-700/30 border-b border-slate-700/50">
+            <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
               <h2 class="text-lg font-medium text-white">Additional Details</h2>
             </div>
-            <div class="p-4">
-              <div class="flex flex-col gap-4">
+            <div class="p-3">
+              <div class="flex flex-col gap-3">
                 <!-- Pronouns -->
                 <div class="flex flex-col gap-1.5">
                   <h3 class="text-xs font-medium text-slate-400 uppercase tracking-wide">Pronouns</h3>
@@ -420,7 +502,7 @@ onMounted(() => {
             >
               <svg v-if="isSaving" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 714 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 004 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
               {{ isSaving ? 'Creating...' : 'Create User' }}
             </button>
@@ -428,7 +510,7 @@ onMounted(() => {
         </div>
 
         <!-- Responsive Container for existing user -->
-        <div v-else-if="userProfile" class="flex flex-col xl:flex-row gap-6">
+        <div v-else-if="userProfile" class="flex flex-col xl:flex-row gap-4">
           <!-- User Info Area -->
           <div class="flex flex-col gap-4 xl:w-1/2 xl:min-w-0">
             <!-- User Profile Card -->
@@ -441,45 +523,48 @@ onMounted(() => {
             />
             
             <!-- Email Aliases Section -->
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-4">Email Addresses</h2>
-              
-              <div v-if="userEmails.length === 0" class="text-slate-400 text-sm">
-                No additional email addresses found
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+                <h2 class="text-lg font-medium text-white">Email Addresses</h2>
               </div>
-              <div v-else class="flex flex-col gap-3">
-                <div
-                  v-for="email in userEmails"
-                  :key="email.id"
-                  class="bg-slate-700/50 p-3 rounded-lg"
-                >
-                  <div class="flex items-start justify-between">
-                    <div class="flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class="font-medium text-white">{{ email.email }}</span>
+              <div class="p-3">
+                <div v-if="userEmails.length === 0" class="text-slate-400 text-sm">
+                  No additional email addresses found
+                </div>
+                <div v-else class="flex flex-col gap-3">
+                  <div
+                    v-for="email in userEmails"
+                    :key="email.id"
+                    class="bg-slate-700/50 p-3 rounded-lg"
+                  >
+                    <div class="flex items-start justify-between">
+                      <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                          <span class="font-medium text-white">{{ email.email }}</span>
+                          <span 
+                            v-if="email.is_primary" 
+                            class="text-xs px-2 py-1 rounded-full bg-blue-900/20 text-blue-400"
+                          >
+                            Primary
+                          </span>
+                        </div>
+                        <div class="flex items-center gap-2 mt-1">
+                          <span class="text-sm text-slate-400 capitalize">{{ email.email_type }}</span>
+                          <span v-if="email.source" class="text-slate-600">•</span>
+                          <span v-if="email.source" class="text-xs text-slate-500 capitalize">{{ email.source }}</span>
+                        </div>
+                      </div>
+                      <div class="flex-shrink-0 ml-3">
                         <span 
-                          v-if="email.is_primary" 
-                          class="text-xs px-2 py-1 rounded-full bg-blue-900/20 text-blue-400"
+                          class="text-xs px-2 py-1 rounded-full"
+                          :class="{
+                            'text-green-400 bg-green-900/20': email.verified,
+                            'text-yellow-400 bg-yellow-900/20': !email.verified
+                          }"
                         >
-                          Primary
+                          {{ email.verified ? 'Verified' : 'Unverified' }}
                         </span>
                       </div>
-                      <div class="flex items-center gap-2 mt-1">
-                        <span class="text-sm text-slate-400 capitalize">{{ email.email_type }}</span>
-                        <span v-if="email.source" class="text-slate-600">•</span>
-                        <span v-if="email.source" class="text-xs text-slate-500 capitalize">{{ email.source }}</span>
-                      </div>
-                    </div>
-                    <div class="flex-shrink-0 ml-3">
-                      <span 
-                        class="text-xs px-2 py-1 rounded-full"
-                        :class="{
-                          'text-green-400 bg-green-900/20': email.verified,
-                          'text-yellow-400 bg-yellow-900/20': !email.verified
-                        }"
-                      >
-                        {{ email.verified ? 'Verified' : 'Unverified' }}
-                      </span>
                     </div>
                   </div>
                 </div>
@@ -487,8 +572,11 @@ onMounted(() => {
             </div>
             
             <!-- Devices Section -->
-            <div class="bg-slate-800 rounded-2xl p-6">
-              <h2 class="text-lg font-medium text-white mb-4">Devices</h2>
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50">
+                <h2 class="text-lg font-medium text-white">Devices</h2>
+              </div>
+              <div class="p-3">
               <div v-if="devices.length === 0" class="text-slate-400 text-sm">
                 No devices
               </div>
@@ -521,14 +609,15 @@ onMounted(() => {
                   </div>
                 </RouterLink>
               </div>
+              </div>
             </div>
           </div>
 
           <!-- Tickets Area -->
           <div class="flex flex-col gap-4 xl:w-1/2 xl:min-w-0">
             <!-- Assigned Tickets -->
-            <div class="flex flex-col gap-2 bg-slate-800 rounded-2xl p-6">
-              <div class="flex justify-between items-center mb-4">
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex justify-between items-center">
                 <h2 class="text-lg font-medium text-white">{{ assignedTickets.length }} Assigned Tickets</h2>
                 <RouterLink 
                   :to="`/tickets?assignee=${route.params.uuid}`"
@@ -537,6 +626,7 @@ onMounted(() => {
                   See All
                 </RouterLink>
               </div>
+              <div class="p-3">
               <div v-if="assignedTickets.length === 0" class="text-slate-400 text-sm">
                 No assigned tickets
               </div>
@@ -547,7 +637,7 @@ onMounted(() => {
                   :to="`/tickets/${ticket.id}`"
                   class="block bg-slate-700/50 p-3 rounded-lg hover:bg-slate-700 transition-colors"
                 >
-                  <div class="flex items-start justify-between">
+                  <div class="flex items-center justify-between">
                     <div>
                       <h3 class="font-medium text-white">{{ ticket.title }}</h3>
                       <p class="text-sm text-slate-400">{{ formatDate(ticket.created) }}</p>
@@ -556,11 +646,12 @@ onMounted(() => {
                   </div>
                 </RouterLink>
               </div>
+              </div>
             </div>
 
             <!-- Requested Tickets -->
-            <div class="flex flex-col gap-2 bg-slate-800 rounded-2xl p-6">
-              <div class="flex justify-between items-center mb-4">
+            <div class="bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors">
+              <div class="px-4 py-3 bg-slate-700/30 border-b border-slate-700/50 flex justify-between items-center">
                 <h2 class="text-lg font-medium text-white">{{ requestedTickets.length }} Requested Tickets</h2>
                 <RouterLink 
                   :to="`/tickets?requester=${route.params.uuid}`"
@@ -569,6 +660,7 @@ onMounted(() => {
                   See All
                 </RouterLink>
               </div>
+              <div class="p-3">
               <div v-if="requestedTickets.length === 0" class="text-slate-400 text-sm">
                 No requested tickets
               </div>
@@ -579,7 +671,7 @@ onMounted(() => {
                   :to="`/tickets/${ticket.id}`"
                   class="block bg-slate-700/50 p-3 rounded-lg hover:bg-slate-700 transition-colors"
                 >
-                  <div class="flex items-start justify-between">
+                  <div class="flex items-center justify-between">
                     <div>
                       <h3 class="font-medium text-white">{{ ticket.title }}</h3>
                       <p class="text-sm text-slate-400">{{ formatDate(ticket.created) }}</p>
@@ -587,6 +679,7 @@ onMounted(() => {
                     <StatusBadge type="status" :value="ticket.status as 'open' | 'in-progress' | 'closed'" />
                   </div>
                 </RouterLink>
+              </div>
               </div>
             </div>
           </div>

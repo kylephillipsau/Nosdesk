@@ -47,6 +47,10 @@ const graphConfig = ref({
 const microsoftAuthProviderFound = ref(false);
 const microsoftAuthProviderId = ref<string | null>(null);
 
+// Configuration validation state
+const configValidation = ref<any>(null);
+const isValidatingConfig = ref(false);
+
 // Import options
 const selectedEntities = ref(["users", "devices"]);
 const availableEntities = [
@@ -73,29 +77,30 @@ const showSyncModal = ref(false);
 
 const router = useRouter();
 
-// Fetch Microsoft Entra auth providers
-const fetchMicrosoftAuthProvider = async () => {
+// Add configuration validation function
+const validateConfiguration = async () => {
+  isValidatingConfig.value = true;
+  errorMessage.value = null;
+
   try {
-    const response = await axios.get("/api/auth/providers");
-
-    if (response.data && Array.isArray(response.data)) {
-      // Find Microsoft Entra provider
-      const microsoftProvider = response.data.find(
-        (p: { provider_type: string; enabled: boolean }) =>
-          p.provider_type === "microsoft" && p.enabled
-      );
-
-      if (microsoftProvider) {
-        microsoftAuthProviderFound.value = true;
-        microsoftAuthProviderId.value = microsoftProvider.id;
-        return microsoftProvider;
-      }
+    const response = await axios.get("/api/integrations/graph/config");
+    configValidation.value = response.data;
+    
+    if (response.data.valid) {
+      successMessage.value = "Configuration is valid and ready to use";
+    } else {
+      errorMessage.value = "Configuration validation failed. Check your environment variables.";
     }
 
-    return null;
-  } catch (error) {
-    console.error("Failed to fetch Microsoft Auth Provider:", error);
-    return null;
+    setTimeout(() => {
+      successMessage.value = null;
+    }, 3000);
+  } catch (error: any) {
+    console.error("Failed to validate configuration:", error);
+    errorMessage.value = error.response?.data?.message || "Failed to validate configuration";
+    configValidation.value = null;
+  } finally {
+    isValidatingConfig.value = false;
   }
 };
 
@@ -123,30 +128,23 @@ const fetchConnectionStatus = async () => {
       };
     }
 
-    // Check if we have a Microsoft auth provider configured
-    await fetchMicrosoftAuthProvider();
+    // Validate configuration on load
+    await validateConfiguration();
   } catch (error) {
     console.error("Failed to fetch MS Graph connection status:", error);
     errorMessage.value = "Failed to fetch connection status";
     connectionStatus.value = "error";
 
-    // Even if we can't get the connection status, still check for Microsoft auth provider
-    await fetchMicrosoftAuthProvider();
+    // Still try to validate configuration even if status fetch fails
+    await validateConfiguration();
   } finally {
     isLoading.value = false;
   }
 };
 
-// Configure connection
-const configureConnection = () => {
-  if (microsoftAuthProviderId.value) {
-    router.push(`/admin/microsoft-config/${microsoftAuthProviderId.value}?mode=graph`);
-  } else {
-    errorMessage.value = "No Microsoft Auth Provider found. Please set one up first.";
-    setTimeout(() => {
-      errorMessage.value = null;
-    }, 3000);
-  }
+// Update configure connection to validate instead
+const checkConfiguration = () => {
+  validateConfiguration();
 };
 
 // Test connection
@@ -475,8 +473,7 @@ onMounted(async () => {
           Microsoft Graph Connection
         </h1>
         <p class="text-slate-400 mt-2">
-          Configure and manage the connection to Microsoft Graph API for
-          importing data from Microsoft services
+          Validate your Microsoft Graph API configuration and manage data synchronization from Microsoft services
         </p>
       </div>
 
@@ -531,8 +528,9 @@ onMounted(async () => {
 
           <div class="flex flex-wrap gap-3">
             <button
-              @click="configureConnection"
+              @click="checkConfiguration"
               class="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors border border-slate-600 flex items-center gap-2"
+              :disabled="isValidatingConfig"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -545,16 +543,11 @@ onMounted(async () => {
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="2"
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                />
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              Configure
+              <span v-if="isValidatingConfig">Checking...</span>
+              <span v-else>Check Config</span>
             </button>
 
             <button
@@ -603,6 +596,99 @@ onMounted(async () => {
             </button>
 
 
+          </div>
+        </div>
+      </div>
+
+      <!-- Configuration Details -->
+      <div
+        v-if="configValidation"
+        class="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-4"
+      >
+        <h2 class="text-xl font-medium text-white mb-4">
+          Configuration Details
+        </h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div class="bg-slate-700 rounded-lg p-4">
+            <div class="text-slate-400 text-sm mb-1">Client ID</div>
+            <div class="text-white font-mono text-sm break-all">
+              {{ configValidation.client_id || 'Not configured' }}
+            </div>
+          </div>
+          
+          <div class="bg-slate-700 rounded-lg p-4">
+            <div class="text-slate-400 text-sm mb-1">Tenant ID</div>
+            <div class="text-white font-mono text-sm break-all">
+              {{ configValidation.tenant_id || 'Not configured' }}
+            </div>
+          </div>
+          
+          <div class="bg-slate-700 rounded-lg p-4">
+            <div class="text-slate-400 text-sm mb-1">Client Secret</div>
+            <div class="text-white font-mono text-sm">
+              {{ configValidation.client_secret_configured ? '••••••••••••••••' : 'Not configured' }}
+            </div>
+          </div>
+          
+          <div class="bg-slate-700 rounded-lg p-4">
+            <div class="text-slate-400 text-sm mb-1">Configuration Status</div>
+            <div class="flex items-center gap-2">
+              <span
+                :class="[
+                  'px-2 py-1 rounded-full text-sm flex items-center gap-1',
+                  configValidation.valid 
+                    ? 'bg-green-900/50 text-green-400 border border-green-700'
+                    : 'bg-red-900/50 text-red-400 border border-red-700'
+                ]"
+              >
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :class="configValidation.valid ? 'bg-green-400' : 'bg-red-400'"
+                ></span>
+                {{ configValidation.valid ? 'Valid' : 'Invalid' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Configuration Issues -->
+        <div
+          v-if="configValidation.issues && configValidation.issues.length > 0"
+          class="bg-orange-900/20 border border-orange-800/50 rounded-lg p-4"
+        >
+          <h3 class="text-orange-300 font-medium mb-2 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.864-.833-2.634 0l-5.898 8.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            Configuration Issues
+          </h3>
+          <ul class="text-orange-200 text-sm space-y-1">
+            <li v-for="issue in configValidation.issues" :key="issue" class="flex items-start gap-2">
+              <span class="text-orange-400 mt-1">•</span>
+              <span>{{ issue }}</span>
+            </li>
+          </ul>
+        </div>
+        
+        <!-- Environment Variables Help -->
+        <div
+          v-if="!configValidation.valid"
+          class="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4 mt-4"
+        >
+          <h3 class="text-blue-300 font-medium mb-2 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Required Environment Variables
+          </h3>
+          <div class="text-blue-200 text-sm space-y-1">
+            <p class="mb-2">Add these environment variables to your <code class="bg-blue-800/50 px-1 rounded">docker.env</code> file:</p>
+            <div class="bg-slate-800/50 rounded p-3 font-mono text-xs space-y-1">
+              <div>MICROSOFT_CLIENT_ID=your_client_id</div>
+              <div>MICROSOFT_CLIENT_SECRET=your_client_secret</div>
+              <div>MICROSOFT_TENANT_ID=your_tenant_id</div>
+            </div>
           </div>
         </div>
       </div>

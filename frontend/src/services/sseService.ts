@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/auth';
 // Event types that match the backend
 export interface TicketEvent {
   type: 'TicketUpdated' | 'CommentAdded' | 'CommentDeleted' | 'AttachmentAdded' | 'AttachmentDeleted' | 
-        'DeviceLinked' | 'DeviceUnlinked' | 'ProjectAssigned' | 'ProjectUnassigned' | 
+        'DeviceLinked' | 'DeviceUnlinked' | 'DeviceUpdated' | 'ProjectAssigned' | 'ProjectUnassigned' | 
         'TicketLinked' | 'TicketUnlinked' | 'Heartbeat';
   data: any;
 }
@@ -26,6 +26,14 @@ export interface CommentAddedEvent {
 export interface CommentDeletedEvent {
   ticket_id: number;
   comment_id: number;
+  timestamp: string;
+}
+
+export interface DeviceUpdatedEvent {
+  device_id: number;
+  field: string;
+  value: any;
+  updated_by: string;
   timestamp: string;
 }
 
@@ -122,37 +130,118 @@ export function useSSE() {
 
       eventSource.value.addEventListener('comment-added', (event) => {
         try {
+          console.log('💬 SSE Service: Received comment-added event, raw data:', event.data);
           const data = JSON.parse(event.data);
+          console.log('💬 SSE Service: Parsed comment-added data:', data);
           emit('comment-added', data);
+          console.log('💬 SSE Service: Emitted comment-added event to listeners');
         } catch (e) {
-          console.error('SSE: Failed to parse comment-added event', e);
+          console.error('💬 SSE Service: Failed to parse comment-added event', e);
+          console.log('💬 SSE Service: Raw event data that failed to parse:', event.data);
         }
       });
 
       eventSource.value.addEventListener('comment-deleted', (event) => {
         try {
+          console.log('💬 SSE Service: Received comment-deleted event, raw data:', event.data);
           const data = JSON.parse(event.data);
+          console.log('💬 SSE Service: Parsed comment-deleted data:', data);
           emit('comment-deleted', data);
+          console.log('💬 SSE Service: Emitted comment-deleted event to listeners');
         } catch (e) {
-          console.error('SSE: Failed to parse comment-deleted event', e);
+          console.error('💬 SSE Service: Failed to parse comment-deleted event', e);
+          console.log('💬 SSE Service: Raw event data that failed to parse:', event.data);
         }
       });
 
       eventSource.value.addEventListener('device-linked', (event) => {
         try {
+          console.log('🔗 SSE Service: Received device-linked event, raw data:', event.data);
           const data = JSON.parse(event.data);
+          console.log('🔗 SSE Service: Parsed device-linked data:', data);
           emit('device-linked', data);
+          console.log('🔗 SSE Service: Emitted device-linked event to listeners');
         } catch (e) {
-          console.error('SSE: Failed to parse device-linked event', e);
+          console.error('🔗 SSE Service: Failed to parse device-linked event', e);
+          console.log('🔗 SSE Service: Raw event data that failed to parse:', event.data);
         }
       });
 
       eventSource.value.addEventListener('device-unlinked', (event) => {
         try {
+          console.log('🔗 SSE Service: Received device-unlinked event, raw data:', event.data);
           const data = JSON.parse(event.data);
+          console.log('🔗 SSE Service: Parsed device-unlinked data:', data);
           emit('device-unlinked', data);
+          console.log('🔗 SSE Service: Emitted device-unlinked event to listeners');
         } catch (e) {
-          console.error('SSE: Failed to parse device-unlinked event', e);
+          console.error('🔗 SSE Service: Failed to parse device-unlinked event', e);
+          console.log('🔗 SSE Service: Raw event data that failed to parse:', event.data);
+        }
+      });
+
+      eventSource.value.addEventListener('device-updated', (event) => {
+        try {
+          console.log('🔧 SSE Service: Received device-updated event, raw data:', event.data);
+          const data = JSON.parse(event.data);
+          console.log('🔧 SSE Service: Parsed device-updated data:', data);
+          emit('device-updated', data);
+          console.log('🔧 SSE Service: Emitted device-updated event to listeners');
+        } catch (e) {
+          console.error('🔧 SSE Service: Failed to parse device-updated event', e);
+          console.log('🔧 SSE Service: Raw event data that failed to parse:', event.data);
+        }
+      });
+
+      eventSource.value.addEventListener('ticket-linked', (event) => {
+        try {
+          console.log('🎫 SSE Service: Received ticket-linked event, raw data:', event.data);
+          const data = JSON.parse(event.data);
+          console.log('🎫 SSE Service: Parsed ticket-linked data:', data);
+          emit('ticket-linked', data);
+          console.log('🎫 SSE Service: Emitted ticket-linked event to listeners');
+        } catch (e) {
+          console.error('🎫 SSE Service: Failed to parse ticket-linked event', e);
+          console.log('🎫 SSE Service: Raw event data that failed to parse:', event.data);
+        }
+      });
+
+      eventSource.value.addEventListener('ticket-unlinked', (event) => {
+        try {
+          console.log('🎫 SSE Service: Received ticket-unlinked event, raw data:', event.data);
+          const data = JSON.parse(event.data);
+          console.log('🎫 SSE Service: Parsed ticket-unlinked data:', data);
+          emit('ticket-unlinked', data);
+          console.log('🎫 SSE Service: Emitted ticket-unlinked event to listeners');
+        } catch (e) {
+          console.error('🎫 SSE Service: Failed to parse ticket-unlinked event', e);
+          console.log('🎫 SSE Service: Raw event data that failed to parse:', event.data);
+        }
+      });
+
+      eventSource.value.addEventListener('project-assigned', (event) => {
+        try {
+          console.log('📁 SSE Service: Received project-assigned event, raw data:', event.data);
+          const data = JSON.parse(event.data);
+          console.log('📁 SSE Service: Parsed project-assigned data:', data);
+          emit('project-assigned', data);
+          console.log('📁 SSE Service: Emitted project-assigned event to listeners');
+        } catch (e) {
+          console.error('📁 SSE Service: Failed to parse project-assigned event', e);
+          console.log('📁 SSE Service: Raw event data that failed to parse:', event.data);
+        }
+      });
+
+      eventSource.value.addEventListener('project-unassigned', (event) => {
+        try {
+          console.log('📁 SSE Service: Received project-unassigned event, raw data:', event.data);
+          const data = JSON.parse(event.data);
+          console.log('📁 SSE Service: Parsed project-unassigned data:', data);
+          emit('project-unassigned', data);
+          console.log('📁 SSE Service: Emitted project-unassigned event to listeners');
+        } catch (e) {
+          console.error('📁 SSE Service: Failed to parse project-unassigned event', e);
+          console.log('📁 SSE Service: Raw event data that failed to parse:', event.data);
         }
       });
 

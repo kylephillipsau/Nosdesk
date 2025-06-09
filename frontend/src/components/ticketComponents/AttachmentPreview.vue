@@ -469,12 +469,6 @@ const generatePdfThumbnail = async (url: string) => {
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <template v-if="attachmentType === 'audio'">
-            <UserAvatar 
-              :name="author" 
-              :showName="false" 
-              v-if="author"
-            />
-            <div v-else class="w-6 h-6 rounded-full bg-slate-600"></div>
             <div class="flex flex-col">
               <span class="text-sm text-slate-200">{{ attachment.name }}</span>
             </div>

@@ -121,6 +121,7 @@ pub async fn get_project_tickets(
 pub async fn add_ticket_to_project(
     pool: web::Data<Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (project_id, ticket_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -129,7 +130,13 @@ pub async fn add_ticket_to_project(
     };
     
     match repository::add_ticket_to_project(&mut conn, project_id, ticket_id) {
-        Ok(association) => HttpResponse::Created().json(association),
+        Ok(association) => {
+            // Broadcast SSE event for project assignment
+            println!("Broadcasting SSE event: Ticket {} assigned to project {}", ticket_id, project_id);
+            crate::handlers::sse::broadcast_project_assigned(&sse_state, ticket_id, project_id);
+            
+            HttpResponse::Created().json(association)
+        },
         Err(_) => HttpResponse::InternalServerError().json("Failed to add ticket to project"),
     }
 }
@@ -138,6 +145,7 @@ pub async fn add_ticket_to_project(
 pub async fn remove_ticket_from_project(
     pool: web::Data<Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (project_id, ticket_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -147,7 +155,13 @@ pub async fn remove_ticket_from_project(
     
     match repository::remove_ticket_from_project(&mut conn, project_id, ticket_id) {
         Ok(0) => HttpResponse::NotFound().json("Association not found"),
-        Ok(_) => HttpResponse::NoContent().finish(),
+        Ok(_) => {
+            // Broadcast SSE event for project unassignment
+            println!("Broadcasting SSE event: Ticket {} unassigned from project {}", ticket_id, project_id);
+            crate::handlers::sse::broadcast_project_unassigned(&sse_state, ticket_id, project_id);
+            
+            HttpResponse::NoContent().finish()
+        },
         Err(_) => HttpResponse::InternalServerError().json("Failed to remove ticket from project"),
     }
 } 

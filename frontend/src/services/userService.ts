@@ -170,12 +170,30 @@ const userService = {
   },
 
   // Create a new user
-  async createUser(user: { name: string; email: string; role: string }): Promise<User | null> {
+  async createUser(user: { name: string; email: string; role: string; pronouns?: string }): Promise<User | null> {
     try {
-      const response = await apiClient.post(`/users`, {
-        uuid: '', // The backend will generate a UUID if empty
-        ...user
-      });
+      // Generate a UUID for the new user
+      const userUuid = crypto.randomUUID();
+      
+      // Create a NewUser object that matches the backend expectations
+      const newUser = {
+        uuid: userUuid,
+        name: user.name.trim(),
+        email: user.email.trim().toLowerCase(),
+        role: user.role, // The backend will convert this to the enum
+        password_hash: [], // Empty array - backend will set default password
+        pronouns: user.pronouns || null,
+        avatar_url: null,
+        banner_url: null,
+        avatar_thumb: null,
+        microsoft_uuid: null,
+        mfa_secret: null,
+        mfa_enabled: false,
+        mfa_backup_codes: null,
+        passkey_credentials: null
+      };
+      
+      const response = await apiClient.post(`/users`, newUser);
       return response.data;
     } catch (error) {
       console.error('Error creating user:', error);
@@ -486,6 +504,36 @@ const userService = {
       return response.data;
     } catch (error) {
       console.error('Error getting MFA status:', error);
+      return null;
+    }
+  },
+
+  // Login with MFA token
+  async loginWithMfa(email: string, password: string, mfaToken: string): Promise<{
+    success: boolean;
+    mfa_required?: boolean;
+    token?: string;
+    user?: any;
+    message?: string;
+    mfa_backup_code_used?: boolean;
+    requires_backup_code_regeneration?: boolean;
+  } | null> {
+    try {
+      const response = await apiClient.post('/auth/mfa-login', {
+        email,
+        password,
+        mfa_token: mfaToken
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error logging in with MFA:', error);
+      // Return error response data if available for better error handling
+      if (error.response?.data) {
+        return {
+          success: false,
+          message: error.response.data.message || 'MFA login failed'
+        };
+      }
       return null;
     }
   },
