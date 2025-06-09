@@ -248,6 +248,55 @@ CREATE TABLE sync_history (
     tenant_id VARCHAR(255)
 );
 
+-- Active user sessions for session management and revocation
+CREATE TABLE active_sessions (
+    id SERIAL PRIMARY KEY,
+    session_token VARCHAR(64) NOT NULL UNIQUE, -- JWT token hash for lookup
+    user_uuid UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
+    device_name VARCHAR(255), -- e.g., "MacBook Pro - Chrome"
+    ip_address TEXT, -- Store IP addresses as text for compatibility
+    user_agent TEXT,
+    location VARCHAR(255), -- e.g., "San Francisco, CA"
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_active TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_current BOOLEAN NOT NULL DEFAULT FALSE -- Mark the current session
+);
+
+-- Security events for MFA and authentication monitoring
+CREATE TABLE security_events (
+    id SERIAL PRIMARY KEY,
+    user_uuid UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
+    event_type VARCHAR(50) NOT NULL, -- 'mfa_failed', 'login_failed', 'mfa_enabled', etc.
+    ip_address TEXT, -- Store IP addresses as text for compatibility
+    user_agent TEXT,
+    location VARCHAR(255), -- Geographic location derived from IP
+    details JSONB, -- Additional event-specific data
+    severity VARCHAR(20) NOT NULL DEFAULT 'info', -- 'info', 'warning', 'critical'
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    
+    -- Optional foreign keys for context
+    session_id INTEGER REFERENCES active_sessions(id) ON DELETE SET NULL
+);
+
+-- MFA reset tokens for secure MFA recovery procedures
+CREATE TABLE mfa_reset_tokens (
+    token VARCHAR(64) NOT NULL PRIMARY KEY, -- Secure random token
+    user_uuid UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
+    ip_address TEXT, -- Store IP addresses as text for compatibility
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL, -- Typically 15 minutes
+    used_at TIMESTAMP WITH TIME ZONE,
+    is_used BOOLEAN NOT NULL DEFAULT FALSE,
+    
+    -- Additional verification fields
+    email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    admin_approved BOOLEAN NOT NULL DEFAULT FALSE, -- For high-privilege users
+    admin_approved_by UUID REFERENCES users(uuid),
+    admin_approved_at TIMESTAMP WITH TIME ZONE
+);
+
 -- Create indexes for better performance
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_uuid ON users(uuid);
@@ -271,6 +320,27 @@ CREATE INDEX idx_linked_tickets_ticket_id ON linked_tickets(ticket_id);
 CREATE INDEX idx_linked_tickets_linked_ticket_id ON linked_tickets(linked_ticket_id);
 CREATE INDEX idx_project_tickets_project_id ON project_tickets(project_id);
 CREATE INDEX idx_project_tickets_ticket_id ON project_tickets(ticket_id);
+
+-- Active sessions indexes
+CREATE INDEX idx_active_sessions_user_uuid ON active_sessions(user_uuid);
+CREATE INDEX idx_active_sessions_session_token ON active_sessions(session_token);
+CREATE INDEX idx_active_sessions_expires_at ON active_sessions(expires_at);
+CREATE INDEX idx_active_sessions_last_active ON active_sessions(last_active);
+CREATE INDEX idx_active_sessions_ip_address ON active_sessions(ip_address);
+
+-- Security events indexes
+CREATE INDEX idx_security_events_user_uuid ON security_events(user_uuid);
+CREATE INDEX idx_security_events_event_type ON security_events(event_type);
+CREATE INDEX idx_security_events_created_at ON security_events(created_at);
+CREATE INDEX idx_security_events_severity ON security_events(severity);
+CREATE INDEX idx_security_events_ip_address ON security_events(ip_address);
+CREATE INDEX idx_security_events_session_id ON security_events(session_id);
+
+-- MFA reset tokens indexes
+CREATE INDEX idx_mfa_reset_tokens_user_uuid ON mfa_reset_tokens(user_uuid);
+CREATE INDEX idx_mfa_reset_tokens_expires_at ON mfa_reset_tokens(expires_at);
+CREATE INDEX idx_mfa_reset_tokens_created_at ON mfa_reset_tokens(created_at);
+CREATE INDEX idx_mfa_reset_tokens_is_used ON mfa_reset_tokens(is_used);
 
 -- Setup updated_at triggers
 SELECT diesel_manage_updated_at('users');

@@ -416,6 +416,7 @@ pub async fn update_user(
 pub async fn delete_user(
     uuid: web::Path<String>,
     pool: web::Data<crate::db::Pool>,
+    auth: BearerAuth,
 ) -> impl Responder {
     let user_uuid = uuid.into_inner();
     let mut conn = match pool.get() {
@@ -423,19 +424,50 @@ pub async fn delete_user(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    // First get the user by UUID
+    // Validate token and get authenticated user
+    let claims = match validate_token_internal(&auth, &mut conn).await {
+        Ok(claims) => claims,
+        Err(_) => return HttpResponse::Unauthorized().json("Invalid or expired token"),
+    };
+
+    // Only admins can delete users
+    if claims.role != "admin" {
+        return HttpResponse::Forbidden().json(json!({
+            "error": "Forbidden",
+            "message": "Only administrators can delete users"
+        }));
+    }
+
+    // Parse the target user UUID
     let user_uuid_parsed = match utils::parse_uuid(&user_uuid) {
         Ok(uuid) => uuid,
         Err(_) => return HttpResponse::BadRequest().json("Invalid UUID format"),
     };
 
-    let user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
+    // Get the target user
+    let target_user = match repository::get_user_by_uuid(&user_uuid_parsed, &mut conn) {
         Ok(user) => user,
         Err(_) => return HttpResponse::NotFound().json("User not found"),
     };
 
-    // Then delete the user by ID
-    match repository::delete_user(user.id, &mut conn) {
+    // Prevent self-deletion
+    if claims.sub == user_uuid {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "Cannot delete self",
+            "message": "You cannot delete your own account while logged in"
+        }));
+    }
+
+    // Prevent deletion of admin users (safety measure)
+    if target_user.role == crate::models::UserRole::Admin {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "Cannot delete admin",
+            "message": "Administrator accounts cannot be deleted for security reasons"
+        }));
+    }
+
+    // Delete the user
+    match repository::delete_user(target_user.id, &mut conn) {
         Ok(count) if count > 0 => HttpResponse::NoContent().finish(),
         Ok(_) => HttpResponse::NotFound().json("User not found"),
         Err(_) => HttpResponse::InternalServerError().json("Failed to delete user"),

@@ -2,6 +2,11 @@
 
 -- Drop all tables in reverse order to handle foreign key dependencies
 
+-- Drop security and session management tables first (they reference users)
+DROP TABLE IF EXISTS mfa_reset_tokens;
+DROP TABLE IF EXISTS security_events;
+DROP TABLE IF EXISTS active_sessions;
+
 DROP TABLE IF EXISTS sync_history;
 DROP TABLE IF EXISTS project_tickets;
 DROP TABLE IF EXISTS linked_tickets;

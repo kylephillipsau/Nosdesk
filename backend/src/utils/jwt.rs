@@ -24,7 +24,7 @@ impl JwtUtils {
     pub fn create_token(user: &User) -> Result<String, JwtError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| JwtError::SystemTimeError)?
+            .map_err(|_| JwtError::SystemTime)?
             .as_secs() as usize;
 
         let claims = Claims {
@@ -49,7 +49,7 @@ impl JwtUtils {
     pub fn create_sse_token(user_id: &str, role: &str) -> Result<String, JwtError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| JwtError::SystemTimeError)?
+            .map_err(|_| JwtError::SystemTime)?
             .as_secs() as usize;
 
         // SSE tokens are short-lived (1 hour) and have minimal claims for security
@@ -148,28 +148,48 @@ impl JwtUtils {
 }
 
 /// Custom error types for JWT operations
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum JwtError {
-    #[error("JWT encoding error: {0}")]
-    EncodingError(#[from] jsonwebtoken::errors::Error),
-    
-    #[error("System time error")]
-    SystemTimeError,
-    
-    #[error("Invalid user UUID in token")]
+    EncodingError(jsonwebtoken::errors::Error),
+    SystemTime,
     InvalidUserUuid,
-    
-    #[error("User not found or inactive")]
     UserNotFound,
-    
-    #[error("Role mismatch - token has '{token_role}', current role is '{current_role}'")]
     RoleMismatch { token_role: String, current_role: String },
-    
-    #[error("Missing authentication token")]
     MissingToken,
-    
-    #[error("Insufficient permissions - required: {required}, actual: {actual}")]
     InsufficientPermissions { required: String, actual: String },
+}
+
+impl std::fmt::Display for JwtError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EncodingError(e) => write!(f, "JWT encoding error: {}", e),
+            Self::SystemTime => write!(f, "System time error"),
+            Self::InvalidUserUuid => write!(f, "Invalid user UUID in token"),
+            Self::UserNotFound => write!(f, "User not found or inactive"),
+            Self::RoleMismatch { token_role, current_role } => {
+                write!(f, "Role mismatch - token has '{}', current role is '{}'", token_role, current_role)
+            }
+            Self::MissingToken => write!(f, "Missing authentication token"),
+            Self::InsufficientPermissions { required, actual } => {
+                write!(f, "Insufficient permissions - required: {}, actual: {}", required, actual)
+            }
+        }
+    }
+}
+
+impl std::error::Error for JwtError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EncodingError(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<jsonwebtoken::errors::Error> for JwtError {
+    fn from(err: jsonwebtoken::errors::Error) -> Self {
+        Self::EncodingError(err)
+    }
 }
 
 /// Convert JWT errors to appropriate HTTP responses
@@ -199,7 +219,7 @@ impl From<JwtError> for ActixError {
             JwtError::InsufficientPermissions { .. } => {
                 actix_web::error::ErrorForbidden("Insufficient permissions")
             },
-            JwtError::SystemTimeError => {
+            JwtError::SystemTime => {
                 actix_web::error::ErrorInternalServerError("Server time error")
             },
         }
@@ -245,7 +265,7 @@ impl From<JwtError> for HttpResponse {
                     "message": format!("Insufficient permissions - required: {}, actual: {}", required, actual)
                 }))
             },
-            JwtError::SystemTimeError => {
+            JwtError::SystemTime => {
                 HttpResponse::InternalServerError().json(json!({
                     "status": "error",
                     "message": "Server time error"
@@ -259,7 +279,7 @@ impl From<JwtError> for HttpResponse {
 pub mod helpers {
     use super::*;
 
-    /// Create a login response with JWT token
+    /// Create a successful login response with JWT token
     pub fn create_login_response(user: User) -> Result<crate::models::LoginResponse, HttpResponse> {
         let token = JwtUtils::create_token(&user)
             .map_err(|_| HttpResponse::InternalServerError().json(json!({
@@ -268,8 +288,81 @@ pub mod helpers {
             })))?;
 
         Ok(crate::models::LoginResponse {
-            token,
-            user: user.into(),
+            success: true,
+            mfa_required: Some(false),
+            mfa_setup_required: Some(false),
+            user_uuid: Some(user.uuid.to_string()),
+            token: Some(token),
+            user: Some(user.into()),
+            message: Some("Login successful".to_string()),
+            mfa_backup_code_used: None,
+            requires_backup_code_regeneration: None,
+        })
+    }
+
+    /// Create a response indicating MFA is required
+    pub fn create_mfa_required_response(user_uuid: uuid::Uuid) -> crate::models::LoginResponse {
+        crate::models::LoginResponse {
+            success: false,
+            mfa_required: Some(true),
+            mfa_setup_required: Some(false),
+            user_uuid: Some(user_uuid.to_string()),
+            token: None,
+            user: None,
+            message: Some("Multi-factor authentication required".to_string()),
+            mfa_backup_code_used: None,
+            requires_backup_code_regeneration: None,
+        }
+    }
+
+    /// Create a response indicating MFA setup is required
+    pub fn create_mfa_setup_required_response(user_uuid: uuid::Uuid) -> crate::models::LoginResponse {
+        crate::models::LoginResponse {
+            success: false,
+            mfa_required: Some(false),
+            mfa_setup_required: Some(true),
+            user_uuid: Some(user_uuid.to_string()),
+            token: None,
+            user: None,
+            message: Some("Multi-factor authentication setup required for your account type".to_string()),
+            mfa_backup_code_used: None,
+            requires_backup_code_regeneration: None,
+        }
+    }
+
+
+
+    /// Create a successful MFA login response
+    pub fn create_mfa_login_response(
+        user: User,
+        backup_code_used: bool,
+        requires_regeneration: bool,
+    ) -> Result<crate::models::LoginResponse, HttpResponse> {
+        let token = JwtUtils::create_token(&user)
+            .map_err(|_| HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": "Error generating token"
+            })))?;
+
+        let mut message = "Login successful".to_string();
+        if backup_code_used {
+            message = if requires_regeneration {
+                "Login successful using backup code. You have 2 or fewer backup codes remaining - please regenerate them soon.".to_string()
+            } else {
+                "Login successful using backup code".to_string()
+            };
+        }
+
+        Ok(crate::models::LoginResponse {
+            success: true,
+            mfa_required: Some(false),
+            mfa_setup_required: Some(false),
+            user_uuid: Some(user.uuid.to_string()),
+            token: Some(token),
+            user: Some(user.into()),
+            message: Some(message),
+            mfa_backup_code_used: Some(backup_code_used),
+            requires_backup_code_regeneration: Some(requires_regeneration),
         })
     }
 

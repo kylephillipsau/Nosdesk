@@ -6,7 +6,7 @@ use crate::utils::{ValidationError, ValidationResult};
 /// Hash a password securely using bcrypt
 pub fn hash_password(password: &str) -> ValidationResult<String> {
     hash(password, DEFAULT_COST)
-        .map_err(|_| ValidationError::General("Failed to hash password".to_string()))
+        .map_err(|_| ValidationError::ValidationFailed("Failed to hash password".to_string()))
 }
 
 /// Create a local authentication identity for a user

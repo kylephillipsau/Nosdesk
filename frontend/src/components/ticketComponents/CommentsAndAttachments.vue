@@ -22,15 +22,11 @@ interface CommentWithAttachments {
 const props = defineProps<{
   comments: CommentWithAttachments[];
   currentUser: string;
+  recentlyAddedCommentIds?: Set<number>;
 }>();
 
 const newCommentContent = ref<string>("");
 const newAttachments = ref<File[]>([]); // Store File objects initially
-const uploadedAttachments = ref<{ id: number; url: string; name: string }[]>(
-  []
-); // Store server responses
-const uploading = ref(false);
-const uploadError = ref<string | null>(null);
 const showAttachmentMenu = ref(false);
 const attachmentButtonRef = ref<HTMLElement | null>(null);
 const attachmentMenuRef = ref<HTMLElement | null>(null);
@@ -47,7 +43,7 @@ const emit = defineEmits<{
     value: {
       content: string;
       user_uuid: string;
-      attachments: { url: string; name: string }[];
+      files: File[];
     }
   ): void;
   (
@@ -57,100 +53,28 @@ const emit = defineEmits<{
   (e: "deleteComment", value: number): void;
 }>();
 
-const uploadFiles = async (): Promise<
-  { id: number; url: string; name: string }[]
-> => {
-  if (newAttachments.value.length === 0) return [];
-
-  uploading.value = true;
-  uploadError.value = null;
-  const formData = new FormData();
-
-  console.log(
-    `Uploading ${newAttachments.value.length} files:`,
-    newAttachments.value
-  );
-
-  newAttachments.value.forEach((file) => {
-    console.log(
-      `Adding file to FormData: ${file.name} (${file.type}), size: ${file.size} bytes`
-    );
-    formData.append("files", file, file.name);
-  });
-
-  try {
-    console.log("Sending upload request to server...");
-    const response = await fetch("/api/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Upload response not OK:", response.status, errorText);
-      throw new Error(`Upload failed: ${response.status} ${errorText}`);
-    }
-
-    const uploadedFiles = await response.json(); // [{ id, url, name }]
-    console.log("Upload successful, received:", uploadedFiles);
-    uploadedAttachments.value = uploadedFiles;
-    return uploadedFiles;
-  } catch (error: any) {
-    console.error("Error during file upload:", error);
-    uploadError.value = `Upload failed: ${error.message}`;
-    throw error;
-  } finally {
-    uploading.value = false;
-  }
-};
-
-const addComment = async () => {
+const addComment = () => {
   if (!newCommentContent.value.trim() && newAttachments.value.length === 0)
     return;
 
-  try {
-    console.log(
-      "Starting comment submission with attachments:",
-      newAttachments.value
-    );
+  console.log("Emitting addComment event with data:", {
+    content: newCommentContent.value,
+    user_uuid: props.currentUser,
+    files: newAttachments.value,
+  });
 
-    // Check if we have any files to upload
-    let attachmentsToAdd: { id: number; url: string; name: string }[] = [];
-    if (newAttachments.value.length > 0) {
-      console.log("Uploading files before adding comment...");
-      const uploadedFiles = await uploadFiles();
-      console.log("Files uploaded successfully:", uploadedFiles);
-      
-      attachmentsToAdd = uploadedFiles.map((file) => ({
-        id: file.id,
-        url: file.url,
-        name: file.name,
-      }));
-    }
+  // Emit the comment with raw files - parent will handle upload
+  emit("addComment", {
+    content: newCommentContent.value,
+    user_uuid: props.currentUser,
+    files: newAttachments.value,
+  });
 
-    console.log("Emitting addComment event with data:", {
-      content: newCommentContent.value,
-      user_uuid: props.currentUser,
-      attachments: attachmentsToAdd,
-    });
+  // Reset form
+  newCommentContent.value = "";
+  newAttachments.value = [];
 
-    // Add the comment with attachments
-    emit("addComment", {
-      content: newCommentContent.value,
-      user_uuid: props.currentUser,
-      attachments: attachmentsToAdd,
-    });
-
-    // Reset form
-    newCommentContent.value = "";
-    newAttachments.value = [];
-    uploadedAttachments.value = [];
-
-    console.log("Comment submission complete, form reset");
-  } catch (error: any) {
-    console.error("Failed to add comment:", error);
-    uploadError.value = `Failed to add comment: ${error.message}`;
-  }
+  console.log("Comment submission complete, form reset");
 };
 
 const handleFileUpload = (event: Event) => {
@@ -394,9 +318,7 @@ const handleDrop = (event: DragEvent) => {
             />
           </div>
 
-          <!-- Upload status -->
-          <div v-if="uploading" class="text-slate-400 text-sm">Uploading...</div>
-          <div v-if="uploadError" class="text-red-500 text-sm">{{ uploadError }}</div>
+
 
           <!-- Voice Recorder and Preview Components -->
           <VoiceRecorder
@@ -421,9 +343,8 @@ const handleDrop = (event: DragEvent) => {
             <button
               type="submit"
               class="flex-1 bg-blue-500 text-white h-10 px-4 rounded-md hover:bg-blue-600 transition-colors text-sm font-medium"
-              :disabled="uploading"
             >
-              {{ uploading ? "Uploading..." : "Add" }}
+              Add
             </button>
             <div class="relative">
               <button
@@ -432,7 +353,6 @@ const handleDrop = (event: DragEvent) => {
                 @click="toggleAttachmentMenu"
                 class="h-10 px-4 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors flex items-center justify-center"
                 aria-label="Add attachment"
-                :disabled="uploading"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -508,7 +428,12 @@ const handleDrop = (event: DragEvent) => {
         <div
           v-for="comment in props.comments"
           :key="comment.id"
-          class="flex flex-col gap-2 bg-slate-700/50 p-3 rounded-lg border border-slate-600/30"
+          class="flex flex-col gap-2 p-3 rounded-lg border transition-all duration-300"
+          :class="[
+            props.recentlyAddedCommentIds?.has(comment.id) 
+              ? 'bg-blue-600/20 border-blue-500/50 animate-pulse' 
+              : 'bg-slate-700/50 border-slate-600/30'
+          ]"
         >
           <div class="flex flex-row gap-2 justify-between">
             <div class="flex gap-2 justify-center items-center">

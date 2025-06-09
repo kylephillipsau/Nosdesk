@@ -7,8 +7,77 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::db;
-use crate::models::{NewTicket, TicketStatus, TicketPriority, TicketUpdate, ArticleContentChunk, TicketsJson, TicketJson};
+use crate::models::{NewTicket, TicketStatus, TicketPriority, TicketUpdate, ArticleContentChunk, TicketsJson, TicketJson, UserRole};
 use crate::repository;
+
+// Helper function to validate assignee role
+fn validate_assignee_role(assignee_uuid: &Uuid, conn: &mut crate::db::DbConnection) -> Result<(), HttpResponse> {
+    match crate::repository::users::get_user_by_uuid(assignee_uuid, conn) {
+        Ok(user) => {
+            // Check if user has technician or admin role
+            if user.role != UserRole::Technician && user.role != UserRole::Admin {
+                Err(HttpResponse::BadRequest().json(json!({
+                    "error": "Invalid assignee",
+                    "message": "Only technicians and administrators can be assigned to tickets"
+                })))
+            } else {
+                Ok(())
+            }
+        },
+        Err(_) => {
+            Err(HttpResponse::BadRequest().json(json!({
+                "error": "User not found", 
+                "message": "The specified assignee does not exist"
+            })))
+        }
+    }
+}
+
+// Helper function to parse and validate assignee from string (for update operations)
+fn parse_and_validate_assignee_string(assignee_str: &str, conn: &mut crate::db::DbConnection) -> Result<Uuid, HttpResponse> {
+    // Try to parse as UUID first
+    if let Ok(uuid) = Uuid::parse_str(assignee_str) {
+        // Use the same validation logic but adapted for the update context
+        match crate::repository::users::get_user_by_uuid(&uuid, conn) {
+            Ok(user) => {
+                if user.role != UserRole::Technician && user.role != UserRole::Admin {
+                    Err(HttpResponse::BadRequest().json(json!({
+                        "error": "Invalid assignee",
+                        "message": "Only technicians and administrators can be assigned to tickets"
+                    })))
+                } else {
+                    Ok(uuid)
+                }
+            },
+            Err(_) => {
+                Err(HttpResponse::BadRequest().json(json!({
+                    "error": "User not found",
+                    "message": "The specified assignee does not exist"
+                })))
+            }
+        }
+    } else {
+        // Try to look up by name
+        match crate::repository::users::get_user_by_name(assignee_str, conn) {
+            Ok(user) => {
+                if user.role != UserRole::Technician && user.role != UserRole::Admin {
+                    Err(HttpResponse::BadRequest().json(json!({
+                        "error": "Invalid assignee",
+                        "message": "Only technicians and administrators can be assigned to tickets"
+                    })))
+                } else {
+                    Ok(user.uuid)
+                }
+            },
+            Err(_) => {
+                Err(HttpResponse::BadRequest().json(json!({
+                    "error": "User not found",
+                    "message": "The specified assignee does not exist"
+                })))
+            }
+        }
+    }
+}
 
 // Pagination query parameters
 #[derive(Deserialize)]
@@ -156,7 +225,16 @@ pub async fn create_ticket(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    match repository::create_ticket(&mut conn, ticket.into_inner()) {
+    let mut new_ticket = ticket.into_inner();
+
+    // Validate assignee role if assignee is set
+    if let Some(assignee_uuid) = new_ticket.assignee_uuid {
+        if let Err(response) = validate_assignee_role(&assignee_uuid, &mut conn) {
+            return response;
+        }
+    }
+
+    match repository::create_ticket(&mut conn, new_ticket) {
         Ok(ticket) => HttpResponse::Created().json(ticket),
         Err(_) => HttpResponse::InternalServerError().json("Failed to create ticket"),
     }
@@ -174,7 +252,16 @@ pub async fn update_ticket(
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
 
-    match repository::update_ticket(&mut conn, ticket_id, ticket.into_inner()) {
+    let mut new_ticket = ticket.into_inner();
+
+    // Validate assignee role if assignee is set
+    if let Some(assignee_uuid) = new_ticket.assignee_uuid {
+        if let Err(response) = validate_assignee_role(&assignee_uuid, &mut conn) {
+            return response;
+        }
+    }
+
+    match repository::update_ticket(&mut conn, ticket_id, new_ticket) {
         Ok(ticket) => HttpResponse::Ok().json(ticket),
         Err(e) => {
             // Just return a generic error - we can't easily check for NotFound without downcast_ref
@@ -416,16 +503,11 @@ pub async fn update_ticket_partial(
         if assignee_str.is_empty() {
             // Empty string means unassign
             ticket_update.assignee_uuid = Some(None);
-        } else if let Ok(uuid) = Uuid::parse_str(assignee_str) {
-            // It's already a UUID
-            ticket_update.assignee_uuid = Some(Some(uuid));
         } else {
-            // Try to look up by name
-            match crate::repository::users::get_user_by_name(assignee_str, &mut conn) {
-                Ok(user) => ticket_update.assignee_uuid = Some(Some(user.uuid)),
-                Err(_) => {
-                    println!("Warning: Could not find user with name '{}'", assignee_str);
-                }
+            // Parse and validate assignee
+            match parse_and_validate_assignee_string(assignee_str, &mut conn) {
+                Ok(uuid) => ticket_update.assignee_uuid = Some(Some(uuid)),
+                Err(response) => return response,
             }
         }
     }
@@ -483,6 +565,7 @@ pub async fn update_ticket_partial(
 pub async fn link_tickets(
     pool: web::Data<crate::db::Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (ticket_id, linked_ticket_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -491,7 +574,13 @@ pub async fn link_tickets(
     };
 
     match repository::link_tickets(&mut conn, ticket_id, linked_ticket_id) {
-        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Ok(_) => {
+            // Broadcast SSE event for ticket linking
+            println!("Broadcasting SSE event: Ticket {} linked to ticket {}", ticket_id, linked_ticket_id);
+            crate::handlers::sse::broadcast_ticket_linked(&sse_state, ticket_id, linked_ticket_id);
+            
+            HttpResponse::Ok().json(json!({"success": true}))
+        },
         Err(e) => {
             println!("Error linking tickets: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to link tickets")
@@ -503,6 +592,7 @@ pub async fn link_tickets(
 pub async fn unlink_tickets(
     pool: web::Data<crate::db::Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (ticket_id, linked_ticket_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -511,7 +601,13 @@ pub async fn unlink_tickets(
     };
 
     match repository::unlink_tickets(&mut conn, ticket_id, linked_ticket_id) {
-        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Ok(_) => {
+            // Broadcast SSE event for ticket unlinking
+            println!("Broadcasting SSE event: Ticket {} unlinked from ticket {}", ticket_id, linked_ticket_id);
+            crate::handlers::sse::broadcast_ticket_unlinked(&sse_state, ticket_id, linked_ticket_id);
+            
+            HttpResponse::Ok().json(json!({"success": true}))
+        },
         Err(e) => {
             println!("Error unlinking tickets: {:?}", e);
             HttpResponse::InternalServerError().json("Failed to unlink tickets")
@@ -523,6 +619,7 @@ pub async fn unlink_tickets(
 pub async fn add_device_to_ticket(
     pool: web::Data<crate::db::Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (ticket_id, device_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -531,7 +628,13 @@ pub async fn add_device_to_ticket(
     };
 
     match repository::add_device_to_ticket(&mut conn, ticket_id, device_id) {
-        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Ok(_) => {
+            // Broadcast SSE event for device linking
+            println!("Broadcasting SSE event: Device {} linked to ticket {}", device_id, ticket_id);
+            crate::handlers::sse::broadcast_device_linked(&sse_state, ticket_id, device_id);
+            
+            HttpResponse::Ok().json(json!({"success": true}))
+        },
         Err(e) => {
             println!("Error adding device {} to ticket {}: {:?}", device_id, ticket_id, e);
             HttpResponse::InternalServerError().json("Failed to add device to ticket")
@@ -543,6 +646,7 @@ pub async fn add_device_to_ticket(
 pub async fn remove_device_from_ticket(
     pool: web::Data<crate::db::Pool>,
     path: web::Path<(i32, i32)>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
 ) -> impl Responder {
     let (ticket_id, device_id) = path.into_inner();
     let mut conn = match pool.get() {
@@ -552,7 +656,13 @@ pub async fn remove_device_from_ticket(
 
     match repository::remove_device_from_ticket(&mut conn, ticket_id, device_id) {
         Ok(0) => HttpResponse::NotFound().json("Device not associated with ticket"),
-        Ok(_) => HttpResponse::Ok().json(json!({"success": true})),
+        Ok(_) => {
+            // Broadcast SSE event for device unlinking
+            println!("Broadcasting SSE event: Device {} unlinked from ticket {}", device_id, ticket_id);
+            crate::handlers::sse::broadcast_device_unlinked(&sse_state, ticket_id, device_id);
+            
+            HttpResponse::Ok().json(json!({"success": true}))
+        },
         Err(e) => {
             println!("Error removing device {} from ticket {}: {:?}", device_id, ticket_id, e);
             HttpResponse::InternalServerError().json("Failed to remove device from ticket")
