@@ -36,6 +36,11 @@ export const useAuthStore = defineStore('auth', () => {
   // Track ongoing fetchUserData requests to prevent duplicates
   let fetchUserDataPromise: Promise<any> | null = null;
 
+  // Add MFA state management
+  const mfaRequired = ref(false);
+  const mfaSetupRequired = ref(false);
+  const mfaUserUuid = ref<string>('');
+
   // Set up axios auth header if token exists
   if (token.value) {
     axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`;
@@ -133,32 +138,43 @@ export const useAuthStore = defineStore('auth', () => {
     return fetchUserDataPromise;
   }
 
-  // Actions
-  async function login(credentials: LoginCredentials) {
+  // Simplified login - returns boolean, sets MFA state if needed
+  async function login(credentials: LoginCredentials): Promise<boolean> {
     loading.value = true;
     error.value = null;
+    mfaRequired.value = false;
+    mfaSetupRequired.value = false;
     
     try {
       const response = await axios.post('/api/auth/login', credentials);
       
-      // Store only token in localStorage, not user data
-      token.value = response.data.token;
-      user.value = response.data.user;
-      
-      if (token.value) {
-        localStorage.setItem('token', token.value);
-        // Set provider to local for regular login
-        authProvider.value = 'local';
-        localStorage.setItem('authProvider', 'local');
-        // Set Authorization header for future requests
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`;
-        axios.defaults.headers.common['X-Auth-Provider'] = 'local';
+      // Handle MFA required
+      if (response.data.mfa_required) {
+        mfaRequired.value = true;
+        mfaUserUuid.value = response.data.user_uuid || '';
+        error.value = response.data.message || 'Multi-factor authentication required';
+        return false;
       }
       
-      // Redirect to dashboard
-      router.push('/');
+      // Handle MFA setup required
+      if (response.data.mfa_setup_required) {
+        mfaSetupRequired.value = true;
+        mfaUserUuid.value = response.data.user_uuid || '';
+        error.value = response.data.message || 'Multi-factor authentication setup required';
+        return false;
+      }
       
-      return true;
+      // Handle successful login
+      if (response.data.success && response.data.token) {
+        setAuthData(response.data.token, response.data.user);
+        router.push('/');
+        return true;
+      }
+      
+      // Handle other cases
+      error.value = response.data.message || 'Login failed. Please try again.';
+      return false;
+      
     } catch (err: any) {
       console.error('Login error:', err);
       error.value = err.response?.data?.message || 'Login failed. Please check your credentials.';
@@ -167,6 +183,119 @@ export const useAuthStore = defineStore('auth', () => {
       loading.value = false;
     }
   }
+
+  // Simplified MFA login
+  async function verifyMfaAndLogin(email: string, password: string, mfaToken: string): Promise<boolean> {
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      const response = await axios.post('/api/auth/mfa-login', {
+        email,
+        password,
+        mfa_token: mfaToken.trim()
+      });
+      
+              if (response.data.success && response.data.token) {
+          setAuthData(response.data.token, response.data.user);
+          
+          // Show backup code warning if needed
+          if (response.data.mfa_backup_code_used && response.data.requires_backup_code_regeneration) {
+            error.value = 'Login successful! Please regenerate your backup codes soon - you have 2 or fewer remaining.';
+          }
+          
+          mfaRequired.value = false;
+          mfaUserUuid.value = '';
+          router.push('/');
+          return true;
+        }
+        
+        error.value = response.data.message || 'MFA verification failed';
+        return false;
+        
+      } catch (err: any) {
+        console.error('MFA login error:', err);
+        error.value = err.response?.data?.message || 'MFA verification failed. Please try again.';
+        return false;
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    // Helper function to set authentication data
+    function setAuthData(tokenValue: string, userData: User) {
+      token.value = tokenValue;
+      user.value = userData;
+      
+      localStorage.setItem('token', tokenValue);
+      authProvider.value = 'local';
+      localStorage.setItem('authProvider', 'local');
+      
+      axios.defaults.headers.common['Authorization'] = `Bearer ${tokenValue}`;
+      axios.defaults.headers.common['X-Auth-Provider'] = 'local';
+    }
+
+    // MFA Setup for Login - Start setup process for users who need MFA
+    async function startMfaSetupLogin(email: string, password: string): Promise<{ secret: string; qr_code: string; backup_codes: string[] } | null> {
+      loading.value = true;
+      error.value = null;
+      
+      try {
+        const response = await axios.post('/api/auth/mfa-setup-login', {
+          email,
+          password
+        });
+        
+        return response.data;
+      } catch (err: any) {
+        console.error('MFA setup error:', err);
+        error.value = err.response?.data?.message || 'Failed to start MFA setup. Please try again.';
+        return null;
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    // MFA Enable for Login - Complete setup and login
+    async function completeMfaSetupAndLogin(email: string, password: string, token: string, secret: string, backupCodes: string[]): Promise<boolean> {
+      loading.value = true;
+      error.value = null;
+      
+      try {
+        const response = await axios.post('/api/auth/mfa-enable-login', {
+          email,
+          password,
+          token: token.trim(),
+          secret,
+          backup_codes: backupCodes
+        });
+        
+        if (response.data.success && response.data.token) {
+          setAuthData(response.data.token, response.data.user);
+          mfaSetupRequired.value = false;
+          mfaUserUuid.value = '';
+          router.push('/');
+          return true;
+        }
+        
+        error.value = response.data.message || 'MFA setup failed. Please try again.';
+        return false;
+        
+      } catch (err: any) {
+        console.error('MFA enable login error:', err);
+        error.value = err.response?.data?.message || 'Failed to complete MFA setup. Please try again.';
+        return false;
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    // Clear MFA state
+    function clearMfaState() {
+      mfaRequired.value = false;
+      mfaSetupRequired.value = false;
+      mfaUserUuid.value = '';
+    }
 
   // Handle external auth (Microsoft, etc.)
   async function setExternalAuth(tokenStr: string, userData: User | null, provider: string = 'microsoft') {
@@ -218,11 +347,18 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     error,
     authProvider,
+    mfaRequired,
+    mfaSetupRequired,
+    mfaUserUuid,
     isAuthenticated,
     isAdmin,
     isTechnician,
     isMicrosoftAuth,
     login,
+    verifyMfaAndLogin,
+    startMfaSetupLogin,
+    completeMfaSetupAndLogin,
+    clearMfaState,
     logout,
     fetchUserData,
     setExternalAuth

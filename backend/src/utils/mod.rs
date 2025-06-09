@@ -4,20 +4,30 @@ pub mod validation;
 pub mod image;
 pub mod jwt;
 pub mod sse;
+pub mod mfa;
 
 use uuid::Uuid;
 use crate::models::{UserRole, UserInfo};
 
 /// Custom error types for better error handling
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ValidationError {
-    #[error("Invalid UUID format: {0}")]
     InvalidUuid(String),
-    #[error("Invalid role: {0}. Must be 'admin', 'technician', or 'user'")]
     InvalidRole(String),
-    #[error("Validation failed: {0}")]
-    General(String),
+    ValidationFailed(String),
 }
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidUuid(s) => write!(f, "Invalid UUID format: {}", s),
+            Self::InvalidRole(s) => write!(f, "Invalid role: {}. Must be 'admin', 'technician', or 'user'", s),
+            Self::ValidationFailed(s) => write!(f, "Validation failed: {}", s),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 /// Result type alias for validation operations
 pub type ValidationResult<T> = Result<T, ValidationError>;
@@ -106,4 +116,5 @@ pub use user::*;
 pub use validation::*;
 pub use image::*;
 pub use jwt::*;
-pub use sse::*; 
+pub use sse::*;
+pub use mfa::*; 

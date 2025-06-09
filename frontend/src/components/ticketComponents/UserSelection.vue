@@ -16,21 +16,44 @@ const emit = defineEmits<{
 // Use data store for user lookups
 const dataStore = useDataStore();
 
-// State for search functionality
+// Simplified state - only what we need for search
 const inputValue = ref('');
 const isDropdownOpen = ref(false);
-const isInputFocused = ref(false);
-const searchResults = ref<{ id: string; name: string; email: string }[]>([]);
+const searchResults = ref<{ id: string; name: string; email: string; role?: string }[]>([]);
 const isSearching = ref(false);
-const searchError = ref<string | null>(null);
-const selectedUser = ref<{ id: string; name: string; email: string } | null>(null);
 
-// Add reference for input positioning
-const inputRef = ref<HTMLElement | null>(null);
+// References for positioning
 const containerRef = ref<HTMLElement | null>(null);
 
 // Debounce timer for search
 let searchTimeout: number | null = null;
+
+// Computed user info based on modelValue - this is our source of truth
+const currentUser = computed(async () => {
+  if (!props.modelValue) return null;
+  
+  try {
+    // Try to get from data store first
+    const userName = dataStore.getUserName(props.modelValue);
+    if (userName) {
+      return { id: props.modelValue, name: userName, email: '' };
+    }
+    
+    // If it's a UUID, try to fetch full user data
+    if (props.modelValue.length === 36 && props.modelValue.includes('-')) {
+      const user = await dataStore.getUserByUuid(props.modelValue);
+      if (user) {
+        return { id: user.uuid, name: user.name, email: user.email };
+      }
+    }
+    
+    // Fallback to using the modelValue as name
+    return { id: props.modelValue, name: props.modelValue, email: '' };
+  } catch (error) {
+    console.error('Error getting user info:', error);
+    return { id: props.modelValue, name: props.modelValue, email: '' };
+  }
+});
 
 // Computed position for the dropdown
 const dropdownPosition = computed(() => {
@@ -46,79 +69,96 @@ const dropdownPosition = computed(() => {
   }
 })
 
-// Find user info by UUID
-const getUserInfo = async (id: string) => {
-  if (!id) return { name: '', user: null };
-  
-  // If we have the selected user cached, use it
-  if (selectedUser.value && selectedUser.value.id === id) {
-    return { name: selectedUser.value.name, user: selectedUser.value };
+// Initialize input value when modelValue changes
+watch(() => props.modelValue, async (newValue) => {
+  if (!newValue) {
+    inputValue.value = '';
+    return;
   }
   
-  // Try to get from data store cache
-  const cachedName = dataStore.getUserName(id);
-  if (cachedName) {
-    const user = { id, name: cachedName, email: '' };
-    selectedUser.value = user;
-    return { name: cachedName, user };
+  // Update input value with user name
+  const user = await currentUser.value;
+  if (user) {
+    inputValue.value = user.name;
   }
-  
-  // If it's a UUID pattern, try to fetch from store
-  if (id.length === 36 && id.includes('-')) {
-    try {
-      const user = await dataStore.getUserByUuid(id);
-      if (user) {
-        const userInfo = { id: user.uuid, name: user.name, email: user.email };
-        selectedUser.value = userInfo;
-        return { name: user.name, user: userInfo };
-      }
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-    }
-    return { name: 'Loading...', user: null };
-  }
-  
-  // Fallback to the ID itself
-  return { name: id, user: null };
-};
+}, { immediate: true });
 
-// Initialize the component with the current modelValue
-const initializeUser = async () => {
-  if (props.modelValue) {
-    const info = await getUserInfo(props.modelValue);
-    inputValue.value = info.name;
-  }
-};
 
-// Search users via API
+
+// Search users via API with backend role filtering
 const searchUsers = async (query: string) => {
-  if (!query || query.length < 2) {
+  console.log(`🔍 searchUsers called with query: "${query}", type: ${props.type}`);
+  
+  // For requesters, require at least 2 characters
+  if (props.type === 'requester' && (!query || query.length < 2)) {
+    console.log('🔍 Requester query too short, clearing results');
     searchResults.value = [];
     return;
   }
   
   try {
     isSearching.value = true;
-    searchError.value = null;
+    console.log('🔍 Making API call to getPaginatedUsers');
     
-    // Use the data store to search users
-    const response = await dataStore.getPaginatedUsers({
-      page: 1,
-      pageSize: 50, // Limit results for dropdown
-      search: query,
-      sortField: 'name',
-      sortDirection: 'asc'
-    });
+    // For assignees, we'll make two API calls to get both admin and technician users
+    if (props.type === 'assignee') {
+      console.log('🔍 Fetching assignee users (admins and technicians)');
+      
+      // Fetch admins and technicians separately, then combine
+      const [adminResponse, technicianResponse] = await Promise.all([
+        dataStore.getPaginatedUsers({
+          page: 1,
+          pageSize: 50,
+          search: query || '',
+          sortField: 'name',
+          sortDirection: 'asc',
+          role: 'admin'
+        }),
+        dataStore.getPaginatedUsers({
+          page: 1,
+          pageSize: 50,
+          search: query || '',
+          sortField: 'name',
+          sortDirection: 'asc',
+          role: 'technician'
+        })
+      ]);
+      
+      // Combine and deduplicate results
+      const allAssigneeUsers = [...adminResponse.data, ...technicianResponse.data];
+      console.log(`🔍 Found ${adminResponse.data.length} admins and ${technicianResponse.data.length} technicians`);
+      
+      // Transform users to the format expected by the component
+      searchResults.value = allAssigneeUsers.map(user => ({
+        id: user.uuid,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }));
+    } else {
+      // For requesters, search all users
+      const response = await dataStore.getPaginatedUsers({
+        page: 1,
+        pageSize: 50,
+        search: query || '',
+        sortField: 'name',
+        sortDirection: 'asc'
+      });
+      
+      console.log(`🔍 API response received, ${response.data.length} users found`);
+      
+      // Transform users to the format expected by the component
+      searchResults.value = response.data.map(user => ({
+        id: user.uuid,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }));
+    }
     
-    // Transform users to the format expected by the component
-    searchResults.value = response.data.map(user => ({
-      id: user.uuid,
-      name: user.name,
-      email: user.email
-    }));
+    console.log(`🔍 Final search results: ${searchResults.value.length} users`);
   } catch (error) {
     console.error('Error searching users:', error);
-    searchError.value = 'Failed to search users';
     searchResults.value = [];
   } finally {
     isSearching.value = false;
@@ -133,26 +173,12 @@ const debouncedSearch = (query: string) => {
   
   searchTimeout = setTimeout(() => {
     searchUsers(query);
-  }, 300); // 300ms delay
+  }, 300);
 };
 
-// Watch for modelValue changes
-watch(() => props.modelValue, async (newValue) => {
-  if (newValue === null || newValue === undefined || newValue === '') {
-    inputValue.value = '';
-    selectedUser.value = null;
-  } else {
-    const info = await getUserInfo(newValue);
-    inputValue.value = info.name;
-  }
-});
-
 // Handle user selection
-const selectUser = (user: { id: string; name: string; email: string }) => {
-  selectedUser.value = user;
+const selectUser = (user: { id: string; name: string; email: string; role?: string }) => {
   inputValue.value = user.name;
-  console.log(`UserSelection: Emitting update:modelValue with ID: ${user.id}`);
-  console.log(`UserSelection: Previous modelValue was: ${props.modelValue}`);
   emit('update:modelValue', user.id);
   isDropdownOpen.value = false;
   searchResults.value = [];
@@ -160,27 +186,27 @@ const selectUser = (user: { id: string; name: string; email: string }) => {
 
 // Clear selection
 const clearSelection = () => {
-  selectedUser.value = null;
   inputValue.value = '';
-  console.log(`UserSelection: Clearing selection, emitting empty string`);
-  console.log(`UserSelection: Previous modelValue was: ${props.modelValue}`);
   emit('update:modelValue', '');
   isDropdownOpen.value = false;
   searchResults.value = [];
 };
 
 // Handle input focus
-const handleFocus = (event: Event) => {
-  isInputFocused.value = true;
+const handleFocus = async (event: Event) => {
   isDropdownOpen.value = true;
   
-  // Select all text when input receives focus to allow easy replacement
+  // Select all text when input receives focus
   const input = event.target as HTMLInputElement;
   setTimeout(() => input.select(), 0);
   
-  // If we have a selected user, search for users matching the current name
-  // This allows finding other users with the same name
-  if (selectedUser.value && inputValue.value) {
+  // For assignees, always show all eligible users when focused
+  if (props.type === 'assignee') {
+    console.log('🎯 Loading assignee users on focus');
+    await searchUsers(''); // Load all eligible users with empty search
+  }
+  // For requesters, only search if there's already input
+  else if (inputValue.value && inputValue.value.length >= 2) {
     debouncedSearch(inputValue.value);
   }
 };
@@ -189,37 +215,35 @@ const handleFocus = (event: Event) => {
 const handleInput = () => {
   isDropdownOpen.value = true;
   
-  // If user clears the input, clear the selection
+  // If user clears the input, handle based on type
   if (inputValue.value === '') {
-    if (selectedUser.value) {
-      console.log(`UserSelection: Input cleared, emitting empty string`);
-      emit('update:modelValue', '');
-      selectedUser.value = null;
+    emit('update:modelValue', '');
+    if (props.type === 'assignee') {
+      // For assignees, show all eligible users again
+      searchUsers(''); // Load all eligible users with empty search
+    } else {
+      // For requesters, clear results
+      searchResults.value = [];
     }
-    searchResults.value = [];
     return;
   }
   
-  // Always search when input changes (even if it matches current user's name)
-  // This allows selecting different users with the same name
+  // Search when input changes (for both types)
   debouncedSearch(inputValue.value);
 };
 
 // Handle input blur
-const handleBlur = () => {
-  isInputFocused.value = false;
-  
-  // Restore the selected user's name if input was changed but no new selection made
-  if (selectedUser.value && inputValue.value !== selectedUser.value.name) {
-    inputValue.value = selectedUser.value.name;
+const handleBlur = async () => {
+  // Restore the current user's name if input was changed but no new selection made
+  const user = await currentUser.value;
+  if (user && props.modelValue) {
+    inputValue.value = user.name;
   }
   
   // Delay closing to allow click events on dropdown items
   setTimeout(() => {
-    if (!isInputFocused.value) {
-      isDropdownOpen.value = false;
-      searchResults.value = [];
-    }
+    isDropdownOpen.value = false;
+    searchResults.value = [];
   }, 200);
 };
 
@@ -229,17 +253,14 @@ const handleClickOutside = (event: MouseEvent) => {
   
   if (containerRef.value && !containerRef.value.contains(event.target as Node) && 
       dropdown && !dropdown.contains(event.target as Node)) {
-    if (!isInputFocused.value) {
-      isDropdownOpen.value = false;
-      searchResults.value = [];
-    }
+    isDropdownOpen.value = false;
+    searchResults.value = [];
   }
 };
 
 // Cleanup
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
-  initializeUser();
 });
 
 onUnmounted(() => {
@@ -254,11 +275,11 @@ onUnmounted(() => {
   <div ref="containerRef" class="relative w-full">
     <!-- User Selection Container -->
     <div class="flex items-center gap-2 px-2.5 py-1.5 min-h-[36px]">
-      <!-- Avatar Space - Always present for consistent alignment -->
+      <!-- Avatar Space -->
       <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center">
         <UserAvatar
-          v-if="selectedUser && !isDropdownOpen"
-          :name="selectedUser.id"
+          v-if="modelValue && !isDropdownOpen"
+          :name="modelValue"
           :showName="false"
           size="sm"
         />
@@ -266,7 +287,7 @@ onUnmounted(() => {
         <div
           v-else
           class="w-6 h-6 rounded-full bg-slate-700/30 border border-slate-600/30 flex items-center justify-center transition-all duration-200"
-          :class="{ 'border-slate-500/50': isInputFocused }"
+          :class="{ 'border-slate-500/50': isDropdownOpen }"
         >
           <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -277,7 +298,6 @@ onUnmounted(() => {
       <!-- Input Container -->
       <div class="flex-1 relative">
         <input
-          ref="inputRef"
           type="text"
           v-model="inputValue"
           @focus="handleFocus"
@@ -285,10 +305,6 @@ onUnmounted(() => {
           @blur="handleBlur"
           :placeholder="placeholder || 'Select user...'"
           class="w-full bg-transparent text-slate-200 placeholder-slate-400 focus:outline-none text-sm transition-all duration-200 leading-tight"
-          :class="{
-            'text-slate-300': selectedUser && !isDropdownOpen,
-            'text-slate-200': !selectedUser || isDropdownOpen
-          }"
         />
       </div>
       
@@ -296,7 +312,7 @@ onUnmounted(() => {
       <div class="flex items-center gap-1 flex-shrink-0">
         <!-- Clear button -->
         <button
-          v-if="selectedUser"
+          v-if="modelValue"
           @click.stop="clearSelection"
           class="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-600/30 rounded transition-all duration-200 group"
           type="button"
@@ -334,7 +350,7 @@ onUnmounted(() => {
             @click="selectUser(user)"
             class="w-full px-2.5 py-1.5 text-left flex items-center gap-2.5 hover:bg-slate-700/50 transition-all duration-150 group"
             :class="{
-              'bg-slate-700/30': selectedUser?.id === user.id
+              'bg-slate-700/30': modelValue === user.id
             }"
           >
             <UserAvatar 
@@ -344,10 +360,21 @@ onUnmounted(() => {
             />
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-slate-200 truncate">{{ user.name }}</div>
-              <div class="text-xs text-slate-400 truncate">{{ user.email }}</div>
+              <div class="flex items-center gap-2">
+                <div class="text-xs text-slate-400 truncate">{{ user.email }}</div>
+                <div v-if="user.role && props.type === 'assignee'" class="flex-shrink-0">
+                  <span class="px-1.5 py-0.5 text-xs font-medium rounded-md"
+                    :class="{
+                      'bg-red-900/30 text-red-300 border border-red-700/50': user.role === 'admin',
+                      'bg-blue-900/30 text-blue-300 border border-blue-700/50': user.role === 'technician'
+                    }">
+                    {{ user.role === 'admin' ? 'Admin' : 'Technician' }}
+                  </span>
+                </div>
+              </div>
             </div>
             <svg 
-              v-if="selectedUser?.id === user.id" 
+              v-if="modelValue === user.id" 
               class="w-3 h-3 text-blue-400 flex-shrink-0" 
               fill="currentColor" 
               viewBox="0 0 20 20"
@@ -373,28 +400,17 @@ onUnmounted(() => {
       </div>
     </Teleport>
     
-    <!-- Search error message -->
-    <Teleport to="body">
-      <div
-        v-if="isDropdownOpen && searchError && containerRef"
-        class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
-        :style="dropdownPosition"
-      >
-        <div class="p-3 text-center">
-          <div class="text-red-400 text-sm">{{ searchError }}</div>
-        </div>
-      </div>
-    </Teleport>
-    
     <!-- No users found message -->
     <Teleport to="body">
       <div
-        v-if="isDropdownOpen && !isSearching && searchResults.length === 0 && inputValue && inputValue.length >= 2 && !searchError && containerRef"
+        v-if="isDropdownOpen && !isSearching && searchResults.length === 0 && inputValue && inputValue.length >= 2 && containerRef"
         class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
         :style="dropdownPosition"
       >
         <div class="p-3 text-center text-slate-400">
-          <div class="text-sm">No users found</div>
+          <div class="text-sm">
+            {{ props.type === 'assignee' ? 'No technicians or administrators found' : 'No users found' }}
+          </div>
         </div>
       </div>
     </Teleport>
@@ -402,7 +418,7 @@ onUnmounted(() => {
     <!-- Search prompt -->
     <Teleport to="body">
       <div
-        v-if="isDropdownOpen && !isSearching && inputValue && inputValue.length < 2 && !selectedUser && containerRef"
+        v-if="isDropdownOpen && !isSearching && inputValue && inputValue.length < 2 && !modelValue && containerRef"
         class="user-autocomplete-dropdown fixed bg-slate-800 rounded-lg shadow-xl border border-slate-700/50 min-w-max backdrop-blur-sm z-[9999]"
         :style="dropdownPosition"
       >

@@ -19,6 +19,7 @@ declare module 'vue-router' {
     requiresAuth: boolean;
     title?: string;
     layout?: string;
+    adminRequired?: boolean;
   }
 }
 
@@ -33,6 +34,16 @@ const router = createRouter({
         layout: 'blank',
         requiresAuth: false,
         title: 'Sign In'
+      }
+    },
+    {
+      path: '/mfa-setup',
+      name: 'mfa-setup',
+      component: () => import('@/views/MFASetupView.vue'),
+      meta: {
+        layout: 'blank',
+        requiresAuth: false,
+        title: 'MFA Setup Required'
       }
     },
     {
@@ -88,6 +99,34 @@ const router = createRouter({
       beforeEnter: (to) => {
         // Set a generic title initially, the component will update it after fetching the user
         to.meta.title = 'User Profile'
+      }
+    },
+    {
+      path: '/users/:uuid/settings/:section?',
+      name: 'user-settings',
+      component: ProfileSettingsView,
+      props: true,
+      meta: {
+        requiresAuth: true,
+        title: 'User Settings',
+        adminRequired: true
+      },
+      beforeEnter: (to) => {
+        // Update title based on section
+        const section = to.params.section as string;
+        const sectionTitles: Record<string, string> = {
+          profile: 'User Profile Settings',
+          appearance: 'User Appearance Settings',
+          notifications: 'User Notification Settings',
+          security: 'User Security Settings'
+        };
+        
+        if (section && sectionTitles[section]) {
+          to.meta.title = sectionTitles[section];
+        } else {
+          // No section param means base settings URL = profile section
+          to.meta.title = 'User Profile Settings';
+        }
       }
     },
     {
@@ -222,12 +261,51 @@ const router = createRouter({
       }
     },
     {
-      path: '/profile/settings',
+      path: '/profile',
+      name: 'profile-redirect',
+      component: () => null, // Empty component since we're redirecting
+      meta: {
+        requiresAuth: true,
+        title: 'Profile'
+      },
+      beforeEnter: async (to, from, next) => {
+        // Import auth store to get current user
+        const { useAuthStore } = await import('@/stores/auth');
+        const authStore = useAuthStore();
+        
+        // If user is authenticated and has a UUID, redirect to their profile
+        if (authStore.user?.uuid) {
+          next(`/users/${authStore.user.uuid}`);
+        } else {
+          // Fallback to profile settings if no user UUID is available
+          next('/profile/settings');
+        }
+      }
+    },
+    {
+      path: '/profile/settings/:section?',
       name: 'profile-settings',
       component: ProfileSettingsView,
       meta: {
         requiresAuth: true,
         title: 'Settings'
+      },
+      beforeEnter: (to) => {
+        // Update title based on section
+        const section = to.params.section as string;
+        const sectionTitles: Record<string, string> = {
+          profile: 'Profile Settings',
+          appearance: 'Appearance Settings',
+          notifications: 'Notification Settings',
+          security: 'Security Settings'
+        };
+        
+        if (section && sectionTitles[section]) {
+          to.meta.title = sectionTitles[section];
+        } else {
+          // No section param means base /profile/settings URL = profile section
+          to.meta.title = 'Profile Settings';
+        }
       }
     },
     {

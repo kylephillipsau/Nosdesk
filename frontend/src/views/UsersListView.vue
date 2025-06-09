@@ -68,7 +68,7 @@ const columns = [
 
 // Get available filter options
 const availableRoles = computed(() => {
-  return ['admin', 'user', 'moderator', 'support'];
+  return ['admin', 'user', 'technician'];
 });
 
 // Build filter options
@@ -77,7 +77,7 @@ const filterOptions = computed(() => {
     role: {
       options: availableRoles.value.map(role => ({ 
         value: role.toLowerCase(), 
-        label: role 
+        label: role.charAt(0).toUpperCase() + role.slice(1)
       })),
       width: 'w-[150px]',
       allLabel: 'All Roles'
@@ -222,14 +222,6 @@ const navigateToCreateUser = () => {
               class="bg-slate-800 rounded-lg p-3 hover:bg-slate-700/50 transition-colors cursor-pointer"
             >
               <div class="flex items-start gap-3">
-                <div class="flex-grow-0">
-                  <input
-                    type="checkbox"
-                    class="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
-                    :checked="listManager.selectedItems.value.includes(user.uuid)"
-                    @click.stop="(event) => listManager.toggleSelection(event, user.uuid)"
-                  />
-                </div>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
                     <UserAvatar
@@ -272,7 +264,6 @@ const navigateToCreateUser = () => {
       @update:page-size="listManager.handlePageSizeChange"
       @import="() => {}"
     />
-
 
   </div>
 </template>

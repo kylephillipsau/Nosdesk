@@ -23,6 +23,25 @@ pub mod sql_types {
 }
 
 diesel::table! {
+    active_sessions (id) {
+        id -> Int4,
+        #[max_length = 64]
+        session_token -> Varchar,
+        user_uuid -> Uuid,
+        #[max_length = 255]
+        device_name -> Nullable<Varchar>,
+        ip_address -> Nullable<Text>,
+        user_agent -> Nullable<Text>,
+        #[max_length = 255]
+        location -> Nullable<Varchar>,
+        created_at -> Timestamptz,
+        last_active -> Timestamptz,
+        expires_at -> Timestamptz,
+        is_current -> Bool,
+    }
+}
+
+diesel::table! {
     article_contents (id) {
         id -> Int4,
         content -> Text,
@@ -154,6 +173,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    mfa_reset_tokens (token) {
+        #[max_length = 64]
+        token -> Varchar,
+        user_uuid -> Uuid,
+        ip_address -> Nullable<Text>,
+        user_agent -> Nullable<Text>,
+        created_at -> Timestamptz,
+        expires_at -> Timestamptz,
+        used_at -> Nullable<Timestamptz>,
+        is_used -> Bool,
+        email_verified -> Bool,
+        admin_approved -> Bool,
+        admin_approved_by -> Nullable<Uuid>,
+        admin_approved_at -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
     project_tickets (project_id, ticket_id) {
         project_id -> Int4,
         ticket_id -> Int4,
@@ -174,6 +211,24 @@ diesel::table! {
         end_date -> Nullable<Date>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    security_events (id) {
+        id -> Int4,
+        user_uuid -> Uuid,
+        #[max_length = 50]
+        event_type -> Varchar,
+        ip_address -> Nullable<Text>,
+        user_agent -> Nullable<Text>,
+        #[max_length = 255]
+        location -> Nullable<Varchar>,
+        details -> Nullable<Jsonb>,
+        #[max_length = 20]
+        severity -> Varchar,
+        created_at -> Timestamptz,
+        session_id -> Nullable<Int4>,
     }
 }
 
@@ -296,12 +351,14 @@ diesel::joinable!(documentation_pages -> tickets (ticket_id));
 diesel::joinable!(documentation_revisions -> documentation_pages (page_id));
 diesel::joinable!(project_tickets -> projects (project_id));
 diesel::joinable!(project_tickets -> tickets (ticket_id));
+diesel::joinable!(security_events -> active_sessions (session_id));
 diesel::joinable!(ticket_devices -> devices (device_id));
 diesel::joinable!(ticket_devices -> tickets (ticket_id));
 diesel::joinable!(user_auth_identities -> users (user_id));
 diesel::joinable!(user_emails -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    active_sessions,
     article_contents,
     attachments,
     comments,
@@ -309,8 +366,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     documentation_pages,
     documentation_revisions,
     linked_tickets,
+    mfa_reset_tokens,
     project_tickets,
     projects,
+    security_events,
     sync_history,
     ticket_devices,
     tickets,

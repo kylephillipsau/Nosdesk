@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize, Deserializer};
 use std::io::Write;
 use serde_json;
 use uuid::Uuid;
+use anyhow;
 
 // Simple UUID serialization helpers
 fn serialize_uuid_as_string<S>(uuid: &Uuid, serializer: S) -> Result<S::Ok, S::Error>
@@ -908,11 +909,43 @@ pub struct LoginRequest {
     pub password: String,
 }
 
-// Login response structure
+// Login response structure - supports both standard login and MFA flow
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
+    pub success: bool,
+    pub mfa_required: Option<bool>,
+    pub mfa_setup_required: Option<bool>,
+    pub user_uuid: Option<String>,
+    pub token: Option<String>,
+    pub user: Option<UserResponse>,
+    pub message: Option<String>,
+    pub mfa_backup_code_used: Option<bool>,
+    pub requires_backup_code_regeneration: Option<bool>,
+}
+
+/// Request for MFA verification during login
+#[derive(Debug, Deserialize)]
+pub struct MfaLoginRequest {
+    pub email: String,
+    pub password: String,
+    pub mfa_token: String,
+}
+
+/// Request for MFA setup during login (unauthenticated)
+#[derive(Debug, Deserialize)]
+pub struct MfaSetupLoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+/// Request for enabling MFA during login (unauthenticated)
+#[derive(Debug, Deserialize)]
+pub struct MfaEnableLoginRequest {
+    pub email: String,
+    pub password: String,
     pub token: String,
-    pub user: UserResponse,
+    pub secret: Option<String>,
+    pub backup_codes: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -1341,6 +1374,8 @@ pub struct MfaVerifySetupResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MfaEnableRequest {
     pub token: String,
+    pub secret: Option<String>,
+    pub backup_codes: Option<Vec<String>>,
 }
 
 /// Request for disabling MFA
@@ -1376,4 +1411,330 @@ pub struct UserMfaUpdate {
     pub mfa_enabled: Option<bool>,
     pub mfa_backup_codes: Option<serde_json::Value>,
     pub updated_at: Option<chrono::NaiveDateTime>,
+}
+
+// ===== SESSION MANAGEMENT MODELS =====
+
+/// Active user sessions for session management and revocation
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
+#[diesel(table_name = crate::schema::active_sessions)]
+pub struct ActiveSession {
+    pub id: i32,
+    pub session_token: String,
+    pub user_uuid: Uuid,
+    pub device_name: Option<String>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub location: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub last_active: chrono::NaiveDateTime,
+    pub expires_at: chrono::NaiveDateTime,
+    pub is_current: bool,
+}
+
+/// New active session for creation
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::active_sessions)]
+pub struct NewActiveSession {
+    pub session_token: String,
+    pub user_uuid: Uuid,
+    pub device_name: Option<String>,
+    pub ip_address: Option<String>, // Convert from ipnetwork::IpNetwork when needed
+    pub user_agent: Option<String>,
+    pub location: Option<String>,
+    pub expires_at: chrono::NaiveDateTime,
+    pub is_current: bool,
+}
+
+/// Update struct for active sessions
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::active_sessions)]
+pub struct ActiveSessionUpdate {
+    pub last_active: Option<chrono::NaiveDateTime>,
+    pub expires_at: Option<chrono::NaiveDateTime>,
+    pub is_current: Option<bool>,
+}
+
+/// Response model for active sessions in user profile
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ActiveSessionResponse {
+    pub id: i32,
+    pub device_name: Option<String>,
+    pub location: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub last_active: chrono::NaiveDateTime,
+    pub is_current: bool,
+}
+
+impl From<ActiveSession> for ActiveSessionResponse {
+    fn from(session: ActiveSession) -> Self {
+        ActiveSessionResponse {
+            id: session.id,
+            device_name: session.device_name,
+            location: session.location,
+            ip_address: session.ip_address.map(|ip| ip.to_string()),
+            created_at: session.created_at,
+            last_active: session.last_active,
+            is_current: session.is_current,
+        }
+    }
+}
+
+// ===== SECURITY EVENTS MODELS =====
+
+/// Type alias for Results in security operations using anyhow for applications
+pub type SecurityResult<T> = anyhow::Result<T>;
+
+/// Security events for MFA and authentication monitoring
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
+#[diesel(table_name = crate::schema::security_events)]
+pub struct SecurityEvent {
+    pub id: i32,
+    pub user_uuid: Uuid,
+    pub event_type: String,
+    pub ip_address: Option<String>, // Store as string for API responses
+    pub user_agent: Option<String>,
+    pub location: Option<String>,
+    pub details: Option<serde_json::Value>,
+    pub severity: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub session_id: Option<i32>,
+}
+
+/// New security event for creation
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::security_events)]
+pub struct NewSecurityEvent {
+    pub user_uuid: Uuid,
+    pub event_type: String,
+    pub ip_address: Option<String>, // Convert from ipnetwork::IpNetwork when needed
+    pub user_agent: Option<String>,
+    pub location: Option<String>,
+    pub details: Option<serde_json::Value>,
+    pub severity: String,
+    pub session_id: Option<i32>,
+}
+
+/// Security event types enum for type safety
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub enum SecurityEventType {
+    #[serde(rename = "login_success")]
+    LoginSuccess,
+    #[serde(rename = "login_failed")]
+    LoginFailed,
+    #[serde(rename = "mfa_enabled")]
+    MfaEnabled,
+    #[serde(rename = "mfa_disabled")]
+    MfaDisabled,
+    #[serde(rename = "mfa_failed")]
+    MfaFailed,
+    #[serde(rename = "mfa_success")]
+    MfaSuccess,
+    #[serde(rename = "backup_codes_used")]
+    BackupCodesUsed,
+    #[serde(rename = "backup_codes_regenerated")]
+    BackupCodesRegenerated,
+    #[serde(rename = "password_changed")]
+    PasswordChanged,
+    #[serde(rename = "session_revoked")]
+    SessionRevoked,
+    #[serde(rename = "account_locked")]
+    AccountLocked,
+    #[serde(rename = "suspicious_activity")]
+    SuspiciousActivity,
+}
+
+impl SecurityEventType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LoginSuccess => "login_success",
+            Self::LoginFailed => "login_failed",
+            Self::MfaEnabled => "mfa_enabled",
+            Self::MfaDisabled => "mfa_disabled",
+            Self::MfaFailed => "mfa_failed",
+            Self::MfaSuccess => "mfa_success",
+            Self::BackupCodesUsed => "backup_codes_used",
+            Self::BackupCodesRegenerated => "backup_codes_regenerated",
+            Self::PasswordChanged => "password_changed",
+            Self::SessionRevoked => "session_revoked",
+            Self::AccountLocked => "account_locked",
+            Self::SuspiciousActivity => "suspicious_activity",
+        }
+    }
+}
+
+impl std::fmt::Display for SecurityEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for SecurityEventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "login_success" => Ok(Self::LoginSuccess),
+            "login_failed" => Ok(Self::LoginFailed),
+            "mfa_enabled" => Ok(Self::MfaEnabled),
+            "mfa_disabled" => Ok(Self::MfaDisabled),
+            "mfa_failed" => Ok(Self::MfaFailed),
+            "mfa_success" => Ok(Self::MfaSuccess),
+            "backup_codes_used" => Ok(Self::BackupCodesUsed),
+            "backup_codes_regenerated" => Ok(Self::BackupCodesRegenerated),
+            "password_changed" => Ok(Self::PasswordChanged),
+            "session_revoked" => Ok(Self::SessionRevoked),
+            "account_locked" => Ok(Self::AccountLocked),
+            "suspicious_activity" => Ok(Self::SuspiciousActivity),
+            _ => Err(format!("Invalid security event type: {}", s)),
+        }
+    }
+}
+
+/// Security event severity enum
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SecurityEventSeverity {
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "critical")]
+    Critical,
+}
+
+impl SecurityEventSeverity {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+impl std::fmt::Display for SecurityEventSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for SecurityEventSeverity {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "info" => Ok(Self::Info),
+            "warning" => Ok(Self::Warning),
+            "critical" => Ok(Self::Critical),
+            _ => Err(format!("Invalid security event severity: {}", s)),
+        }
+    }
+}
+
+/// Response model for security events in user profile
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SecurityEventResponse {
+    pub id: i32,
+    pub event_type: String,
+    pub ip_address: Option<String>,
+    pub location: Option<String>,
+    pub severity: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub details: Option<serde_json::Value>,
+}
+
+impl From<SecurityEvent> for SecurityEventResponse {
+    fn from(event: SecurityEvent) -> Self {
+        SecurityEventResponse {
+            id: event.id,
+            event_type: event.event_type,
+            ip_address: event.ip_address.map(|ip| ip.to_string()),
+            location: event.location,
+            severity: event.severity,
+            created_at: event.created_at,
+            details: event.details,
+        }
+    }
+}
+
+// ===== MFA RESET TOKENS MODELS =====
+
+/// MFA reset tokens for secure MFA recovery procedures
+#[derive(Debug, Serialize, Deserialize, Identifiable, Queryable)]
+#[diesel(table_name = crate::schema::mfa_reset_tokens)]
+#[diesel(primary_key(token))]
+pub struct MfaResetToken {
+    pub token: String,
+    pub user_uuid: Uuid,
+    pub ip_address: Option<String>, // Store as string for API responses
+    pub user_agent: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
+    pub expires_at: chrono::NaiveDateTime,
+    pub used_at: Option<chrono::NaiveDateTime>,
+    pub is_used: bool,
+    pub email_verified: bool,
+    pub admin_approved: bool,
+    pub admin_approved_by: Option<Uuid>,
+    pub admin_approved_at: Option<chrono::NaiveDateTime>,
+}
+
+/// New MFA reset token for creation
+#[derive(Debug, Serialize, Deserialize, Insertable)]
+#[diesel(table_name = crate::schema::mfa_reset_tokens)]
+pub struct NewMfaResetToken {
+    pub token: String,
+    pub user_uuid: Uuid,
+    pub ip_address: Option<String>, // Convert from ipnetwork::IpNetwork when needed
+    pub user_agent: Option<String>,
+    pub expires_at: chrono::NaiveDateTime,
+    pub email_verified: bool,
+    pub admin_approved: bool,
+}
+
+/// Update struct for MFA reset tokens
+#[derive(Debug, Serialize, Deserialize, AsChangeset)]
+#[diesel(table_name = crate::schema::mfa_reset_tokens)]
+pub struct MfaResetTokenUpdate {
+    pub used_at: Option<chrono::NaiveDateTime>,
+    pub is_used: Option<bool>,
+    pub email_verified: Option<bool>,
+    pub admin_approved: Option<bool>,
+    pub admin_approved_by: Option<Uuid>,
+    pub admin_approved_at: Option<chrono::NaiveDateTime>,
+}
+
+/// Request to initiate MFA reset
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaResetRequest {
+    pub email: String,
+    pub password: String,
+}
+
+/// Response for MFA reset initiation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaResetResponse {
+    pub message: String,
+    pub token_id: Option<String>, // Only for admin users
+    pub requires_admin_approval: bool,
+}
+
+/// Request to complete MFA reset
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MfaResetCompleteRequest {
+    pub token: String,
+    pub email_code: Option<String>, // Email verification code
+}
+
+/// Session revocation request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionRevocationRequest {
+    pub session_id: Option<i32>, // If None, revoke all others
+}
+
+/// Response for session operations
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionResponse {
+    pub message: String,
+    pub sessions_revoked: usize,
 }

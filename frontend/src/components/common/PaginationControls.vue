@@ -17,7 +17,6 @@ const emit = defineEmits<{
 
 // Add isMobile ref to track screen size
 const isMobile = ref(false)
-const showPageInput = ref(false)
 const pageInputValue = ref('')
 const pageInput = ref<HTMLInputElement | null>(null)
 
@@ -65,16 +64,27 @@ const handlePageInput = () => {
     // Reset to current page if invalid
     pageInputValue.value = (props.currentPage || 1).toString()
   }
-  showPageInput.value = false
 }
 
 const handlePageInputKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Enter') {
     handlePageInput()
+    // Blur the input to remove focus after Enter
+    if (pageInput.value) {
+      pageInput.value.blur()
+    }
   } else if (event.key === 'Escape') {
     pageInputValue.value = (props.currentPage || 1).toString()
-    showPageInput.value = false
+    if (pageInput.value) {
+      pageInput.value.blur()
+    }
   }
+}
+
+// Auto-select content when focused for easy replacement
+const handlePageInputFocus = (event: FocusEvent) => {
+  const input = event.target as HTMLInputElement
+  input.select()
 }
 
 // Generate smart page numbers for pagination
@@ -142,26 +152,20 @@ const hasMultiplePages = computed(() => totalPagesDisplay.value > 1)
         <!-- Page info with input -->
         <div class="flex items-center gap-2">
           <span class="text-sm text-gray-400">Page</span>
-                     <div v-if="showPageInput" class="flex items-center gap-1">
-             <input
-               v-model="pageInputValue"
-               @blur="handlePageInput"
-               @keydown="handlePageInputKeydown"
-               type="number"
-               :min="1"
-               :max="totalPagesDisplay"
-               class="w-16 px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-white rounded focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-               ref="pageInput"
-             />
-             <span class="text-sm text-gray-400">of {{ totalPagesDisplay }}</span>
-           </div>
-                     <button
-             v-else
-             @click="showPageInput = true; $nextTick(() => pageInput?.focus())"
-             class="text-sm text-blue-400 hover:text-blue-300 underline font-mono"
-           >
-             {{ currentPageDisplay }} of {{ totalPagesDisplay }}
-           </button>
+          <div class="flex items-center gap-1">
+            <input
+              v-model="pageInputValue"
+              @blur="handlePageInput"
+              @keydown="handlePageInputKeydown"
+              @focus="handlePageInputFocus"
+              type="number"
+              :min="1"
+              :max="totalPagesDisplay"
+              class="w-16 px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-white rounded focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono text-center"
+              ref="pageInput"
+            />
+            <span class="text-sm text-gray-400">of {{ totalPagesDisplay }}</span>
+          </div>
         </div>
         
         <!-- Navigation buttons -->
@@ -315,26 +319,20 @@ const hasMultiplePages = computed(() => totalPagesDisplay.value > 1)
         <!-- Page info with direct input -->
         <div class="flex items-center gap-2 text-sm text-gray-400">
           <span>Page</span>
-                     <div v-if="showPageInput" class="flex items-center gap-1">
-             <input
-               v-model="pageInputValue"
-               @blur="handlePageInput"
-               @keydown="handlePageInputKeydown"
-               type="number"
-               :min="1"
-               :max="totalPagesDisplay"
-               class="w-16 px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-white rounded focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-               ref="pageInput"
-             />
-             <span>of {{ totalPagesDisplay }}</span>
-           </div>
-                     <button
-             v-else
-             @click="showPageInput = true; $nextTick(() => pageInput?.focus())"
-             class="text-blue-400 hover:text-blue-300 underline transition-colors font-mono"
-           >
-             {{ currentPageDisplay }} of {{ totalPagesDisplay }}
-           </button>
+          <div class="flex items-center gap-1">
+            <input
+              v-model="pageInputValue"
+              @blur="handlePageInput"
+              @keydown="handlePageInputKeydown"
+              @focus="handlePageInputFocus"
+              type="number"
+              :min="1"
+              :max="totalPagesDisplay"
+              class="px-2 py-1 text-sm bg-slate-700 border border-slate-600 text-white rounded focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none font-mono text-center"
+              ref="pageInput"
+            />
+            <span>of {{ totalPagesDisplay }}</span>
+          </div>
         </div>
         
         <!-- Import button -->

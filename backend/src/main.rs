@@ -97,8 +97,37 @@ async fn main() -> std::io::Result<()> {
         }
     };
     
-    // Security: Validate environment
+    // Get environment early for validation
     let environment = env::var("ENVIRONMENT").unwrap_or("development".to_string());
+    
+    // Validate that MFA_ENCRYPTION_KEY is set for production
+    if environment == "production" {
+        match std::env::var("MFA_ENCRYPTION_KEY") {
+            Ok(key) => {
+                if key.len() != 64 {
+                    eprintln!("❌ ERROR: MFA_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)");
+                    eprintln!("   Generate a secure key with: openssl rand -hex 32");
+                    std::process::exit(1);
+                }
+                // Validate it's valid hex
+                if hex::decode(&key).is_err() {
+                    eprintln!("❌ ERROR: MFA_ENCRYPTION_KEY must be valid hexadecimal");
+                    eprintln!("   Generate a secure key with: openssl rand -hex 32");
+                    std::process::exit(1);
+                }
+            },
+            Err(_) => {
+                eprintln!("❌ ERROR: MFA_ENCRYPTION_KEY environment variable must be set in production");
+                eprintln!("   Generate a secure key with: openssl rand -hex 32");
+                std::process::exit(1);
+            }
+        }
+    } else if std::env::var("MFA_ENCRYPTION_KEY").is_err() {
+        eprintln!("⚠️  WARNING: MFA_ENCRYPTION_KEY not set - MFA features will be disabled");
+        eprintln!("   Generate a secure key with: openssl rand -hex 32");
+    }
+    
+    // Security: Validate environment (already declared above)
     if environment == "production" {
         // Check for HTTPS in production URLs
         if let Ok(frontend_url) = env::var("FRONTEND_URL") {
@@ -353,8 +382,11 @@ async fn main() -> std::io::Result<()> {
                             .route("/status", web::get().to(handlers::check_setup_status))
                             .route("/admin", web::post().to(handlers::setup_initial_admin))
                     )
-                    .route("/login", web::post().to(handlers::login))
-                    .route("/register", web::post().to(handlers::register))
+                                            .route("/login", web::post().to(handlers::login))
+                        .route("/mfa-login", web::post().to(handlers::mfa_login))
+                        .route("/mfa-setup-login", web::post().to(handlers::mfa_setup_login))
+                        .route("/mfa-enable-login", web::post().to(handlers::mfa_enable_login))
+                        .route("/register", web::post().to(handlers::register))
                     .route("/providers", web::get().to(handlers::get_enabled_auth_providers))
                     .route("/oauth/authorize", web::post().to(handlers::oauth_authorize))
                     .route("/oauth/callback", web::get().to(handlers::oauth_callback))

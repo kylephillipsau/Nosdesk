@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 
 interface AuthMethod {
   id: string;
-  type: 'email' | 'google' | 'github';
+  type: 'email' | 'microsoft';
   identifier: string;
   isPrimary: boolean;
   createdAt: string;
@@ -22,6 +22,10 @@ const authMethods = ref<AuthMethod[]>([]);
 const activeSessions = ref<ActiveSession[]>([]);
 const loading = ref(false);
 
+// Computed properties
+const hasMicrosoftConnection = computed(() => authMethods.value.some(m => m.type === 'microsoft'));
+const microsoftMethod = computed(() => authMethods.value.find(m => m.type === 'microsoft'));
+
 // Emits for notifications
 const emit = defineEmits<{
   (e: 'success', message: string): void;
@@ -34,18 +38,45 @@ onMounted(async () => {
   await loadActiveSessions();
 });
 
-// Mock data loading functions
+// Load authentication methods from API
 const loadAuthMethods = async () => {
-  // TODO: Replace with actual API call
-  authMethods.value = [
-    {
-      id: '1',
+  try {
+    loading.value = true;
+    
+    // Load OAuth providers from the API
+    const response = await fetch('/api/auth/providers');
+    const providers = await response.json();
+    
+    const methods: AuthMethod[] = [];
+    
+    // Always include email as primary method
+    methods.push({
+      id: 'email-primary',
       type: 'email',
-      identifier: 'user@example.com',
+      identifier: 'user@example.com', // TODO: Get from user profile
       isPrimary: true,
       createdAt: '2024-01-01'
+    });
+    
+    // Add Microsoft provider if it exists and is enabled
+    const microsoftProvider = providers.find((p: any) => p.provider_type === 'microsoft' && p.enabled);
+    if (microsoftProvider) {
+      methods.push({
+        id: microsoftProvider.id,
+        type: 'microsoft',
+        identifier: 'Microsoft Account',
+        isPrimary: false,
+        createdAt: microsoftProvider.created_at
+      });
     }
-  ];
+    
+    authMethods.value = methods;
+  } catch (error) {
+    console.error('Failed to load auth methods:', error);
+    // Don't show error for this as it might just mean no providers are configured
+  } finally {
+    loading.value = false;
+  }
 };
 
 const loadActiveSessions = async () => {
@@ -69,10 +100,33 @@ const loadActiveSessions = async () => {
 };
 
 // Auth method functions
-const addAuthMethod = async (type: 'google' | 'github') => {
+const addAuthMethod = async (type: 'microsoft') => {
   loading.value = true;
   try {
-    // TODO: Implement OAuth flow for adding auth method
+    // Use the existing OAuth connect endpoint
+    const response = await fetch('/api/auth/oauth/connect', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      body: JSON.stringify({
+        provider_type: type
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to initiate ${type} connection`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.auth_url) {
+      // Redirect to OAuth provider
+      window.location.href = data.auth_url;
+      return;
+    }
+    
     emit('success', `${type.charAt(0).toUpperCase() + type.slice(1)} account linked successfully`);
   } catch (err) {
     emit('error', `Failed to link ${type} account`);
@@ -82,7 +136,7 @@ const addAuthMethod = async (type: 'google' | 'github') => {
   }
 };
 
-const removeAuthMethod = async (methodId: string) => {
+const removeAuthMethod = async (methodId: string, methodType: string) => {
   if (authMethods.value.length <= 1) {
     emit('error', 'You must have at least one authentication method');
     return;
@@ -90,7 +144,17 @@ const removeAuthMethod = async (methodId: string) => {
 
   loading.value = true;
   try {
-    // TODO: Implement auth method removal API call
+    if (methodType === 'microsoft') {
+      // Handle Microsoft provider removal
+      const response = await fetch(`/api/auth/providers/${methodId}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to remove Microsoft provider');
+      }
+    }
+    
     authMethods.value = authMethods.value.filter(method => method.id !== methodId);
     emit('success', 'Authentication method removed successfully');
   } catch (err) {
@@ -141,10 +205,8 @@ const formatDate = (dateString: string) => {
 
 const getAuthMethodIcon = (type: string) => {
   switch (type) {
-    case 'google':
-      return '🔍';
-    case 'github':
-      return '🐙';
+    case 'microsoft':
+      return '🔷';
     default:
       return '📧';
   }
@@ -180,7 +242,7 @@ const getAuthMethodIcon = (type: string) => {
               </div>
               <button
                 v-if="!method.isPrimary && authMethods.length > 1"
-                @click="removeAuthMethod(method.id)"
+                @click="removeAuthMethod(method.id, method.type)"
                 :disabled="loading"
                 class="text-red-400 hover:text-red-300 text-sm font-medium disabled:opacity-50"
               >
@@ -193,22 +255,19 @@ const getAuthMethodIcon = (type: string) => {
         <!-- Add Auth Methods -->
         <div class="flex flex-col gap-3">
           <h3 class="text-sm font-medium text-white">Add Authentication Method</h3>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="flex flex-col gap-3">
             <button
-              @click="addAuthMethod('google')"
-              :disabled="loading"
-              class="flex items-center gap-3 p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors disabled:opacity-50"
+              @click="addAuthMethod('microsoft')"
+              :disabled="loading || hasMicrosoftConnection"
+              class="flex items-center gap-3 p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors disabled:opacity-50 max-w-sm"
             >
-              <span class="text-xl">🔍</span>
-              <span class="text-sm font-medium text-white">Google</span>
-            </button>
-            <button
-              @click="addAuthMethod('github')"
-              :disabled="loading"
-              class="flex items-center gap-3 p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg border border-slate-600/30 hover:border-slate-500/50 transition-colors disabled:opacity-50"
-            >
-              <span class="text-xl">🐙</span>
-              <span class="text-sm font-medium text-white">GitHub</span>
+              <span class="text-xl">🔷</span>
+              <div class="flex flex-col items-start">
+                <span class="text-sm font-medium text-white">Microsoft</span>
+                <span class="text-xs text-slate-400">
+                  {{ hasMicrosoftConnection ? 'Already connected' : 'Azure AD / Entra ID' }}
+                </span>
+              </div>
             </button>
           </div>
         </div>

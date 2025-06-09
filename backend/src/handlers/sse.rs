@@ -54,6 +54,13 @@ pub enum TicketEvent {
         device_id: i32,
         timestamp: chrono::DateTime<chrono::Utc>,
     },
+    DeviceUpdated {
+        device_id: i32,
+        field: String,
+        value: serde_json::Value,
+        updated_by: String,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
     ProjectAssigned {
         ticket_id: i32,
         project_id: i32,
@@ -190,6 +197,7 @@ impl Stream for SseStream {
                     TicketEvent::AttachmentDeleted { .. } => "attachment-deleted",
                     TicketEvent::DeviceLinked { .. } => "device-linked",
                     TicketEvent::DeviceUnlinked { .. } => "device-unlinked",
+                    TicketEvent::DeviceUpdated { .. } => "device-updated",
                     TicketEvent::ProjectAssigned { .. } => "project-assigned",
                     TicketEvent::ProjectUnassigned { .. } => "project-unassigned",
                     TicketEvent::TicketLinked { .. } => "ticket-linked",
@@ -359,6 +367,77 @@ pub fn broadcast_device_unlinked(
     let event = TicketEvent::DeviceUnlinked {
         ticket_id,
         device_id,
+        timestamp: chrono::Utc::now(),
+    };
+    state.broadcast_event(event);
+}
+
+pub fn broadcast_device_updated(
+    state: &web::Data<SseState>,
+    device_id: i32,
+    field: &str,
+    value: serde_json::Value,
+    updated_by: &str,
+) {
+    let event = TicketEvent::DeviceUpdated {
+        device_id,
+        field: field.to_string(),
+        value,
+        updated_by: updated_by.to_string(),
+        timestamp: chrono::Utc::now(),
+    };
+    state.broadcast_event(event);
+}
+
+// Helper function to broadcast ticket linking events
+pub fn broadcast_ticket_linked(
+    state: &web::Data<SseState>,
+    ticket_id: i32,
+    linked_ticket_id: i32,
+) {
+    let event = TicketEvent::TicketLinked {
+        ticket_id,
+        linked_ticket_id,
+        timestamp: chrono::Utc::now(),
+    };
+    state.broadcast_event(event);
+}
+
+pub fn broadcast_ticket_unlinked(
+    state: &web::Data<SseState>,
+    ticket_id: i32,
+    linked_ticket_id: i32,
+) {
+    let event = TicketEvent::TicketUnlinked {
+        ticket_id,
+        linked_ticket_id,
+        timestamp: chrono::Utc::now(),
+    };
+    state.broadcast_event(event);
+}
+
+// Helper function to broadcast project assignment events
+pub fn broadcast_project_assigned(
+    state: &web::Data<SseState>,
+    ticket_id: i32,
+    project_id: i32,
+) {
+    let event = TicketEvent::ProjectAssigned {
+        ticket_id,
+        project_id,
+        timestamp: chrono::Utc::now(),
+    };
+    state.broadcast_event(event);
+}
+
+pub fn broadcast_project_unassigned(
+    state: &web::Data<SseState>,
+    ticket_id: i32,
+    project_id: i32,
+) {
+    let event = TicketEvent::ProjectUnassigned {
+        ticket_id,
+        project_id,
         timestamp: chrono::Utc::now(),
     };
     state.broadcast_event(event);

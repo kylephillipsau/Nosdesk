@@ -18,7 +18,7 @@ path = "src/bin/import_tickets.rs"
 
 [dependencies]
 actix-web = "4.9.0"
-diesel = { version = "2.1.0", features = ["postgres", "r2d2", "chrono", "serde_json", "uuid"] }
+diesel = { version = "2.1.0", features = ["postgres", "r2d2", "chrono", "serde_json", "uuid", "network-address"] }
 dotenv = "0.15.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -33,7 +33,6 @@ jsonwebtoken = "9.3.0"
 bcrypt = "0.15.1"
 actix-web-httpauth = "0.8.2"
 regex = "1.11.0"
-thiserror = "1.0.69"
 
 # WebSocket dependencies for collaborative editing
 actix-web-actors = "4.3.1"  # WebSocket actors for Actix
@@ -81,6 +80,13 @@ actix-limitation = "0.5.1"
 totp-rs = "5.4.0"         # TOTP (Time-based One-Time Password) implementation
 qrcode = "0.14.1"         # QR code generation
 base32 = "0.4.0"          # Base32 encoding for TOTP secrets
+
+# Security dependencies for MFA encryption
+ring = "0.17.8"           # Cryptographic primitives for AES-256-GCM encryption
+zeroize = { version = "1.8.1", features = ["derive"] } # Memory zeroing for sensitive data
+hex = "0.4.3"             # Hex encoding/decoding
+ipnetwork = "0.20.0"      # IP network types for security events and sessions
+anyhow = "1.0"             # Error handling for applications
 
 # For testing only
 [dev-dependencies]

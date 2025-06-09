@@ -999,6 +999,7 @@ dependencies = [
  "actix-web",
  "actix-web-actors",
  "actix-web-httpauth",
+ "anyhow",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
@@ -1014,7 +1015,9 @@ dependencies = [
  "env_logger",
  "fastrand",
  "futures",
+ "hex",
  "image 0.24.9",
+ "ipnetwork 0.20.0",
  "jsonwebtoken",
  "lazy_static",
  "lib0",
@@ -1027,9 +1030,9 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
  "tokio",
  "totp-rs",
  "tracing",
@@ -1038,6 +1041,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "yrs",
+ "zeroize",
 ]
 
 [[package]]
@@ -1659,7 +1663,9 @@ dependencies = [
  "byteorder",
  "chrono",
  "diesel_derives",
+ "ipnetwork 0.21.1",
  "itoa",
+ "libc",
  "pq-sys",
  "r2d2",
  "serde_json",
@@ -2602,6 +2608,21 @@ name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
+
+[[package]]
+name = "ipnetwork"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -4989,6 +5010,20 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "zerotrie"

@@ -264,15 +264,45 @@ pub async fn update_device(
     pool: web::Data<Pool>,
     path: web::Path<i32>,
     device_update: web::Json<DeviceUpdate>,
+    sse_state: web::Data<crate::handlers::sse::SseState>,
+    auth: actix_web_httpauth::extractors::bearer::BearerAuth,
 ) -> impl Responder {
     let device_id = path.into_inner();
     let mut conn = match pool.get() {
         Ok(conn) => conn,
         Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
     };
+
+    // Get user info for SSE events
+    use crate::utils::jwt::helpers as jwt_helpers;
+    let (user_info, _user) = match jwt_helpers::require_role(&auth, &mut conn, "user").await {
+        Ok((claims, user)) => (claims, user),
+        Err(e) => return e.into(),
+    };
     
-    match repository::update_device(&mut conn, device_id, device_update.into_inner()) {
+    let update_data = device_update.into_inner();
+    
+    // Convert to JSON before the move for SSE broadcasting
+    let update_json = serde_json::to_value(&update_data).unwrap_or_default();
+    
+    match repository::update_device(&mut conn, device_id, update_data) {
         Ok(device) => {
+            // Broadcast SSE events for each field that was updated
+            if let Some(update_obj) = update_json.as_object() {
+                for (key, value) in update_obj {
+                    if !value.is_null() {
+                        println!("Broadcasting SSE event for device {}: {} = {:?}", device_id, key, value);
+                        crate::handlers::sse::broadcast_device_updated(
+                            &sse_state,
+                            device_id,
+                            key,
+                            value.clone(),
+                            &user_info.sub,
+                        );
+                    }
+                }
+            }
+            
             // Get user data if device has a primary user
             let user = device.primary_user_uuid.as_ref()
                 .and_then(|uuid| get_user_by_uuid(&mut conn, uuid));

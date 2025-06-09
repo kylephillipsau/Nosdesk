@@ -395,7 +395,7 @@ onMounted(() => {
                     id="name-input"
                     v-model="editValues.name"
                     type="text"
-                    class="w-full bg-transparent text-2xl font-semibold text-white px-1 py-0.5 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none transition-all duration-150 border-2 border-transparent focus:border-blue-500/50 bg-slate-700/50"
+                    class="w-full text-2xl font-semibold text-white px-1 py-0.5 rounded-lg hover:bg-slate-700/50 focus:bg-slate-700 focus:outline-none transition-all duration-150 border-2 border-transparent focus:border-blue-500/50 bg-slate-700/50"
                     placeholder="Enter device name..."
                   />
                 </div>
