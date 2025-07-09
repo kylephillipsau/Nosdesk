@@ -56,7 +56,7 @@ This launches the development server, typically accessible at `http://localhost:
   ```
 
 ## License
-`Nosdesk` is licensed under the [MIT License](LICENSE). See the `LICENSE` file for more details.
+`Nosdesk` is licensed under the [GNU AGPL](LICENSE). See the `LICENSE` file for more details.
 
 ## Acknowledgements
 
