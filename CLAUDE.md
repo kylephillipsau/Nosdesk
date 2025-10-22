@@ -39,20 +39,28 @@ cd backend
 cargo test
 ```
 
-**Database migrations:**
+**Database migrations (Docker dev environment - RECOMMENDED):**
+```bash
+# After modifying migration files, tear down and rebuild
+docker compose --profile dev down -v
+docker compose --profile dev up --build
+
+# Then regenerate the schema file
+docker compose exec backend-dev sh -c 'RUST_LOG=off diesel print-schema 2>/dev/null' > backend/src/schema.rs
+```
+- Migrations run automatically on container startup
+- The `-v` flag removes volumes to ensure a clean database rebuild
+- Run schema regeneration after the stack is up to update `src/schema.rs`
+- Suppresses logging output to avoid corrupting the schema file
+- Must be run from the project root directory
+- The schema file (`src/schema.rs`) should NEVER be manually edited
+
+**Database migrations (local development):**
 ```bash
 cd backend
 diesel migration run
 ```
-
-**Regenerate Diesel schema (Docker dev environment):**
-```bash
-docker compose exec backend-dev sh -c 'RUST_LOG=off diesel print-schema 2>/dev/null' > backend/src/schema.rs
-```
-- Run this after creating or modifying migrations
-- Suppresses logging output to avoid corrupting the schema file
-- Must be run from the project root directory
-- The schema file (`src/schema.rs`) should NEVER be manually edited
+- Only use if you have PostgreSQL running locally outside Docker
 
 **Build for production:**
 ```bash
